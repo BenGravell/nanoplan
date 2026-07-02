@@ -1,8 +1,13 @@
-//! nuPlan closed-loop planner quality metrics.
+//! nuPlan closed-loop planner quality metrics, built up strictly tickwise.
 //!
-//! Thresholds and aggregation follow scenarios/nuplan/metrics_description.md.
-//! Everything here is a pure function of simulation outputs (ego trace, actor
-//! traces, centerline, speed limit, dt) — planner internals are off limits.
+//! Every metric is a per-tick score in [0, 1]; the scenario value of each
+//! metric — and of the composite score — is the average of its per-tick
+//! values. Thresholds follow scenarios/nuplan/metrics_description.md; the
+//! aggregation deliberately deviates from nuPlan (which mixes booleans and
+//! trajectory-level ratios) so that scrubbing time in the viewer shows the
+//! score building up. Everything here is a pure function of simulation
+//! outputs (ego trace, actor traces, centerline, speed limit, dt) — planner
+//! internals are off limits.
 
 use crate::{Path, State};
 
@@ -28,26 +33,23 @@ const MAX_ABS_YAW_RATE: f64 = 0.95;
 const MAX_ABS_LON_JERK: f64 = 4.13;
 const MAX_ABS_MAG_JERK: f64 = 8.37;
 
-/// Per-scenario closed-loop scores, each in [0, 1].
-#[derive(Debug, Clone, Copy, Default)]
+pub const N_METRICS: usize = 8;
+
+/// Per-tick metric scores for a rollout, plus their scenario averages.
+#[derive(Debug, Clone, Default)]
 pub struct Metrics {
-    // multipliers
-    pub no_at_fault_collisions: f64,
-    pub drivable_area_compliance: f64,
-    pub driving_direction_compliance: f64,
-    pub making_progress: f64,
-    // weighted terms
-    pub ttc_within_bound: f64,
-    pub progress_ratio: f64,
-    pub speed_limit_compliance: f64,
-    pub comfort: f64,
-    /// nuPlan closed-loop score: product of multipliers times the weighted
-    /// average of (TTC, progress, speed limit, comfort) with weights 5/5/4/2.
+    /// Per-tick score of each metric, `per_tick[tick][metric]`.
+    pub per_tick: Vec<[f64; N_METRICS]>,
+    /// Per-tick composite score.
+    pub score_per_tick: Vec<f64>,
+    /// Scenario value of each metric: average of its per-tick scores.
+    pub average: [f64; N_METRICS],
+    /// Scenario score: average of the per-tick composite scores.
     pub score: f64,
 }
 
 impl Metrics {
-    pub const LABELS: [&'static str; 8] = [
+    pub const LABELS: [&'static str; N_METRICS] = [
         "no at-fault collisions",
         "drivable area",
         "driving direction",
@@ -58,17 +60,10 @@ impl Metrics {
         "comfort",
     ];
 
-    pub fn values(&self) -> [f64; 8] {
-        [
-            self.no_at_fault_collisions,
-            self.drivable_area_compliance,
-            self.driving_direction_compliance,
-            self.making_progress,
-            self.ttc_within_bound,
-            self.progress_ratio,
-            self.speed_limit_compliance,
-            self.comfort,
-        ]
+    /// Metric scores and composite score at a tick (clamped to the rollout).
+    pub fn at(&self, tick: usize) -> ([f64; N_METRICS], f64) {
+        let i = tick.min(self.per_tick.len().saturating_sub(1));
+        (self.per_tick[i], self.score_per_tick[i])
     }
 }
 
@@ -89,6 +84,14 @@ fn wrap_angle(a: f64) -> f64 {
     (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
+/// Forward difference, padded by repeating the last value so the result has
+/// the same length as the input.
+fn diff(v: &[f64], dt: f64) -> Vec<f64> {
+    let mut d: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]) / dt).collect();
+    d.push(d.last().copied().unwrap_or(0.0));
+    d
+}
+
 /// Evaluate all metrics over a finished rollout. `actors[i]` must be sampled
 /// at the same ticks as `ego`.
 pub fn evaluate(
@@ -100,20 +103,47 @@ pub fn evaluate(
 ) -> Metrics {
     let path = Path::new(centerline);
     let n = ego.len();
-    let duration = (n.saturating_sub(1)) as f64 * dt;
+    if n == 0 {
+        return Metrics::default();
+    }
     let frenet: Vec<(f64, f64)> = ego.iter().map(|s| path.project([s.x, s.y])).collect();
+    let station: Vec<f64> = frenet.iter().map(|f| f.0).collect();
 
-    // --- safety ---
-    let collided = (0..n).any(|i| {
-        actors
+    // tickwise kinematics (forward differences, padded to length n)
+    let speed: Vec<f64> = ego.iter().map(|s| s.speed).collect();
+    let lon_accel = diff(&speed, dt);
+    let yaw_rate = {
+        let mut r: Vec<f64> = ego
+            .windows(2)
+            .map(|w| wrap_angle(w[1].yaw - w[0].yaw) / dt)
+            .collect();
+        r.push(r.last().copied().unwrap_or(0.0));
+        r
+    };
+    let lat_accel: Vec<f64> = yaw_rate.iter().zip(&speed).map(|(r, v)| r * v).collect();
+    let lon_jerk = diff(&lon_accel, dt);
+    let lat_jerk = diff(&lat_accel, dt);
+    let yaw_accel = diff(&yaw_rate, dt);
+
+    let window = ((DIRECTION_WINDOW_S / dt) as usize).max(1);
+    let mut per_tick = Vec::with_capacity(n);
+    let mut score_per_tick = Vec::with_capacity(n);
+    let mut average = [0.0; N_METRICS];
+    let mut score_sum = 0.0;
+
+    for i in 0..n {
+        // safety: collision-free and TTC at this tick
+        let no_collision = if actors
             .iter()
             .any(|a| gap(&ego[i], &a[i]) < 2.0 * CAR_RADIUS_M)
-    });
-    let no_at_fault_collisions = if collided { 0.0 } else { 1.0 };
-
-    let min_ttc = (0..n)
-        .flat_map(|i| {
-            actors.iter().filter_map(move |a| {
+        {
+            0.0
+        } else {
+            1.0
+        };
+        let min_ttc = actors
+            .iter()
+            .filter_map(|a| {
                 let mut t = TTC_STEP_S;
                 while t <= TTC_HORIZON_S {
                     if gap(&project(&ego[i], t), &project(&a[i], t)) < 2.0 * CAR_RADIUS_M {
@@ -123,105 +153,86 @@ pub fn evaluate(
                 }
                 None
             })
-        })
-        .fold(f64::INFINITY, f64::min);
-    let ttc_within_bound = if min_ttc >= LEAST_MIN_TTC_S { 1.0 } else { 0.0 };
+            .fold(f64::INFINITY, f64::min);
+        let ttc = if min_ttc >= LEAST_MIN_TTC_S { 1.0 } else { 0.0 };
 
-    // --- road compliance ---
-    let drivable_area_compliance = if frenet.iter().any(|&(_, d)| d.abs() > ROAD_HALF_WIDTH_M) {
-        0.0
-    } else {
-        1.0
-    };
+        // road compliance at this tick
+        let drivable = if frenet[i].1.abs() > ROAD_HALF_WIDTH_M {
+            0.0
+        } else {
+            1.0
+        };
+        // backward movement along the route over the trailing window
+        let backward = station[i.saturating_sub(window)] - station[i];
+        let direction = if backward <= DIRECTION_COMPLIANCE_M {
+            1.0
+        } else if backward <= DIRECTION_VIOLATION_M {
+            0.5
+        } else {
+            0.0
+        };
 
-    // worst backward movement along the route over any 1 s window
-    let window = (DIRECTION_WINDOW_S / dt) as usize;
-    let worst_backward = (0..n.saturating_sub(window))
-        .map(|i| frenet[i].0 - frenet[i + window].0)
-        .fold(0.0, f64::max);
-    let driving_direction_compliance = if worst_backward <= DIRECTION_COMPLIANCE_M {
-        1.0
-    } else if worst_backward <= DIRECTION_VIOLATION_M {
-        0.5
-    } else {
-        0.0
-    };
+        // progress at this tick: station rate vs. driving at the speed limit
+        // ponytail: no expert trajectory; the speed limit stands in
+        let ds = if i + 1 < n {
+            station[i + 1] - station[i]
+        } else if i > 0 {
+            station[i] - station[i - 1]
+        } else {
+            0.0
+        };
+        let progress = (ds / dt / speed_limit.max(0.1)).clamp(0.0, 1.0);
+        let making_progress = if progress > MIN_PROGRESS_RATIO {
+            1.0
+        } else {
+            0.0
+        };
 
-    // --- progress ---
-    // ponytail: no expert trajectory; the route driven at the speed limit
-    // stands in for expert progress
-    let ego_progress = frenet.last().map_or(0.0, |f| f.0) - frenet[0].0;
-    let expert_progress = speed_limit * duration;
-    let progress_ratio = if ego_progress < -0.1 {
-        0.0
-    } else {
-        (ego_progress.max(0.1) / expert_progress.max(0.1)).min(1.0)
-    };
-    let making_progress = if progress_ratio > MIN_PROGRESS_RATIO {
-        1.0
-    } else {
-        0.0
-    };
+        // speed limit compliance at this tick
+        let overspeed = (speed[i] - speed_limit).max(0.0);
+        let speed_score = (1.0 - overspeed / MAX_OVERSPEED_MS).clamp(0.0, 1.0);
 
-    // --- speed limit ---
-    let avg_violation = ego
-        .iter()
-        .map(|s| (s.speed - speed_limit).max(0.0))
-        .sum::<f64>()
-        / n as f64;
-    let speed_limit_compliance = (1.0 - avg_violation / MAX_OVERSPEED_MS).clamp(0.0, 1.0);
+        // comfort at this tick: all kinematic bounds hold
+        let comfort = if (MIN_LON_ACCEL..=MAX_LON_ACCEL).contains(&lon_accel[i])
+            && lat_accel[i].abs() <= MAX_ABS_LAT_ACCEL
+            && yaw_rate[i].abs() <= MAX_ABS_YAW_RATE
+            && yaw_accel[i].abs() <= MAX_ABS_YAW_ACCEL
+            && lon_jerk[i].abs() <= MAX_ABS_LON_JERK
+            && lon_jerk[i].hypot(lat_jerk[i]) <= MAX_ABS_MAG_JERK
+        {
+            1.0
+        } else {
+            0.0
+        };
 
-    // --- comfort ---
-    let lon_accel: Vec<f64> = ego
-        .windows(2)
-        .map(|w| (w[1].speed - w[0].speed) / dt)
-        .collect();
-    let yaw_rate: Vec<f64> = ego
-        .windows(2)
-        .map(|w| wrap_angle(w[1].yaw - w[0].yaw) / dt)
-        .collect();
-    let lat_accel: Vec<f64> = yaw_rate.iter().zip(ego).map(|(r, s)| r * s.speed).collect();
-    let diff = |v: &[f64]| -> Vec<f64> { v.windows(2).map(|w| (w[1] - w[0]) / dt).collect() };
-    let lon_jerk = diff(&lon_accel);
-    let lat_jerk = diff(&lat_accel);
-    let yaw_accel = diff(&yaw_rate);
-    let within = |v: &[f64], lo: f64, hi: f64| v.iter().all(|&x| x >= lo && x <= hi);
-    let comfort = if within(&lon_accel, MIN_LON_ACCEL, MAX_LON_ACCEL)
-        && within(&lat_accel, -MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL)
-        && within(&yaw_rate, -MAX_ABS_YAW_RATE, MAX_ABS_YAW_RATE)
-        && within(&yaw_accel, -MAX_ABS_YAW_ACCEL, MAX_ABS_YAW_ACCEL)
-        && within(&lon_jerk, -MAX_ABS_LON_JERK, MAX_ABS_LON_JERK)
-        && lon_jerk
-            .iter()
-            .zip(&lat_jerk)
-            .all(|(lo, la)| lo.hypot(*la) <= MAX_ABS_MAG_JERK)
-    {
-        1.0
-    } else {
-        0.0
-    };
+        let scores = [
+            no_collision,
+            drivable,
+            direction,
+            making_progress,
+            ttc,
+            progress,
+            speed_score,
+            comfort,
+        ];
+        // nuPlan structure at tick granularity: multipliers times the
+        // weighted average of (TTC, progress, speed limit, comfort), 5/5/4/2
+        let weighted = (5.0 * ttc + 5.0 * progress + 4.0 * speed_score + 2.0 * comfort) / 16.0;
+        let score = no_collision * drivable * direction * making_progress * weighted;
 
-    let weighted = (5.0 * ttc_within_bound
-        + 5.0 * progress_ratio
-        + 4.0 * speed_limit_compliance
-        + 2.0 * comfort)
-        / 16.0;
-    let score = no_at_fault_collisions
-        * drivable_area_compliance
-        * driving_direction_compliance
-        * making_progress
-        * weighted;
+        for (avg, s) in average.iter_mut().zip(scores) {
+            *avg += s / n as f64;
+        }
+        score_sum += score / n as f64;
+        per_tick.push(scores);
+        score_per_tick.push(score);
+    }
 
     Metrics {
-        no_at_fault_collisions,
-        drivable_area_compliance,
-        driving_direction_compliance,
-        making_progress,
-        ttc_within_bound,
-        progress_ratio,
-        speed_limit_compliance,
-        comfort,
-        score,
+        per_tick,
+        score_per_tick,
+        average,
+        score: score_sum,
     }
 }
 
@@ -243,14 +254,19 @@ mod tests {
     }
 
     #[test]
-    fn perfect_cruise_scores_one() {
+    fn perfect_cruise_scores_one_every_tick() {
         let m = evaluate(&cruise(10.0, 200), &[], &CENTERLINE, 10.0, DT);
-        assert_eq!(m.values(), [1.0; 8]);
+        assert!(
+            m.per_tick
+                .iter()
+                .all(|t| t.iter().all(|s| (s - 1.0).abs() < 1e-9))
+        );
+        assert!(m.average.iter().all(|a| (a - 1.0).abs() < 1e-9));
         assert!((m.score - 1.0).abs() < 1e-9);
     }
 
     #[test]
-    fn collision_zeroes_the_score() {
+    fn collision_zeroes_exactly_the_colliding_ticks() {
         let ego = cruise(10.0, 200);
         let parked = vec![
             State {
@@ -260,25 +276,34 @@ mod tests {
             201
         ];
         let m = evaluate(&ego, &[parked], &CENTERLINE, 10.0, DT);
-        assert_eq!(m.no_at_fault_collisions, 0.0);
-        assert_eq!(m.ttc_within_bound, 0.0);
-        assert_eq!(m.score, 0.0);
+        // tick 100 is exactly at the parked car
+        let (scores, score) = m.at(100);
+        assert_eq!(scores[0], 0.0);
+        assert_eq!(score, 0.0);
+        // far away it is untouched
+        assert_eq!(m.at(0).0[0], 1.0);
+        assert!(m.average[0] > 0.9 && m.average[0] < 1.0);
+        assert!(m.score < 1.0);
     }
 
     #[test]
-    fn overspeed_reduces_compliance() {
+    fn overspeed_reduces_compliance_each_tick() {
         let m = evaluate(&cruise(11.0, 200), &[], &CENTERLINE, 10.0, DT);
-        assert!(m.speed_limit_compliance < 1.0 && m.speed_limit_compliance > 0.0);
+        let expected = 1.0 - 1.0 / MAX_OVERSPEED_MS;
+        assert!(m.per_tick.iter().all(|t| (t[6] - expected).abs() < 1e-9));
+        assert!((m.average[6] - expected).abs() < 1e-9);
     }
 
     #[test]
-    fn harsh_braking_is_uncomfortable() {
+    fn harsh_braking_is_uncomfortable_only_while_braking() {
         let mut ego = cruise(10.0, 200);
         for (i, s) in ego.iter_mut().enumerate().skip(100) {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
         }
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
-        assert_eq!(m.comfort, 0.0);
+        assert_eq!(m.at(50).0[7], 1.0);
+        assert_eq!(m.at(110).0[7], 0.0);
+        assert!(m.average[7] > 0.0 && m.average[7] < 1.0);
     }
 
     #[test]
@@ -286,16 +311,19 @@ mod tests {
         let mut ego = cruise(10.0, 200);
         ego.reverse();
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
-        assert_eq!(m.driving_direction_compliance, 0.0);
-        assert_eq!(m.progress_ratio, 0.0);
-        assert_eq!(m.score, 0.0);
+        // once the trailing window fills, direction is fully violated
+        assert_eq!(m.at(50).0[2], 0.0);
+        assert_eq!(m.at(50).0[3], 0.0); // no forward progress either
+        assert!(m.score < 0.05);
     }
 
     #[test]
-    fn leaving_the_road_violates_drivable_area() {
+    fn leaving_the_road_violates_exactly_that_tick() {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
-        assert_eq!(m.drivable_area_compliance, 0.0);
+        assert_eq!(m.at(50).0[1], 0.0);
+        assert_eq!(m.at(51).0[1], 1.0);
+        assert!(m.average[1] < 1.0);
     }
 }
