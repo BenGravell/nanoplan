@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 bevy = "0.19"
+bevy_egui = "0.41"
 
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
 [profile.dev]
