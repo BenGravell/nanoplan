@@ -6,3 +6,11 @@ description = "Ultra minimalist motion planner for car-like vehicles based on tr
 license = "MIT"
 
 [dependencies]
+bevy = "0.19"
+
+# ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
