@@ -1,0 +1,4 @@
+[toolchain]
+# bevy 0.19 needs rustc >= 1.95
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]

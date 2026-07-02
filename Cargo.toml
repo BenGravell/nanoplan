@@ -6,7 +6,13 @@ description = "Ultra minimalist motion planner for car-like vehicles based on tr
 license = "MIT"
 
 [dependencies]
-bevy = "0.19"
+# trimmed for wasm size: 2d rendering only, no 3d/ui/audio/scene/picking
+bevy = { version = "0.19", default-features = false, features = [
+    "default_app",
+    "default_platform",
+    "2d_bevy_render",
+    "bevy_picking", # bevy_egui's pointer integration needs it
+] }
 bevy_egui = "0.41"
 
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
@@ -15,3 +21,9 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# size over speed: keeps the wasm binary web-deployable
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = "debuginfo"

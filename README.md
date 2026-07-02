@@ -20,6 +20,18 @@ cargo run    # interactive viewer: scenario selector, time scrubber, future prev
 cargo test
 ```
 
+## Web deploy
+
+Pushes to `main` build the viewer for `wasm32-unknown-unknown` with
+[Trunk](https://trunkrs.dev) and deploy it to GitHub Pages (enable Pages with
+source "GitHub Actions" in the repo settings). To build locally:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk
+trunk serve
+```
+
 ## Agent skills
 
 The [ponytail](https://github.com/DietrichGebert/ponytail) skills (MIT) are vendored in
