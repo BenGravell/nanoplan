@@ -1,0 +1,8 @@
+[package]
+name = "nanoplan"
+version = "0.1.0"
+edition = "2024"
+description = "Ultra minimalist motion planner for car-like vehicles based on trajectory trees and sampling-based DDP"
+license = "MIT"
+
+[dependencies]
