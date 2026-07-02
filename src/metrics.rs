@@ -1,13 +1,16 @@
 //! nuPlan closed-loop planner quality metrics, built up strictly tickwise.
 //!
-//! Every metric is a per-tick score in [0, 1]; the scenario value of each
-//! metric — and of the composite score — is the average of its per-tick
-//! values. Thresholds follow scenarios/nuplan/metrics_description.md; the
-//! aggregation deliberately deviates from nuPlan (which mixes booleans and
-//! trajectory-level ratios) so that scrubbing time in the viewer shows the
-//! score building up. Everything here is a pure function of simulation
-//! outputs (ego trace, actor traces, centerline, speed limit, dt) — planner
-//! internals are off limits.
+//! Every metric is a per-tick score in [0, 1]. Scenario values aggregate the
+//! per-tick scores with a per-metric rule: event-driven metrics (collisions,
+//! drivable area, driving direction, TTC) take the worst case (min) — one bad
+//! tick is a violation — while smooth quantities (progress, speed limit,
+//! comfort) take the average; making-progress thresholds the aggregated
+//! progress ratio, as in nuPlan. The composite score applies the nuPlan
+//! structure (multipliers times the 5/5/4/2 weighted average) to the
+//! aggregates, and per tick for the scrubber display. Thresholds follow
+//! scenarios/nuplan/metrics_description.md. Everything here is a pure
+//! function of simulation outputs (ego trace, actor traces, centerline,
+//! speed limit, dt) — planner internals are off limits.
 
 use crate::{Path, State};
 
@@ -35,16 +38,16 @@ const MAX_ABS_MAG_JERK: f64 = 8.37;
 
 pub const N_METRICS: usize = 8;
 
-/// Per-tick metric scores for a rollout, plus their scenario averages.
+/// Per-tick metric scores for a rollout, plus their scenario aggregates.
 #[derive(Debug, Clone, Default)]
 pub struct Metrics {
     /// Per-tick score of each metric, `per_tick[tick][metric]`.
     pub per_tick: Vec<[f64; N_METRICS]>,
     /// Per-tick composite score.
     pub score_per_tick: Vec<f64>,
-    /// Scenario value of each metric: average of its per-tick scores.
-    pub average: [f64; N_METRICS],
-    /// Scenario score: average of the per-tick composite scores.
+    /// Scenario value of each metric, aggregated per its rule (min or avg).
+    pub aggregate: [f64; N_METRICS],
+    /// Scenario score: the nuPlan composite applied to the aggregates.
     pub score: f64,
 }
 
@@ -126,10 +129,8 @@ pub fn evaluate(
     let yaw_accel = diff(&yaw_rate, dt);
 
     let window = ((DIRECTION_WINDOW_S / dt) as usize).max(1);
-    let mut per_tick = Vec::with_capacity(n);
+    let mut per_tick: Vec<[f64; N_METRICS]> = Vec::with_capacity(n);
     let mut score_per_tick = Vec::with_capacity(n);
-    let mut average = [0.0; N_METRICS];
-    let mut score_sum = 0.0;
 
     for i in 0..n {
         // safety: collision-free and TTC at this tick
@@ -220,19 +221,38 @@ pub fn evaluate(
         let weighted = (5.0 * ttc + 5.0 * progress + 4.0 * speed_score + 2.0 * comfort) / 16.0;
         let score = no_collision * drivable * direction * making_progress * weighted;
 
-        for (avg, s) in average.iter_mut().zip(scores) {
-            *avg += s / n as f64;
-        }
-        score_sum += score / n as f64;
         per_tick.push(scores);
         score_per_tick.push(score);
     }
 
+    // per-metric aggregation: worst case for event-driven metrics, average
+    // for smooth quantities; making-progress thresholds aggregated progress
+    let min_of = |m: usize| per_tick.iter().map(|t| t[m]).fold(1.0, f64::min);
+    let avg_of = |m: usize| per_tick.iter().map(|t| t[m]).sum::<f64>() / n as f64;
+    let progress = avg_of(5);
+    let aggregate = [
+        min_of(0), // collisions
+        min_of(1), // drivable area
+        min_of(2), // driving direction
+        if progress > MIN_PROGRESS_RATIO {
+            1.0
+        } else {
+            0.0
+        },
+        min_of(4), // TTC
+        progress,
+        avg_of(6), // speed limit
+        avg_of(7), // comfort
+    ];
+    let weighted =
+        (5.0 * aggregate[4] + 5.0 * aggregate[5] + 4.0 * aggregate[6] + 2.0 * aggregate[7]) / 16.0;
+    let score = aggregate[0] * aggregate[1] * aggregate[2] * aggregate[3] * weighted;
+
     Metrics {
         per_tick,
         score_per_tick,
-        average,
-        score: score_sum,
+        aggregate,
+        score,
     }
 }
 
@@ -261,12 +281,12 @@ mod tests {
                 .iter()
                 .all(|t| t.iter().all(|s| (s - 1.0).abs() < 1e-9))
         );
-        assert!(m.average.iter().all(|a| (a - 1.0).abs() < 1e-9));
+        assert!(m.aggregate.iter().all(|a| (a - 1.0).abs() < 1e-9));
         assert!((m.score - 1.0).abs() < 1e-9);
     }
 
     #[test]
-    fn collision_zeroes_exactly_the_colliding_ticks() {
+    fn collision_zeroes_its_ticks_and_the_scenario_by_min_agg() {
         let ego = cruise(10.0, 200);
         let parked = vec![
             State {
@@ -280,10 +300,10 @@ mod tests {
         let (scores, score) = m.at(100);
         assert_eq!(scores[0], 0.0);
         assert_eq!(score, 0.0);
-        // far away it is untouched
+        // far away the tick is untouched, but the event zeroes the scenario
         assert_eq!(m.at(0).0[0], 1.0);
-        assert!(m.average[0] > 0.9 && m.average[0] < 1.0);
-        assert!(m.score < 1.0);
+        assert_eq!(m.aggregate[0], 0.0);
+        assert_eq!(m.score, 0.0);
     }
 
     #[test]
@@ -291,7 +311,7 @@ mod tests {
         let m = evaluate(&cruise(11.0, 200), &[], &CENTERLINE, 10.0, DT);
         let expected = 1.0 - 1.0 / MAX_OVERSPEED_MS;
         assert!(m.per_tick.iter().all(|t| (t[6] - expected).abs() < 1e-9));
-        assert!((m.average[6] - expected).abs() < 1e-9);
+        assert!((m.aggregate[6] - expected).abs() < 1e-9);
     }
 
     #[test]
@@ -303,7 +323,8 @@ mod tests {
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
         assert_eq!(m.at(50).0[7], 1.0);
         assert_eq!(m.at(110).0[7], 0.0);
-        assert!(m.average[7] > 0.0 && m.average[7] < 1.0);
+        // comfort is a smooth quantity: averaged, not zeroed by the event
+        assert!(m.aggregate[7] > 0.0 && m.aggregate[7] < 1.0);
     }
 
     #[test]
@@ -313,17 +334,19 @@ mod tests {
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
         // once the trailing window fills, direction is fully violated
         assert_eq!(m.at(50).0[2], 0.0);
-        assert_eq!(m.at(50).0[3], 0.0); // no forward progress either
-        assert!(m.score < 0.05);
+        assert_eq!(m.aggregate[2], 0.0);
+        assert_eq!(m.aggregate[3], 0.0); // no forward progress either
+        assert_eq!(m.score, 0.0);
     }
 
     #[test]
-    fn leaving_the_road_violates_exactly_that_tick() {
+    fn leaving_the_road_once_zeroes_drivable_area() {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
         let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
         assert_eq!(m.at(50).0[1], 0.0);
         assert_eq!(m.at(51).0[1], 1.0);
-        assert!(m.average[1] < 1.0);
+        assert_eq!(m.aggregate[1], 0.0); // min aggregation: one bad tick
+        assert_eq!(m.score, 0.0);
     }
 }

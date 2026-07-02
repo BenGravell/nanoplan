@@ -267,12 +267,12 @@ fn ui(
         egui::Grid::new("metrics").show(ui, |ui| {
             ui.label("");
             ui.label("@t");
-            ui.label("avg");
+            ui.label("agg");
             ui.end_row();
             for ((label, tick), avg) in Metrics::LABELS
                 .iter()
                 .zip(tick_scores)
-                .zip(rollout.metrics.average)
+                .zip(rollout.metrics.aggregate)
             {
                 ui.label(*label);
                 ui.label(format!("{tick:.2}"));
