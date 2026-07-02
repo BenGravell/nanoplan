@@ -74,4 +74,11 @@ mod tests {
         let s1 = step(s0, u, 2.5, 0.1);
         assert!(s1.heading > 0.0);
     }
+
+    // ponytail: smoke test that bevy links and boots headless; delete once a real app exists
+    #[test]
+    fn bevy_app_boots() {
+        use bevy::prelude::*;
+        App::new().add_plugins(MinimalPlugins).update();
+    }
 }
