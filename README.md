@@ -6,7 +6,7 @@ Ultra minimalist motion planner for car-like vehicles, written in Rust with zero
 
 - **Trajectory trees**: candidate motions are grown as a tree of dynamically feasible trajectories.
 - **Sampling-based DDP**: tree expansion is guided by a sampling-based variant of differential dynamic programming.
-- **Kinematic bicycle model**: the vehicle model shared by both.
+- **Kinematic ego model**: state (x, y, yaw, speed), controls (acceleration, curvature).
 - **nuPlan scenarios**: scenario definitions are vendored from
   [nuplan-devkit](https://github.com/motional/nuplan-devkit) in [`scenarios/nuplan/`](scenarios/nuplan/).
 - **Bevy app**: a lightweight interactive viewer to inspect simulator results and steer the planner.
