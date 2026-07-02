@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::{Context, Control, PlannerKind, Simulator, State, step};
+use nanoplan::{Context, Control, Metrics, PlannerKind, Simulator, State, metrics, step};
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
@@ -115,11 +115,13 @@ struct UiState {
     preview_s: f32,
 }
 
-/// Precomputed simulation: ego and actor states at every tick.
+/// Precomputed simulation: ego and actor states at every tick, plus the
+/// nuPlan closed-loop metrics of the finished rollout.
 #[derive(Resource)]
 struct Rollout {
     ego: Vec<State>,
     actors: Vec<Vec<State>>,
+    metrics: Metrics,
 }
 
 fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
@@ -157,7 +159,12 @@ fn compute_rollout(sc: &Scenario, kind: PlannerKind) -> Rollout {
         let current: Vec<State> = actors.iter().map(|t| t[i]).collect();
         sim.tick(planner.as_mut(), &ctx(sc, &current, 1))
     }));
-    Rollout { ego, actors }
+    let metrics = metrics::evaluate(&ego, &actors, &sc.centerline, sc.target_speed, DT);
+    Rollout {
+        ego,
+        actors,
+        metrics,
+    }
 }
 
 fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
@@ -220,6 +227,17 @@ fn ui(
             egui::Slider::new(&mut state.preview_s, 0.0..=PREVIEW_MAX_S as f32)
                 .text("future preview [s]"),
         );
+        ui.separator();
+        egui::Grid::new("metrics").show(ui, |ui| {
+            for (label, value) in Metrics::LABELS.iter().zip(rollout.metrics.values()) {
+                ui.label(*label);
+                ui.label(format!("{value:.2}"));
+                ui.end_row();
+            }
+            ui.strong("closed-loop score");
+            ui.strong(format!("{:.2}", rollout.metrics.score));
+            ui.end_row();
+        });
     });
     if (state.scenario, state.planner) != prev {
         *rollout = compute_rollout(&scenes.0[state.scenario], state.planner);
