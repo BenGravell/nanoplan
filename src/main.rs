@@ -181,7 +181,15 @@ fn main() {
     let scenes = scenarios();
     let rollout = compute_rollout(&scenes[0], PlannerKind::Straight);
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "nanoplan".into(),
+                // fill the browser window on wasm; no effect on desktop
+                fit_canvas_to_parent: true,
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(EguiPlugin::default())
         .insert_resource(Scenarios(scenes))
         .insert_resource(UiState {
