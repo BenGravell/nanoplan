@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::{Control, Planner, Simulator, State, StraightPlanner, step};
+use nanoplan::{Context, Control, PlannerKind, Simulator, State, step};
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
@@ -23,43 +23,84 @@ struct Scenario {
     name: &'static str,
     ego: State,
     actors: Vec<Actor>,
+    centerline: Vec<[f64; 2]>,
+    target_speed: f64,
+}
+
+fn straight_road() -> Vec<[f64; 2]> {
+    (0..=45).map(|i| [i as f64 * 10.0 - 50.0, 0.0]).collect()
+}
+
+fn s_curve_road() -> Vec<[f64; 2]> {
+    (0..=90)
+        .map(|i| {
+            let x = i as f64 * 5.0 - 50.0;
+            [x, 8.0 * (x / 40.0).sin()]
+        })
+        .collect()
 }
 
 // ponytail: synthetic scenarios stand in for nuPlan logs until a loader exists
 fn scenarios() -> Vec<Scenario> {
     let state = |x, y, yaw, speed| State { x, y, yaw, speed };
     let drive = |accel, curvature| Control { accel, curvature };
+    let scenario = |name, ego, actors, centerline| Scenario {
+        name,
+        ego,
+        actors,
+        centerline,
+        target_speed: 10.0,
+    };
     vec![
-        Scenario {
-            name: "open road",
-            ego: state(0.0, 0.0, 0.0, 8.0),
-            actors: vec![],
-        },
-        Scenario {
-            name: "oncoming",
-            ego: state(0.0, 0.0, 0.0, 8.0),
-            actors: vec![Actor {
+        scenario(
+            "offset start",
+            state(0.0, 3.0, 0.0, 8.0),
+            vec![],
+            straight_road(),
+        ),
+        scenario(
+            "s-curve road",
+            state(0.0, 0.0, 0.0, 8.0),
+            vec![],
+            s_curve_road(),
+        ),
+        scenario(
+            "stopped lead",
+            state(0.0, 0.0, 0.0, 8.0),
+            vec![Actor {
+                init: state(60.0, 0.0, 0.0, 0.0),
+                control: drive(0.0, 0.0),
+            }],
+            straight_road(),
+        ),
+        scenario(
+            "oncoming",
+            state(0.0, 0.0, 0.0, 8.0),
+            vec![Actor {
                 init: state(160.0, 4.0, std::f64::consts::PI, 8.0),
                 control: drive(0.0, 0.0),
             }],
-        },
-        Scenario {
-            name: "crossing",
-            ego: state(0.0, 0.0, 0.0, 8.0),
-            actors: vec![Actor {
+            straight_road(),
+        ),
+        scenario(
+            "crossing",
+            state(0.0, 0.0, 0.0, 8.0),
+            vec![Actor {
                 init: state(80.0, -60.0, std::f64::consts::FRAC_PI_2, 6.0),
                 control: drive(0.0, 0.0),
             }],
-        },
-        Scenario {
-            name: "curving lead",
-            ego: state(0.0, 0.0, 0.0, 8.0),
-            actors: vec![Actor {
+            straight_road(),
+        ),
+        scenario(
+            "curving lead",
+            state(0.0, 0.0, 0.0, 8.0),
+            vec![Actor {
                 init: state(20.0, 0.0, 0.0, 8.0),
                 // curves away; constant-velocity prediction visibly diverges
                 control: drive(0.0, 0.02),
             }],
-        },
+            straight_road(),
+        ),
     ]
 }
 
@@ -69,6 +110,7 @@ struct Scenarios(Vec<Scenario>);
 #[derive(Resource)]
 struct UiState {
     scenario: usize,
+    planner: PlannerKind,
     time_s: f32,
     preview_s: f32,
 }
@@ -80,16 +122,19 @@ struct Rollout {
     actors: Vec<Vec<State>>,
 }
 
-fn compute_rollout(sc: &Scenario) -> Rollout {
-    let steps = (DURATION_S / DT) as usize;
-    let mut sim = Simulator {
-        state: sc.ego,
+fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
+    Context {
+        centerline: &sc.centerline,
+        actors,
+        target_speed: sc.target_speed,
         dt: DT,
-    };
-    let mut planner = StraightPlanner { horizon: 1 };
-    let mut ego = vec![sc.ego];
-    ego.extend((0..steps).map(|_| sim.tick(&mut planner)));
-    let actors = sc
+        horizon,
+    }
+}
+
+fn compute_rollout(sc: &Scenario, kind: PlannerKind) -> Rollout {
+    let steps = (DURATION_S / DT) as usize;
+    let actors: Vec<Vec<State>> = sc
         .actors
         .iter()
         .map(|a| {
@@ -102,6 +147,16 @@ fn compute_rollout(sc: &Scenario) -> Rollout {
                 .collect()
         })
         .collect();
+    let mut sim = Simulator {
+        state: sc.ego,
+        dt: DT,
+    };
+    let mut planner = kind.build();
+    let mut ego = vec![sc.ego];
+    ego.extend((0..steps).map(|i| {
+        let current: Vec<State> = actors.iter().map(|t| t[i]).collect();
+        sim.tick(planner.as_mut(), &ctx(sc, &current, 1))
+    }));
     Rollout { ego, actors }
 }
 
@@ -117,13 +172,14 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
 
 fn main() {
     let scenes = scenarios();
-    let rollout = compute_rollout(&scenes[0]);
+    let rollout = compute_rollout(&scenes[0], PlannerKind::Straight);
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
         .insert_resource(Scenarios(scenes))
         .insert_resource(UiState {
             scenario: 0,
+            planner: PlannerKind::Straight,
             time_s: 0.0,
             preview_s: 0.0,
         })
@@ -143,7 +199,7 @@ fn ui(
     mut rollout: ResMut<Rollout>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
-    let prev = state.scenario;
+    let prev = (state.scenario, state.planner);
     egui::Window::new("nanoplan").show(ctx, |ui| {
         egui::ComboBox::from_label("scenario")
             .selected_text(scenes.0[state.scenario].name)
@@ -152,14 +208,21 @@ fn ui(
                     ui.selectable_value(&mut state.scenario, i, sc.name);
                 }
             });
+        egui::ComboBox::from_label("planner")
+            .selected_text(state.planner.name())
+            .show_ui(ui, |ui| {
+                for kind in PlannerKind::ALL {
+                    ui.selectable_value(&mut state.planner, kind, kind.name());
+                }
+            });
         ui.add(egui::Slider::new(&mut state.time_s, 0.0..=DURATION_S as f32).text("time [s]"));
         ui.add(
             egui::Slider::new(&mut state.preview_s, 0.0..=PREVIEW_MAX_S as f32)
                 .text("future preview [s]"),
         );
     });
-    if state.scenario != prev {
-        *rollout = compute_rollout(&scenes.0[state.scenario]);
+    if (state.scenario, state.planner) != prev {
+        *rollout = compute_rollout(&scenes.0[state.scenario], state.planner);
         state.time_s = 0.0;
     }
     // future preview active: frame the whole screen in the accent color
@@ -193,13 +256,21 @@ fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
 fn draw(
     mut gizmos: Gizmos,
     state: Res<UiState>,
+    scenes: Res<Scenarios>,
     rollout: Res<Rollout>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
+    let sc = &scenes.0[state.scenario];
     let idx = ((state.time_s as f64 / DT).round() as usize).min(rollout.ego.len() - 1);
     let ego = rollout.ego[idx];
     camera.translation = px(&ego).extend(camera.translation.z);
 
+    gizmos.linestrip_2d(
+        sc.centerline
+            .iter()
+            .map(|p| Vec2::new(p[0] as f32, p[1] as f32) * PX_PER_M),
+        Color::srgb(0.35, 0.35, 0.35),
+    );
     draw_car(&mut gizmos, &ego, Color::WHITE);
     for actor in &rollout.actors {
         draw_car(&mut gizmos, &actor[idx], Color::srgb(0.6, 0.6, 0.6));
@@ -210,7 +281,8 @@ fn draw(
         return;
     }
     // planned ego future: replan from the scrubbed state, roll out k ticks
-    let plan = StraightPlanner { horizon: k }.plan(ego);
+    let current: Vec<State> = rollout.actors.iter().map(|t| t[idx]).collect();
+    let plan = state.planner.build().plan(ego, &ctx(sc, &current, k));
     let planned = rollout_controls(ego, &plan[..k.min(plan.len())]);
     gizmos.linestrip_2d(std::iter::once(&ego).chain(&planned).map(px), ACCENT);
     if let Some(last) = planned.last() {
