@@ -4,9 +4,11 @@
 //! over a kinematic car model.
 
 pub mod metrics;
+mod pi2ddp;
 mod planners;
 
 pub use metrics::Metrics;
+pub use pi2ddp::Pi2DdpPlanner;
 pub use planners::{BezierIdmPlanner, LatticePlanner, Path};
 
 /// Ego state: position, yaw, and speed.
@@ -72,13 +74,15 @@ pub enum PlannerKind {
     Straight,
     BezierIdm,
     Lattice,
+    Pi2Ddp,
 }
 
 impl PlannerKind {
-    pub const ALL: [PlannerKind; 3] = [
+    pub const ALL: [PlannerKind; 4] = [
         PlannerKind::Straight,
         PlannerKind::BezierIdm,
         PlannerKind::Lattice,
+        PlannerKind::Pi2Ddp,
     ];
 
     pub fn name(self) -> &'static str {
@@ -86,6 +90,7 @@ impl PlannerKind {
             PlannerKind::Straight => "straight (strawman)",
             PlannerKind::BezierIdm => "bezier + IDM",
             PlannerKind::Lattice => "frenet lattice",
+            PlannerKind::Pi2Ddp => "PI2-DDP",
         }
     }
 
@@ -94,6 +99,7 @@ impl PlannerKind {
             PlannerKind::Straight => Box::new(StraightPlanner),
             PlannerKind::BezierIdm => Box::new(BezierIdmPlanner),
             PlannerKind::Lattice => Box::new(LatticePlanner),
+            PlannerKind::Pi2Ddp => Box::new(Pi2DdpPlanner::default()),
         }
     }
 }
