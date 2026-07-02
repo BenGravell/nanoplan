@@ -15,7 +15,7 @@
 //! the lane width at the preview distance.
 
 use crate::planners::Path;
-use crate::{Context, Control, Planner, State, step};
+use crate::{Context, Control, Planner, Rng, State, step};
 
 const HORIZON: usize = 50;
 const ROLLOUTS: usize = 32; // K in the paper; K > n + m with margin
@@ -86,25 +86,6 @@ fn clamp_u(u: V2) -> V2 {
         u[0].clamp(-ACCEL_LIMIT, ACCEL_LIMIT),
         u[1].clamp(-KAPPA_LIMIT, KAPPA_LIMIT),
     ]
-}
-
-// --- deterministic RNG (xorshift* + Box-Muller); avoids a rand dependency ---
-
-struct Rng(u64);
-
-impl Rng {
-    fn uniform(&mut self) -> f64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0.wrapping_mul(0x2545F4914F6CDD1D) >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    fn normal(&mut self) -> f64 {
-        let u1 = self.uniform().max(1e-12);
-        let u2 = self.uniform();
-        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
-    }
 }
 
 /// Sample from N(0, sigma) via the analytic 2x2 Cholesky factor.

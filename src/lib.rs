@@ -6,26 +6,58 @@
 pub mod metrics;
 mod pi2ddp;
 mod planners;
+pub mod scenario;
 
 pub use metrics::Metrics;
 pub use pi2ddp::Pi2DdpPlanner;
 pub use planners::{BezierIdmPlanner, LatticePlanner, Path};
+pub use scenario::{Rollout, Scenario, simulate};
+
+use serde::{Deserialize, Serialize};
 
 /// Ego state: position, yaw, and speed.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct State {
     pub x: f64,
     pub y: f64,
+    #[serde(default)]
     pub yaw: f64,
+    #[serde(default)]
     pub speed: f64,
 }
 
 /// Control action: longitudinal acceleration and path curvature.
 /// The default (all zeros) drives straight ahead at constant speed.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Control {
+    #[serde(default)]
     pub accel: f64,
+    #[serde(default)]
     pub curvature: f64,
+}
+
+/// Deterministic xorshift* RNG with Box-Muller normals; avoids a rand
+/// dependency and keeps batches and tests reproducible.
+pub(crate) struct Rng(pub u64);
+
+impl Rng {
+    pub fn uniform(&mut self) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0.wrapping_mul(0x2545F4914F6CDD1D) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    pub fn normal(&mut self) -> f64 {
+        let u1 = self.uniform().max(1e-12);
+        let u2 = self.uniform();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+    }
+
+    /// Uniform sample in [lo, hi).
+    pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.uniform()
+    }
 }
 
 /// Advance the kinematic model by one Euler step of length `dt`.

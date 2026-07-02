@@ -3,7 +3,10 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::{Context, Control, Metrics, Path, PlannerKind, Simulator, State, metrics, step};
+use nanoplan::scenario::{Actor, MapData};
+use nanoplan::{
+    Context, Control, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step,
+};
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
@@ -12,32 +15,6 @@ const PX_PER_M: f32 = 6.0;
 /// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
 const CAR_SIZE_M: Vec2 = Vec2::new(5.176, 2.297);
 const ACCENT: Color = Color::srgb(1.0, 0.25, 0.85);
-
-/// A non-ego actor: initial state plus the constant control it drives with.
-struct Actor {
-    init: State,
-    control: Control,
-}
-
-/// Environmental data mirroring the nuPlan map/scenario elements
-/// (drivable area edges, lane boundary, crosswalks, scene goal pose).
-struct MapData {
-    /// Lateral offset of the road boundaries (drivable area edge).
-    road_half_width: f64,
-    /// Lateral offset of a dashed lane divider, when an opposing lane exists.
-    divider_d: Option<f64>,
-    /// Stations (arc length along the centerline) of crosswalk bands.
-    crosswalk_s: Vec<f64>,
-}
-
-struct Scenario {
-    name: &'static str,
-    ego: State,
-    actors: Vec<Actor>,
-    centerline: Vec<[f64; 2]>,
-    target_speed: f64,
-    map: MapData,
-}
 
 fn straight_road() -> Vec<[f64; 2]> {
     (0..=45).map(|i| [i as f64 * 10.0 - 50.0, 0.0]).collect()
@@ -56,14 +33,13 @@ fn s_curve_road() -> Vec<[f64; 2]> {
 fn scenarios() -> Vec<Scenario> {
     let state = |x, y, yaw, speed| State { x, y, yaw, speed };
     let drive = |accel, curvature| Control { accel, curvature };
-    // 5.5 m matches the drivable-area bound in the metrics
     let map = |divider_d, crosswalk_s| MapData {
-        road_half_width: 5.5,
         divider_d,
         crosswalk_s,
+        ..Default::default()
     };
-    let scenario = |name, ego, actors, centerline, map| Scenario {
-        name,
+    let scenario = |name: &str, ego, actors, centerline, map| Scenario {
+        name: name.into(),
         ego,
         actors,
         centerline,
@@ -141,14 +117,9 @@ struct UiState {
     preview_s: f32,
 }
 
-/// Precomputed simulation: ego and actor states at every tick, plus the
-/// nuPlan closed-loop metrics of the finished rollout.
+/// The current closed-loop simulation shown in the viewer.
 #[derive(Resource)]
-struct Rollout {
-    ego: Vec<State>,
-    actors: Vec<Vec<State>>,
-    metrics: Metrics,
-}
+struct Sim(Rollout);
 
 fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
     Context {
@@ -157,39 +128,6 @@ fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a>
         target_speed: sc.target_speed,
         dt: DT,
         horizon,
-    }
-}
-
-fn compute_rollout(sc: &Scenario, kind: PlannerKind) -> Rollout {
-    let steps = (DURATION_S / DT) as usize;
-    let actors: Vec<Vec<State>> = sc
-        .actors
-        .iter()
-        .map(|a| {
-            let mut s = a.init;
-            std::iter::once(s)
-                .chain((0..steps).map(|_| {
-                    s = step(s, a.control, DT);
-                    s
-                }))
-                .collect()
-        })
-        .collect();
-    let mut sim = Simulator {
-        state: sc.ego,
-        dt: DT,
-    };
-    let mut planner = kind.build();
-    let mut ego = vec![sc.ego];
-    ego.extend((0..steps).map(|i| {
-        let current: Vec<State> = actors.iter().map(|t| t[i]).collect();
-        sim.tick(planner.as_mut(), &ctx(sc, &current, 1))
-    }));
-    let metrics = metrics::evaluate(&ego, &actors, &sc.centerline, sc.target_speed, DT);
-    Rollout {
-        ego,
-        actors,
-        metrics,
     }
 }
 
@@ -205,7 +143,7 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
 
 fn main() {
     let scenes = scenarios();
-    let rollout = compute_rollout(&scenes[0], PlannerKind::Straight);
+    let rollout = Sim(simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT));
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -237,16 +175,16 @@ fn ui(
     mut contexts: EguiContexts,
     scenes: Res<Scenarios>,
     mut state: ResMut<UiState>,
-    mut rollout: ResMut<Rollout>,
+    mut rollout: ResMut<Sim>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let prev = (state.scenario, state.planner);
     egui::Window::new("nanoplan").show(ctx, |ui| {
         egui::ComboBox::from_label("scenario")
-            .selected_text(scenes.0[state.scenario].name)
+            .selected_text(&scenes.0[state.scenario].name)
             .show_ui(ui, |ui| {
                 for (i, sc) in scenes.0.iter().enumerate() {
-                    ui.selectable_value(&mut state.scenario, i, sc.name);
+                    ui.selectable_value(&mut state.scenario, i, &sc.name);
                 }
             });
         egui::ComboBox::from_label("planner")
@@ -263,7 +201,7 @@ fn ui(
         );
         ui.separator();
         let idx = (state.time_s as f64 / DT).round() as usize;
-        let (tick_scores, tick_score) = rollout.metrics.at(idx);
+        let (tick_scores, tick_score) = rollout.0.metrics.at(idx);
         egui::Grid::new("metrics").show(ui, |ui| {
             ui.label("");
             ui.label("@t");
@@ -272,7 +210,7 @@ fn ui(
             for ((label, tick), avg) in Metrics::LABELS
                 .iter()
                 .zip(tick_scores)
-                .zip(rollout.metrics.aggregate)
+                .zip(rollout.0.metrics.aggregate)
             {
                 ui.label(*label);
                 ui.label(format!("{tick:.2}"));
@@ -281,12 +219,12 @@ fn ui(
             }
             ui.strong("closed-loop score");
             ui.strong(format!("{tick_score:.2}"));
-            ui.strong(format!("{:.2}", rollout.metrics.score));
+            ui.strong(format!("{:.2}", rollout.0.metrics.score));
             ui.end_row();
         });
     });
     if (state.scenario, state.planner) != prev {
-        *rollout = compute_rollout(&scenes.0[state.scenario], state.planner);
+        rollout.0 = simulate(&scenes.0[state.scenario], state.planner, DURATION_S, DT);
         state.time_s = 0.0;
     }
     // future preview active: frame the whole screen in the accent color
@@ -375,17 +313,17 @@ fn draw(
     mut gizmos: Gizmos,
     state: Res<UiState>,
     scenes: Res<Scenarios>,
-    rollout: Res<Rollout>,
+    rollout: Res<Sim>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
     let sc = &scenes.0[state.scenario];
-    let idx = ((state.time_s as f64 / DT).round() as usize).min(rollout.ego.len() - 1);
-    let ego = rollout.ego[idx];
+    let idx = ((state.time_s as f64 / DT).round() as usize).min(rollout.0.ego.len() - 1);
+    let ego = rollout.0.ego[idx];
     camera.translation = px(&ego).extend(camera.translation.z);
 
     draw_map(&mut gizmos, sc);
     draw_car(&mut gizmos, &ego, Color::WHITE);
-    for actor in &rollout.actors {
+    for actor in &rollout.0.actors {
         draw_car(&mut gizmos, &actor[idx], Color::srgb(0.6, 0.6, 0.6));
     }
 
@@ -394,7 +332,7 @@ fn draw(
         return;
     }
     // planned ego future: replan from the scrubbed state, roll out k ticks
-    let current: Vec<State> = rollout.actors.iter().map(|t| t[idx]).collect();
+    let current: Vec<State> = rollout.0.actors.iter().map(|t| t[idx]).collect();
     let plan = state.planner.build().plan(ego, &ctx(sc, &current, k));
     let planned = rollout_controls(ego, &plan[..k.min(plan.len())]);
     gizmos.linestrip_2d(std::iter::once(&ego).chain(&planned).map(px), ACCENT);
@@ -403,7 +341,7 @@ fn draw(
     }
     // predicted actor futures: constant velocity from the scrubbed state
     let dim = ACCENT.with_alpha(0.5);
-    for actor in &rollout.actors {
+    for actor in &rollout.0.actors {
         let predicted = rollout_controls(actor[idx], &vec![Control::default(); k]);
         gizmos.linestrip_2d(std::iter::once(&actor[idx]).chain(&predicted).map(px), dim);
         if let Some(last) = predicted.last() {
