@@ -3,8 +3,10 @@
 //! Planned architecture: trajectory trees expanded by sampling-based DDP
 //! over a kinematic car model.
 
+pub mod metrics;
 mod planners;
 
+pub use metrics::Metrics;
 pub use planners::{BezierIdmPlanner, LatticePlanner, Path};
 
 /// Ego state: position, yaw, and speed.
