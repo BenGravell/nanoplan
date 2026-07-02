@@ -12,7 +12,7 @@
 //! function of simulation outputs (ego trace, actor traces, centerline,
 //! speed limit, dt) — planner internals are off limits.
 
-use crate::{Path, State};
+use crate::{Path, State, wrap_angle};
 
 /// Circle approximation of a car footprint for collision/TTC checks.
 // ponytail: nuPlan intersects oriented boxes; a circle matches the planners'
@@ -81,10 +81,6 @@ fn project(s: &State, t: f64) -> State {
         y: s.y + s.speed * s.yaw.sin() * t,
         ..*s
     }
-}
-
-fn wrap_angle(a: f64) -> f64 {
-    (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
 /// Forward difference, padded by repeating the last value so the result has

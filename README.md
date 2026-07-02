@@ -23,6 +23,25 @@ cargo run    # interactive viewer: scenario selector, time scrubber, future prev
 cargo test
 ```
 
+## Batch evaluation
+
+```sh
+cargo run --release --bin batch -- --count 100          # synthetic scenario sweep
+cargo run --release --bin batch -- --count 0 --dir DIR  # scenario JSON files
+```
+
+Runs every planner over every scenario: per-scenario metric rows as CSV on
+stdout, mean score per planner on stderr. Scenarios are plain JSON
+(`nanoplan::scenario::Scenario`); actors with a logged `trajectory` are
+replayed (interpolated, constant velocity past the end) instead of
+constant-velocity extrapolation. To run real nuPlan log scenarios, export
+them first (standard library only, no devkit install):
+
+```sh
+python3 tools/export_nuplan_scenarios.py path/to/log.db out_dir
+cargo run --release --bin batch -- --count 0 --dir out_dir
+```
+
 ## Web deploy
 
 Pushes to `main` build the viewer for `wasm32-unknown-unknown` with
