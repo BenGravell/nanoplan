@@ -14,7 +14,7 @@ Ultra minimalist motion planner for car-like vehicles, written in Rust with zero
 ## Usage
 
 ```sh
-cargo build
+cargo run    # interactive viewer: scenario selector, time scrubber, future preview
 cargo test
 ```
 
