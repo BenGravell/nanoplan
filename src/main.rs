@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::{Context, Control, Metrics, PlannerKind, Simulator, State, metrics, step};
+use nanoplan::{Context, Control, Metrics, Path, PlannerKind, Simulator, State, metrics, step};
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
@@ -19,12 +19,24 @@ struct Actor {
     control: Control,
 }
 
+/// Environmental data mirroring the nuPlan map/scenario elements
+/// (drivable area edges, lane boundary, crosswalks, scene goal pose).
+struct MapData {
+    /// Lateral offset of the road boundaries (drivable area edge).
+    road_half_width: f64,
+    /// Lateral offset of a dashed lane divider, when an opposing lane exists.
+    divider_d: Option<f64>,
+    /// Stations (arc length along the centerline) of crosswalk bands.
+    crosswalk_s: Vec<f64>,
+}
+
 struct Scenario {
     name: &'static str,
     ego: State,
     actors: Vec<Actor>,
     centerline: Vec<[f64; 2]>,
     target_speed: f64,
+    map: MapData,
 }
 
 fn straight_road() -> Vec<[f64; 2]> {
@@ -44,12 +56,19 @@ fn s_curve_road() -> Vec<[f64; 2]> {
 fn scenarios() -> Vec<Scenario> {
     let state = |x, y, yaw, speed| State { x, y, yaw, speed };
     let drive = |accel, curvature| Control { accel, curvature };
-    let scenario = |name, ego, actors, centerline| Scenario {
+    // 5.5 m matches the drivable-area bound in the metrics
+    let map = |divider_d, crosswalk_s| MapData {
+        road_half_width: 5.5,
+        divider_d,
+        crosswalk_s,
+    };
+    let scenario = |name, ego, actors, centerline, map| Scenario {
         name,
         ego,
         actors,
         centerline,
         target_speed: 10.0,
+        map,
     };
     vec![
         scenario(
@@ -57,12 +76,14 @@ fn scenarios() -> Vec<Scenario> {
             state(0.0, 3.0, 0.0, 8.0),
             vec![],
             straight_road(),
+            map(None, vec![]),
         ),
         scenario(
             "s-curve road",
             state(0.0, 0.0, 0.0, 8.0),
             vec![],
             s_curve_road(),
+            map(None, vec![]),
         ),
         scenario(
             "stopped lead",
@@ -72,6 +93,7 @@ fn scenarios() -> Vec<Scenario> {
                 control: drive(0.0, 0.0),
             }],
             straight_road(),
+            map(None, vec![]),
         ),
         scenario(
             "oncoming",
@@ -81,6 +103,7 @@ fn scenarios() -> Vec<Scenario> {
                 control: drive(0.0, 0.0),
             }],
             straight_road(),
+            map(Some(2.0), vec![]),
         ),
         scenario(
             "crossing",
@@ -90,6 +113,8 @@ fn scenarios() -> Vec<Scenario> {
                 control: drive(0.0, 0.0),
             }],
             straight_road(),
+            // crossing traffic at x = 80 → station 130 on a road starting at -50
+            map(None, vec![130.0]),
         ),
         scenario(
             "curving lead",
@@ -100,6 +125,7 @@ fn scenarios() -> Vec<Scenario> {
                 control: drive(0.0, 0.02),
             }],
             straight_road(),
+            map(None, vec![]),
         ),
     ]
 }
@@ -271,6 +297,60 @@ fn px(s: &State) -> Vec2 {
     Vec2::new(s.x as f32, s.y as f32) * PX_PER_M
 }
 
+fn ppx(p: [f64; 2]) -> Vec2 {
+    Vec2::new(p[0] as f32, p[1] as f32) * PX_PER_M
+}
+
+/// Draw the scenario's map: road boundaries, centerline, lane divider,
+/// crosswalks, and the goal pose at the end of the route.
+fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
+    let path = Path::new(&sc.centerline);
+    let len = path.length();
+    let line = |d: f64| {
+        (0..)
+            .map(move |i| i as f64 * 2.0)
+            .take_while(move |s| *s <= len)
+            .map(move |s| (s, d))
+    };
+    let boundary = Color::srgb(0.55, 0.55, 0.55);
+    for d in [-sc.map.road_half_width, sc.map.road_half_width] {
+        gizmos.linestrip_2d(line(d).map(|(s, d)| ppx(path.frenet_to_xy(s, d))), boundary);
+    }
+    gizmos.linestrip_2d(
+        line(0.0).map(|(s, d)| ppx(path.frenet_to_xy(s, d))),
+        Color::srgb(0.35, 0.35, 0.35),
+    );
+    if let Some(d) = sc.map.divider_d {
+        // dashed divider between opposing lanes: 3 m dash, 3 m gap
+        let mut s = 0.0;
+        while s + 3.0 <= len {
+            gizmos.line_2d(
+                ppx(path.frenet_to_xy(s, d)),
+                ppx(path.frenet_to_xy(s + 3.0, d)),
+                Color::srgb(0.65, 0.55, 0.2),
+            );
+            s += 6.0;
+        }
+    }
+    for &s in &sc.map.crosswalk_s {
+        // stripes run along the road direction, spanning its width
+        let mut d = -sc.map.road_half_width + 0.5;
+        while d <= sc.map.road_half_width - 0.5 {
+            gizmos.line_2d(
+                ppx(path.frenet_to_xy(s - 1.5, d)),
+                ppx(path.frenet_to_xy(s + 1.5, d)),
+                Color::srgb(0.7, 0.7, 0.7),
+            );
+            d += 1.5;
+        }
+    }
+    // scene goal pose (nuPlan scene.goal_ego_pose): end of the route
+    let goal = ppx(path.frenet_to_xy(len, 0.0));
+    let green = Color::srgb(0.25, 0.8, 0.45);
+    gizmos.circle_2d(goal, 2.0 * PX_PER_M, green);
+    gizmos.circle_2d(goal, 0.5 * PX_PER_M, green);
+}
+
 fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
     let iso = Isometry2d::new(px(s), Rot2::radians(s.yaw as f32));
     gizmos.rect_2d(iso, CAR_SIZE_M * PX_PER_M, color);
@@ -291,12 +371,7 @@ fn draw(
     let ego = rollout.ego[idx];
     camera.translation = px(&ego).extend(camera.translation.z);
 
-    gizmos.linestrip_2d(
-        sc.centerline
-            .iter()
-            .map(|p| Vec2::new(p[0] as f32, p[1] as f32) * PX_PER_M),
-        Color::srgb(0.35, 0.35, 0.35),
-    );
+    draw_map(&mut gizmos, sc);
     draw_car(&mut gizmos, &ego, Color::WHITE);
     for actor in &rollout.actors {
         draw_car(&mut gizmos, &actor[idx], Color::srgb(0.6, 0.6, 0.6));
