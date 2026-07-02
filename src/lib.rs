@@ -1,33 +1,70 @@
 //! Ultra minimalist motion planner for car-like vehicles.
 //!
 //! Planned architecture: trajectory trees expanded by sampling-based DDP
-//! over a kinematic bicycle model. Zero dependencies.
+//! over a kinematic car model.
 
-/// State of a car-like vehicle: position, heading, and speed.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Ego state: position, yaw, and speed.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct State {
     pub x: f64,
     pub y: f64,
-    pub heading: f64,
+    pub yaw: f64,
     pub speed: f64,
 }
 
-/// Control input: longitudinal acceleration and front steering angle.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Control action: longitudinal acceleration and path curvature.
+/// The default (all zeros) drives straight ahead at constant speed.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Control {
     pub accel: f64,
-    pub steer: f64,
+    pub curvature: f64,
 }
 
-/// Advance the kinematic bicycle model by one Euler step of length `dt`.
-///
-/// `wheelbase` is the distance between front and rear axles.
-pub fn step(state: State, control: Control, wheelbase: f64, dt: f64) -> State {
+/// Advance the kinematic model by one Euler step of length `dt`.
+pub fn step(s: State, u: Control, dt: f64) -> State {
     State {
-        x: state.x + state.speed * state.heading.cos() * dt,
-        y: state.y + state.speed * state.heading.sin() * dt,
-        heading: state.heading + state.speed * control.steer.tan() / wheelbase * dt,
-        speed: state.speed + control.accel * dt,
+        x: s.x + s.speed * s.yaw.cos() * dt,
+        y: s.y + s.speed * s.yaw.sin() * dt,
+        yaw: s.yaw + s.speed * u.curvature * dt,
+        speed: s.speed + u.accel * dt,
+    }
+}
+
+/// A planner turns the current state into a control trajectory.
+/// The simulator applies the first control each tick (receding horizon).
+pub trait Planner {
+    fn plan(&mut self, state: State) -> Vec<Control>;
+}
+
+/// Strawman planner: straight ahead at constant speed, always.
+pub struct StraightPlanner {
+    pub horizon: usize,
+}
+
+impl Planner for StraightPlanner {
+    fn plan(&mut self, _state: State) -> Vec<Control> {
+        vec![Control::default(); self.horizon]
+    }
+}
+
+/// Ego vehicle simulator.
+pub struct Simulator {
+    pub state: State,
+    pub dt: f64,
+}
+
+impl Simulator {
+    /// Replan from the current state, apply the first planned control,
+    /// and advance one tick. Returns the new state.
+    /// An empty plan coasts (zero control).
+    pub fn tick(&mut self, planner: &mut dyn Planner) -> State {
+        let u = planner
+            .plan(self.state)
+            .first()
+            .copied()
+            .unwrap_or_default();
+        self.state = step(self.state, u, self.dt);
+        self.state
     }
 }
 
@@ -38,41 +75,54 @@ mod tests {
     #[test]
     fn drives_straight() {
         let s0 = State {
-            x: 0.0,
-            y: 0.0,
-            heading: 0.0,
             speed: 1.0,
+            ..Default::default()
         };
-        let u = Control {
-            accel: 0.0,
-            steer: 0.0,
-        };
-        let s1 = step(s0, u, 2.5, 0.1);
+        let s1 = step(s0, Control::default(), 0.1);
         assert_eq!(
             s1,
             State {
                 x: 0.1,
-                y: 0.0,
-                heading: 0.0,
-                speed: 1.0
+                speed: 1.0,
+                ..Default::default()
             }
         );
     }
 
     #[test]
-    fn turns_left_when_steering_left() {
+    fn turns_left_with_positive_curvature() {
         let s0 = State {
-            x: 0.0,
-            y: 0.0,
-            heading: 0.0,
             speed: 1.0,
+            ..Default::default()
         };
         let u = Control {
             accel: 0.0,
-            steer: 0.3,
+            curvature: 0.1,
         };
-        let s1 = step(s0, u, 2.5, 0.1);
-        assert!(s1.heading > 0.0);
+        let s1 = step(s0, u, 0.1);
+        assert!(s1.yaw > 0.0);
+    }
+
+    #[test]
+    fn strawman_planner_holds_heading_and_speed() {
+        let mut sim = Simulator {
+            state: State {
+                x: 1.0,
+                y: 2.0,
+                yaw: 0.5,
+                speed: 3.0,
+            },
+            dt: 0.1,
+        };
+        let mut planner = StraightPlanner { horizon: 10 };
+        for _ in 0..100 {
+            sim.tick(&mut planner);
+        }
+        let s = sim.state;
+        assert_eq!((s.yaw, s.speed), (0.5, 3.0));
+        // 100 ticks of 0.1 s at 3 m/s = 30 m along the initial heading
+        assert!((s.x - (1.0 + 30.0 * 0.5f64.cos())).abs() < 1e-9);
+        assert!((s.y - (2.0 + 30.0 * 0.5f64.sin())).abs() < 1e-9);
     }
 
     // ponytail: smoke test that bevy links and boots headless; delete once a real app exists
