@@ -2,11 +2,13 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -26,3 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/deploy-pages@v4
+        with:
+          # ride out slow Pages queues (run 6 timed out at the 10 min default)
+          timeout: 1800000
