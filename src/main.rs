@@ -262,13 +262,25 @@ fn ui(
                 .text("future preview [s]"),
         );
         ui.separator();
+        let idx = (state.time_s as f64 / DT).round() as usize;
+        let (tick_scores, tick_score) = rollout.metrics.at(idx);
         egui::Grid::new("metrics").show(ui, |ui| {
-            for (label, value) in Metrics::LABELS.iter().zip(rollout.metrics.values()) {
+            ui.label("");
+            ui.label("@t");
+            ui.label("agg");
+            ui.end_row();
+            for ((label, tick), avg) in Metrics::LABELS
+                .iter()
+                .zip(tick_scores)
+                .zip(rollout.metrics.aggregate)
+            {
                 ui.label(*label);
-                ui.label(format!("{value:.2}"));
+                ui.label(format!("{tick:.2}"));
+                ui.label(format!("{avg:.2}"));
                 ui.end_row();
             }
             ui.strong("closed-loop score");
+            ui.strong(format!("{tick_score:.2}"));
             ui.strong(format!("{:.2}", rollout.metrics.score));
             ui.end_row();
         });
