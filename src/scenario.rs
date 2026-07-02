@@ -6,14 +6,57 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Context, Control, Metrics, PlannerKind, Simulator, State, metrics, step};
+use crate::{Context, Control, Metrics, PlannerKind, Simulator, State, metrics, step, wrap_angle};
 
-/// A non-ego actor: initial state plus the constant control it drives with.
+/// A timestamped state along a logged actor trajectory.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Waypoint {
+    /// Seconds since the start of the scenario.
+    pub t: f64,
+    #[serde(flatten)]
+    pub state: State,
+}
+
+/// A non-ego actor. With a logged `trajectory` the actor replays it;
+/// otherwise it integrates `init` under the constant `control`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Actor {
     pub init: State,
     #[serde(default)]
     pub control: Control,
+    /// Logged trajectory to replay (e.g. from a nuPlan log); must be sorted
+    /// by time. Overrides `control` when non-empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trajectory: Vec<Waypoint>,
+}
+
+/// Replayed state at time `t`: linear interpolation between waypoints
+/// (shortest-arc for yaw), the first waypoint before the log starts, and
+/// constant velocity beyond its end.
+fn replay(trajectory: &[Waypoint], t: f64) -> State {
+    let first = trajectory[0];
+    if t <= first.t {
+        return first.state;
+    }
+    let last = trajectory[trajectory.len() - 1];
+    if t >= last.t {
+        let s = last.state;
+        let dt = t - last.t;
+        return State {
+            x: s.x + s.speed * s.yaw.cos() * dt,
+            y: s.y + s.speed * s.yaw.sin() * dt,
+            ..s
+        };
+    }
+    let i = trajectory.partition_point(|w| w.t <= t).max(1);
+    let (a, b) = (trajectory[i - 1], trajectory[i]);
+    let u = (t - a.t) / (b.t - a.t).max(1e-9);
+    State {
+        x: a.state.x + (b.state.x - a.state.x) * u,
+        y: a.state.y + (b.state.y - a.state.y) * u,
+        yaw: a.state.yaw + wrap_angle(b.state.yaw - a.state.yaw) * u,
+        speed: a.state.speed + (b.state.speed - a.state.speed) * u,
+    }
 }
 
 /// Environmental data mirroring the nuPlan map/scenario elements
@@ -72,13 +115,19 @@ pub fn simulate(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> R
         .actors
         .iter()
         .map(|a| {
-            let mut s = a.init;
-            std::iter::once(s)
-                .chain((0..steps).map(|_| {
-                    s = step(s, a.control, dt);
-                    s
-                }))
-                .collect()
+            if a.trajectory.is_empty() {
+                let mut s = a.init;
+                std::iter::once(s)
+                    .chain((0..steps).map(|_| {
+                        s = step(s, a.control, dt);
+                        s
+                    }))
+                    .collect()
+            } else {
+                (0..=steps)
+                    .map(|i| replay(&a.trajectory, i as f64 * dt))
+                    .collect()
+            }
         })
         .collect();
     let mut sim = Simulator { state: sc.ego, dt };
@@ -150,6 +199,7 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                             ..Default::default()
                         },
                         control: Control::default(),
+                        trajectory: vec![],
                     }],
                 ),
                 1 => (
@@ -162,6 +212,7 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                             speed: rng.range(4.0, 10.0),
                         },
                         control: Control::default(),
+                        trajectory: vec![],
                     }],
                 ),
                 2 => (
@@ -174,6 +225,7 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                             speed: rng.range(3.0, 8.0),
                         },
                         control: Control::default(),
+                        trajectory: vec![],
                     }],
                 ),
                 _ => ("open", vec![]),
@@ -221,6 +273,61 @@ mod tests {
         assert!(sc.actors.is_empty());
         let back: Scenario = serde_json::from_str(&serde_json::to_string(&sc).unwrap()).unwrap();
         assert_eq!(back.ego, sc.ego);
+    }
+
+    #[test]
+    fn replay_interpolates_and_extrapolates() {
+        let wp = |t, x, speed| Waypoint {
+            t,
+            state: State {
+                x,
+                speed,
+                ..Default::default()
+            },
+        };
+        let actor = Actor {
+            init: wp(0.0, 0.0, 10.0).state,
+            control: Control::default(),
+            trajectory: vec![wp(0.0, 0.0, 10.0), wp(1.0, 10.0, 10.0)],
+        };
+        let sc = Scenario {
+            name: "replay".into(),
+            ego: State {
+                y: 4.0,
+                speed: 1.0,
+                ..Default::default()
+            },
+            actors: vec![actor],
+            centerline: vec![[-10.0, 0.0], [100.0, 0.0]],
+            target_speed: 10.0,
+            map: MapData::default(),
+        };
+        let r = simulate(&sc, crate::PlannerKind::Straight, 2.0, 0.1);
+        // interpolated halfway through the log
+        assert!((r.actors[0][5].x - 5.0).abs() < 1e-9);
+        // constant velocity beyond the log's end
+        assert!((r.actors[0][20].x - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trajectory_json_round_trip() {
+        let json = r#"{
+            "name": "logged",
+            "ego": {"x": 0.0, "y": 0.0, "speed": 8.0},
+            "actors": [{
+                "init": {"x": 30.0, "y": 0.0},
+                "trajectory": [
+                    {"t": 0.0, "x": 30.0, "y": 0.0, "yaw": 0.0, "speed": 5.0},
+                    {"t": 0.5, "x": 32.5, "y": 0.0, "yaw": 0.0, "speed": 5.0}
+                ]
+            }],
+            "centerline": [[-10.0, 0.0], [100.0, 0.0]]
+        }"#;
+        let sc: Scenario = serde_json::from_str(json).unwrap();
+        assert_eq!(sc.actors[0].trajectory.len(), 2);
+        let text = serde_json::to_string(&sc).unwrap();
+        let back: Scenario = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.actors[0].trajectory, sc.actors[0].trajectory);
     }
 
     #[test]

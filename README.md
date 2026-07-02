@@ -32,7 +32,9 @@ cargo run --release --bin batch -- --count 0 --dir DIR  # scenario JSON files
 
 Runs every planner over every scenario: per-scenario metric rows as CSV on
 stdout, mean score per planner on stderr. Scenarios are plain JSON
-(`nanoplan::scenario::Scenario`). To run real nuPlan log scenarios, export
+(`nanoplan::scenario::Scenario`); actors with a logged `trajectory` are
+replayed (interpolated, constant velocity past the end) instead of
+constant-velocity extrapolation. To run real nuPlan log scenarios, export
 them first (standard library only, no devkit install):
 
 ```sh

@@ -9,7 +9,9 @@ runner and viewer can load:
   - centerline: the expert ego route over the horizon (the map itself is not
     in the log database, so the driven route stands in as the lane reference)
   - ego: the ego pose and speed at the scenario's anchor frame
-  - actors: vehicles present at the anchor frame, driving constant velocity
+  - actors: vehicles present at the anchor frame, each with its logged
+    trajectory over the horizon (replayed in simulation; nanoplan
+    extrapolates constant velocity past the log's end)
   - target_speed: the expert's 85th-percentile speed over the horizon
 
 Usage:
@@ -78,9 +80,9 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
             "speed": math.hypot(first["vx"], first["vy"]),
         }
 
-        actors = []
-        for b in db.execute(
-            """SELECT lb.x, lb.y, lb.yaw, lb.vx, lb.vy
+        # vehicles present at the anchor frame, with their logged trajectories
+        track_tokens = db.execute(
+            """SELECT hex(lb.track_token) AS tt
                FROM lidar_box lb
                JOIN track tr ON lb.track_token = tr.token
                JOIN category c ON tr.category_token = c.token
@@ -88,17 +90,35 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
                                           WHERE hex(lidar_pc_token) = ? LIMIT 1)
                  AND c.name = 'vehicle'""",
             (tag["token"],),
-        ):
-            actors.append(
-                {
-                    "init": {
+        ).fetchall()
+        actors = []
+        for row in track_tokens:
+            boxes = db.execute(
+                """SELECT lp.timestamp AS ts, lb.x, lb.y, lb.yaw, lb.vx, lb.vy
+                   FROM lidar_box lb JOIN lidar_pc lp ON lb.lidar_pc_token = lp.token
+                   WHERE hex(lb.track_token) = ? AND lp.timestamp BETWEEN ? AND ?
+                   ORDER BY lp.timestamp""",
+                (row["tt"], t0, t1),
+            ).fetchall()
+            if not boxes:
+                continue
+            trajectory = []
+            for b in boxes:
+                t = (b["ts"] - t0) / 1e6
+                # downsample to the 10 Hz simulation rate
+                if trajectory and t - trajectory[-1]["t"] < 0.099:
+                    continue
+                trajectory.append(
+                    {
+                        "t": round(t, 3),
                         "x": b["x"],
                         "y": b["y"],
                         "yaw": b["yaw"],
                         "speed": math.hypot(b["vx"], b["vy"]),
                     }
-                }
-            )
+                )
+            init = {k: trajectory[0][k] for k in ("x", "y", "yaw", "speed")}
+            actors.append({"init": init, "trajectory": trajectory})
 
         speeds = sorted(math.hypot(r["vx"], r["vy"]) for r in ego_rows)
         target_speed = max(3.0, statistics.quantiles(speeds, n=20)[16])  # p85

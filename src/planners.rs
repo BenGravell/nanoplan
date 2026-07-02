@@ -1,6 +1,6 @@
 //! Planners beyond the strawman, plus the path/Frenet helpers they share.
 
-use crate::{Context, Control, Planner, State};
+use crate::{Context, Control, Planner, State, wrap_angle};
 
 /// A polyline path with arc-length lookup and Frenet projection.
 pub struct Path {
@@ -67,10 +67,6 @@ impl Path {
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
-}
-
-fn wrap_angle(a: f64) -> f64 {
-    (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
 /// Turn a sampled position trajectory (spaced `dt` apart, starting one tick

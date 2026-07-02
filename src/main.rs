@@ -67,6 +67,7 @@ fn scenarios() -> Vec<Scenario> {
             vec![Actor {
                 init: state(60.0, 0.0, 0.0, 0.0),
                 control: drive(0.0, 0.0),
+                trajectory: vec![],
             }],
             straight_road(),
             map(None, vec![]),
@@ -77,6 +78,7 @@ fn scenarios() -> Vec<Scenario> {
             vec![Actor {
                 init: state(160.0, 4.0, std::f64::consts::PI, 8.0),
                 control: drive(0.0, 0.0),
+                trajectory: vec![],
             }],
             straight_road(),
             map(Some(2.0), vec![]),
@@ -87,6 +89,7 @@ fn scenarios() -> Vec<Scenario> {
             vec![Actor {
                 init: state(80.0, -60.0, std::f64::consts::FRAC_PI_2, 6.0),
                 control: drive(0.0, 0.0),
+                trajectory: vec![],
             }],
             straight_road(),
             // crossing traffic at x = 80 → station 130 on a road starting at -50
@@ -99,6 +102,7 @@ fn scenarios() -> Vec<Scenario> {
                 init: state(20.0, 0.0, 0.0, 8.0),
                 // curves away; constant-velocity prediction visibly diverges
                 control: drive(0.0, 0.02),
+                trajectory: vec![],
             }],
             straight_road(),
             map(None, vec![]),
