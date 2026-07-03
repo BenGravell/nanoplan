@@ -6,14 +6,39 @@ description = "Ultra minimalist motion planner for car-like vehicles based on tr
 license = "MIT"
 
 [dependencies]
-# trimmed for wasm size: 2d rendering only, no 3d/ui/audio/scene/picking
+# trimmed for wasm size and compile time: 2d rendering only, no 3d/ui/audio/
+# scene/animation. "2d_bevy_render" looks like the minimal 2D bundle but
+# actually routes through bevy's "common_api", which drags in bevy_ui,
+# bevy_ui_render, bevy_animation, bevy_scene, and every picking backend
+# (mesh/sprite/ui) regardless — none of which this app uses (it's egui for
+# UI, gizmos for drawing, no meshes/scenes). Listing the individual render
+# features instead avoids all of that; verified with `cargo build --timings`
+# (see tools/build_timings.py) that bevy_ui/bevy_animation/bevy_ui_render
+# drop out of the build entirely.
 bevy = { version = "0.19", default-features = false, features = [
     "default_app",
     "default_platform",
-    "2d_bevy_render",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_post_process",
+    "bevy_sprite_render",
+    "bevy_gizmos_render",
+    "bevy_sprite",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_gizmos",
     "bevy_picking", # bevy_egui's pointer integration needs it
 ] }
-bevy_egui = "0.41"
+# default-features off: its "bevy_ui" feature (on by default) drags bevy_ui
+# + bevy_ui_render back in even with them off on the `bevy` dependency above,
+# for embedding egui inside bevy_ui layouts — unused here (see the bevy
+# feature comment above for how this was found).
+bevy_egui = { version = "0.41", default-features = false, features = [
+    "manage_clipboard",
+    "default_fonts",
+    "render",
+    "picking",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 web-time = "1" # std::time::Instant shim that works on wasm
@@ -21,6 +46,10 @@ web-time = "1" # std::time::Instant shim that works on wasm
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
 [profile.dev]
 opt-level = 1
+# full debuginfo roughly doubles codegen+link time for a dependency graph
+# this size and buys little for a project with no debugger-driven workflow;
+# line-tables-only keeps panic/backtrace file:line info.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
