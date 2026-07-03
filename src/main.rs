@@ -19,7 +19,8 @@ const BUNDLED: [&str; 2] = [
 ];
 
 /// All scenarios the viewer offers: built-ins, bundled JSON (e.g. exported
-/// from nuPlan logs), and — on desktop — any directories passed as CLI args.
+/// from nuPlan logs), and — on desktop — any files or directories passed as
+/// CLI args (see also the in-app scenario-loading widget in `ui()`).
 fn all_scenarios() -> Vec<Scenario> {
     let mut all = scenarios();
     all.extend(
@@ -28,10 +29,10 @@ fn all_scenarios() -> Vec<Scenario> {
             .map(|s| serde_json::from_str(s).expect("bundled scenario is valid JSON")),
     );
     #[cfg(not(target_arch = "wasm32"))]
-    for dir in std::env::args().skip(1) {
-        match nanoplan::scenarios::load_dir(std::path::Path::new(&dir)) {
+    for arg in std::env::args().skip(1) {
+        match nanoplan::scenarios::load_path(std::path::Path::new(&arg)) {
             Ok(loaded) => all.extend(loaded),
-            Err(e) => eprintln!("skipping scenario dir {dir}: {e}"),
+            Err(e) => eprintln!("skipping scenario path {arg}: {e}"),
         }
     }
     all
@@ -167,6 +168,17 @@ struct ActiveJob(Option<((usize, PlannerKind), IncrementalSim)>);
 /// Per-frame wall-clock budget for stepping the active job.
 const FRAME_BUDGET_MS: u64 = 8;
 
+/// State for the in-app scenario-loading widget: type a path to a nuPlan
+/// export (a `*.json` file or a directory of them) and load it live,
+/// without relaunching with CLI args. Desktop only — wasm has no arbitrary
+/// filesystem access.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource, Default)]
+struct ScenarioLoader {
+    path: String,
+    status: Option<Result<String, String>>,
+}
+
 fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
     Context {
         centerline: &sc.centerline,
@@ -195,32 +207,34 @@ fn main() {
         (0, PlannerKind::Straight),
         simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT),
     );
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "nanoplan".into(),
-                // fill the browser window on wasm; no effect on desktop
-                fit_canvas_to_parent: true,
-                ..default()
-            }),
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "nanoplan".into(),
+            // fill the browser window on wasm; no effect on desktop
+            fit_canvas_to_parent: true,
             ..default()
-        }))
-        .add_plugins(EguiPlugin::default())
-        .insert_resource(Scenarios(scenes))
-        .insert_resource(UiState {
-            scenario: 0,
-            planner: PlannerKind::Straight,
-            time_s: 0.0,
-            preview_s: 0.0,
-        })
-        .insert_resource(cache)
-        .init_non_send::<ActiveJob>()
-        .add_systems(Startup, |mut commands: Commands| {
-            commands.spawn(Camera2d);
-        })
-        .add_systems(EguiPrimaryContextPass, ui)
-        .add_systems(Update, (step_active_job, draw).chain())
-        .run();
+        }),
+        ..default()
+    }))
+    .add_plugins(EguiPlugin::default())
+    .insert_resource(Scenarios(scenes))
+    .insert_resource(UiState {
+        scenario: 0,
+        planner: PlannerKind::Straight,
+        time_s: 0.0,
+        preview_s: 0.0,
+    })
+    .insert_resource(cache)
+    .init_non_send::<ActiveJob>()
+    .add_systems(Startup, |mut commands: Commands| {
+        commands.spawn(Camera2d);
+    })
+    .add_systems(EguiPrimaryContextPass, ui)
+    .add_systems(Update, (step_active_job, draw).chain());
+    #[cfg(not(target_arch = "wasm32"))]
+    app.insert_resource(ScenarioLoader::default());
+    app.run();
 }
 
 /// Advance the in-flight simulation (if any) by one frame's time budget,
@@ -235,12 +249,14 @@ fn step_active_job(mut job: NonSendMut<ActiveJob>, mut cache: ResMut<RolloutCach
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
 fn ui(
     mut contexts: EguiContexts,
-    scenes: Res<Scenarios>,
+    mut scenes: ResMut<Scenarios>,
     mut state: ResMut<UiState>,
     cache: Res<RolloutCache>,
     mut job: NonSendMut<ActiveJob>,
+    #[cfg(not(target_arch = "wasm32"))] mut loader: ResMut<ScenarioLoader>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let prev = (state.scenario, state.planner);
@@ -259,6 +275,41 @@ fn ui(
                     ui.selectable_value(&mut state.planner, kind, kind.name());
                 }
             });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ui.horizontal(|ui| {
+                ui.label("nuPlan path:");
+                ui.text_edit_singleline(&mut loader.path);
+                if ui.button("Load").clicked() {
+                    loader.status = Some(
+                        match nanoplan::scenarios::load_path(std::path::Path::new(
+                            loader.path.trim(),
+                        )) {
+                            Ok(loaded) if loaded.is_empty() => {
+                                Err("no *.json scenarios found there".into())
+                            }
+                            Ok(loaded) => {
+                                let n = loaded.len();
+                                state.scenario = scenes.0.len();
+                                scenes.0.extend(loaded);
+                                Ok(format!(
+                                    "loaded {n} scenario{}",
+                                    if n == 1 { "" } else { "s" }
+                                ))
+                            }
+                            Err(e) => Err(e.to_string()),
+                        },
+                    );
+                }
+            });
+            if let Some(status) = &loader.status {
+                let (color, msg) = match status {
+                    Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
+                    Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),
+                };
+                ui.colored_label(color, msg);
+            }
+        }
         ui.add(egui::Slider::new(&mut state.time_s, 0.0..=DURATION_S as f32).text("time [s]"));
         ui.add(
             egui::Slider::new(&mut state.preview_s, 0.0..=PREVIEW_MAX_S as f32)

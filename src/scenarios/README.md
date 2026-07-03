@@ -6,7 +6,7 @@ trajectory replay, and the synthetic scenario generator.
 
 ```
 scenarios/
-└── mod.rs   Path, Waypoint, Actor (+trace/replay), MapData, Scenario, load_dir, synthetic_batch
+└── mod.rs   Path, Waypoint, Actor (+trace/replay), MapData, Scenario, load_dir, load_path, synthetic_batch
 ```
 
 > **Naming note**: this is the Rust module `src/scenarios/`. There are also
@@ -192,17 +192,23 @@ preview's dimmer "predicted" ghost car in the viewer make this gap visible.
 
 ## Loading and generating scenarios
 
-### `load_dir`
+### `load_dir` and `load_path`
 
 ```rust
 pub fn load_dir(dir: &Path) -> std::io::Result<Vec<Scenario>>
+pub fn load_path(path: &Path) -> std::io::Result<Vec<Scenario>>
 ```
 
-Reads every `*.json` file directly in `dir` (not recursive), sorted by file
-name, deserializing each with `serde_json`. A malformed file surfaces as an
-`io::Error` naming the offending path, not a panic. Used by both the batch
-runner's `--dir` flag and the viewer's CLI-argument scenario directories
-(desktop only — see [`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources)).
+`load_dir` reads every `*.json` file directly in `dir` (not recursive),
+sorted by file name, deserializing each with `serde_json`. A malformed file
+surfaces as an `io::Error` naming the offending path, not a panic. Used by
+the batch runner's `--dir` flag.
+
+`load_path` is the same, generalized to accept either a directory (delegates
+to `load_dir`) or a single scenario file. It's what the viewer uses for both
+its CLI-argument scenario sources and its in-app "nuPlan path" loading
+widget (desktop only — see
+[`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources)).
 
 ### Synthetic generation
 

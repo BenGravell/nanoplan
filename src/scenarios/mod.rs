@@ -205,6 +205,20 @@ pub fn load_dir(dir: &std::path::Path) -> std::io::Result<Vec<Scenario>> {
         .collect()
 }
 
+/// Load scenarios from an arbitrary path: every `*.json` file if it's a
+/// directory (see [`load_dir`]), or the single scenario at `path` if it's a
+/// file. Used by the viewer's scenario-loading widget and CLI arguments,
+/// which both accept either.
+pub fn load_path(path: &std::path::Path) -> std::io::Result<Vec<Scenario>> {
+    if path.is_dir() {
+        return load_dir(path);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let scenario = serde_json::from_str(&text)
+        .map_err(|e| std::io::Error::other(format!("{}: {e}", path.display())))?;
+    Ok(vec![scenario])
+}
+
 /// Generate `count` randomized scenario variations: lead vehicles at varying
 /// gaps and speeds, oncoming and crossing traffic, and curved roads.
 /// Deterministic in `seed`, standing in for nuPlan logs at batch scale.
@@ -274,6 +288,26 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
 mod tests {
     use super::*;
     use crate::simulation::simulate;
+
+    #[test]
+    fn load_path_reads_a_single_file_or_a_directory() {
+        let dir =
+            std::env::temp_dir().join(format!("nanoplan_load_path_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = r#"{"name": "a", "ego": {"x": 0.0, "y": 0.0, "speed": 1.0}, "centerline": [[0.0, 0.0], [10.0, 0.0]]}"#;
+        let file = dir.join("a.json");
+        std::fs::write(&file, json).unwrap();
+
+        let from_file = load_path(&file).unwrap();
+        assert_eq!(from_file.len(), 1);
+        assert_eq!(from_file[0].name, "a");
+
+        let from_dir = load_path(&dir).unwrap();
+        assert_eq!(from_dir.len(), 1);
+        assert_eq!(from_dir[0].name, "a");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn frenet_roundtrip() {
