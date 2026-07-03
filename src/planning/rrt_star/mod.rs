@@ -35,6 +35,10 @@ const STEER_SAMPLES: usize = 8;
 const LATERAL_COST_WEIGHT: f64 = 0.5;
 // see the goal-selection comment in `plan` for why this exists
 const PROGRESS_TOLERANCE_M: f64 = 3.0;
+// a bit inside the drivable_area metric's own ROAD_HALF_WIDTH_M (5.5, see
+// src/metrics/drivable_area) so a bypass never scores a "successful"
+// avoidance by driving off the road instead
+const DRIVABLE_HALF_WIDTH_M: f64 = 5.0;
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
@@ -161,7 +165,18 @@ fn feasible(
         if curve.curvature(u).abs() > MAX_CURVATURE {
             return false;
         }
-        let (s, _) = path.project(p);
+        let (s, d) = path.project(p);
+        // Endpoints alone aren't enough: a Hermite curve whose tangent
+        // directions don't line up well with its chord can bulge past
+        // both endpoints' lateral offset before coming back — clamping
+        // only the *target* d (see the bypass-seeding comment in `plan`)
+        // still let some edges drift off-road mid-segment, caught the same
+        // way as the other structural bugs here: running the batch runner
+        // over general synthetic scenarios and finding `drivable_area`
+        // scoring 0 despite every sampled *target* being in-bounds.
+        if d.abs() > DRIVABLE_HALF_WIDTH_M {
+            return false;
+        }
         let t = (s - s0) / v;
         for a in actors {
             let q = [
@@ -438,7 +453,8 @@ impl Planner for RrtStarPlanner {
         for a in ctx.actors {
             let (a_s, a_d) = path.project([a.x, a.y]);
             for side in [-1.0, 1.0] {
-                let bypass = a_d + side * (COLLISION_RADIUS_M + 2.0);
+                let bypass = (a_d + side * (COLLISION_RADIUS_M + 2.0))
+                    .clamp(-DRIVABLE_HALF_WIDTH_M, DRIVABLE_HALF_WIDTH_M);
                 for (station_offset, lateral) in [
                     (-20.0, 0.25 * bypass),
                     (-10.0, 0.6 * bypass),
@@ -519,11 +535,21 @@ impl Planner for RrtStarPlanner {
 
         let Some(mut idx) = best_leaf else {
             // every sample was infeasible (e.g. boxed in): brake straight,
-            // and drop the stale warm start so next tick starts fresh
+            // and drop the stale warm start so next tick starts fresh.
+            // Capped so one Euler step can't overshoot past zero speed —
+            // the Simulator's kinematic step has no floor, so a *constant*
+            // -4.0 accel held over several consecutive boxed-in ticks (this
+            // whole Vec is returned every time, though only its first
+            // control is ever applied) would eventually drive the ego
+            // into reverse instead of holding it stopped. Found the same
+            // way as this module's other structural bugs: running the
+            // batch runner over general synthetic scenarios, not from
+            // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
+            let accel = (-ego.speed / ctx.dt).max(-4.0);
             return vec![
                 Control {
-                    accel: -4.0,
+                    accel,
                     curvature: 0.0,
                 };
                 ctx.horizon
