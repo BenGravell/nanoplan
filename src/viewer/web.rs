@@ -150,6 +150,7 @@ pub(crate) fn absorb_load(
         Ok(loaded) if loaded.is_empty() => {} // dialog cancelled: leave prior status as-is
         Ok(loaded) => {
             let n = loaded.len();
+            info!("loaded {n} scenario(s) from the file picker");
             state.scenario = scenes.0.len();
             scenes.0.extend(loaded);
             loader.status = Some(Ok(format!(
