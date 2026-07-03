@@ -1,12 +1,14 @@
 //! The planner interface and one module per planner.
 
 pub mod bezier_idm;
+pub mod diagnostics;
 pub mod latency;
 pub mod lattice;
 pub mod pi2ddp;
 pub mod straight;
 
 pub use bezier_idm::BezierIdmPlanner;
+pub use diagnostics::{Diagnostics, DiagnosticsData};
 pub use latency::{Latency, LatencyStats, SeamStats};
 pub use lattice::LatticePlanner;
 pub use pi2ddp::Pi2DdpPlanner;
@@ -34,6 +36,10 @@ pub struct Context<'a> {
     pub horizon: usize,
     /// Latency recorder for this plan call, when diagnostics are collected.
     pub latency: Option<&'a Latency>,
+    /// Introspection recorder for this plan call, when a caller (the
+    /// viewer's diagnostic overlay) wants to see the planner's search
+    /// geometry. See [`diagnostics`] for what each planner records.
+    pub diagnostics: Option<&'a Diagnostics>,
 }
 
 impl Context<'_> {
@@ -88,6 +94,13 @@ impl PlannerKind {
             PlannerKind::Pi2Ddp => Box::new(Pi2DdpPlanner::default()),
         }
     }
+
+    /// Whether this planner records anything into a [`Diagnostics`]
+    /// recorder. `Straight` and `BezierIdm` have no receding-horizon search
+    /// geometry to show — they never call `ctx.diagnostics`.
+    pub fn has_diagnostics(self) -> bool {
+        matches!(self, PlannerKind::Lattice | PlannerKind::Pi2Ddp)
+    }
 }
 
 #[cfg(test)]
@@ -99,6 +112,7 @@ pub(crate) fn test_ctx<'a>(centerline: &'a [[f64; 2]], actors: &'a [State]) -> C
         dt: 0.1,
         horizon: 10,
         latency: None,
+        diagnostics: None,
     }
 }
 
