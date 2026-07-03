@@ -50,7 +50,7 @@ has only `total`, PI²-DDP shows `route`, `warm_start`, `rollouts`, and
 
 ### Scenario sources
 
-The dropdown offers scenarios from up to four sources, concatenated in this
+The dropdown offers scenarios from up to five sources, concatenated in this
 order:
 
 1. **Six built-in scenarios** hardcoded in `src/main.rs`: a straight road
@@ -80,6 +80,18 @@ order:
    `load_path` used for CLI args, just without needing to relaunch — the way
    to browse scenarios exported from a real nuPlan log (see
    [below](#exporting-real-nuplan-scenarios)) during a live session.
+5. **Web only**: `scenarios/web_bundle.json`, fetched automatically at
+   startup — the filesystem-based sources above don't exist in a browser.
+   It's a single compact JSON array (built by
+   `tools/bundle_web_scenarios.py` from a directory of scenario files, one
+   HTTP request instead of one per scenario) that Trunk copies into `dist/`
+   at build time. Ships empty by default (no real nuPlan corpus is checked
+   into this repo — see the note in
+   [Exporting real nuPlan scenarios](#exporting-real-nuplan-scenarios)); a
+   maintainer populates it by exporting into `scenarios/web/` and rerunning
+   the bundler before deploying. A failed or empty fetch degrades silently
+   (a warning in the browser console, zero extra scenarios) rather than
+   breaking the viewer.
 
 ## Batch evaluation
 
@@ -153,6 +165,17 @@ Once exported, feed the directory into either tool:
 ```sh
 cargo run --release --bin batch -- --count 0 --dir out_dir   # score every planner on them
 cargo run -- out_dir                                          # browse them in the viewer
+```
+
+To make them available in the **web build** too (the deployed viewer has no
+filesystem, so `out_dir` above only works on desktop), export straight into
+`scenarios/web/` and bundle it into the single file the web build fetches at
+startup (see [Scenario sources](#scenario-sources) above):
+
+```sh
+python3 tools/export_nuplan_scenarios.py path/to/log.db scenarios/web
+python3 tools/bundle_web_scenarios.py            # writes scenarios/web_bundle.json
+trunk build --release --public-url /nanoplan/    # copies it into dist/
 ```
 
 > **Note:** the export script is written strictly against the vendored

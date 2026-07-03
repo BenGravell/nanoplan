@@ -10,11 +10,15 @@ scenarios/
 ```
 
 > **Naming note**: this is the Rust module `src/scenarios/`. There are also
-> two repo-root *data* directories with similar names — don't confuse them:
+> repo-root *data* directories with similar names — don't confuse them:
 > [`scenarios/nuplan/`](../../scenarios/nuplan/) holds vendored nuPlan
-> reference documents (schema, vehicle parameters, metric definitions), and
+> reference documents (schema, vehicle parameters, metric definitions),
 > `scenarios/json/` holds example scenario JSON files bundled into the
-> viewer binary. Neither contains code.
+> viewer binary at compile time, and `scenarios/web/` (not checked in by
+> default) is the source directory `tools/bundle_web_scenarios.py` reads to
+> build `scenarios/web_bundle.json`, fetched by the web build at startup —
+> see [docs/USAGE.md#scenario-sources](../../docs/USAGE.md#scenario-sources).
+> None of these three contain code.
 
 ## `Scenario`, the JSON format
 

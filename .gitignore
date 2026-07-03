@@ -23,5 +23,9 @@ target
 # Trunk build output
 dist
 
+# Local staging for web-fetched scenarios (tools/bundle_web_scenarios.py
+# reads this, not meant to be committed — see docs/USAGE.md#scenario-sources)
+scenarios/web/
+
 # Python bytecode
 __pycache__/
