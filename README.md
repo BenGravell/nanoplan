@@ -43,14 +43,18 @@ planning, simulation, or scoring logic itself.
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
 
-Two more directories hold data rather than code:
+A few more directories hold data rather than code:
 
 - [`scenarios/nuplan/`](scenarios/nuplan/) — reference material vendored from
   [nuplan-devkit](https://github.com/motional/nuplan-devkit) (log schema,
   vehicle parameters, metric definitions). Source of truth for the metric
   thresholds in `src/metrics/`.
 - `scenarios/json/` — example scenario JSON files bundled into the viewer
-  binary (see [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
+  binary at compile time (see [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
+- `scenarios/web/` (not checked in by default) — scenarios for the *web*
+  build to fetch at startup instead, combined by `tools/bundle_web_scenarios.py`
+  into `scenarios/web_bundle.json` (see
+  [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
 
 ## Planners at a glance
 
