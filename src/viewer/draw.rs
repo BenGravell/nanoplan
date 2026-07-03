@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use nanoplan::planning::Context;
 use nanoplan::{Control, Path, Scenario, State, step};
 
-use super::sim::RolloutCache;
+use super::rollouts::RolloutCache;
 use super::{DT, Scenarios, UiState};
 
 const PX_PER_M: f32 = 6.0;
