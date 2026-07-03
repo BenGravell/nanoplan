@@ -164,7 +164,7 @@ impl Pi2DdpPlanner {
 
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = Path::new(ctx.centerline);
+        let path = ctx.time("route", || Path::new(ctx.centerline));
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
@@ -228,7 +228,8 @@ impl Planner for Pi2DdpPlanner {
         };
 
         // warm start: shift the previous policy one step if the sim followed it
-        let mut pol = match self.policy.take() {
+        // (custom seam: includes the road-informed re-init when the shift misses)
+        let mut pol = ctx.time("warm_start", || match self.policy.take() {
             Some(mut p) if (p.expected_next.x - ego.x).hypot(p.expected_next.y - ego.y) < 1.0 => {
                 p.u.rotate_left(1);
                 p.gains.rotate_left(1);
@@ -239,172 +240,181 @@ impl Planner for Pi2DdpPlanner {
                 p
             }
             _ => Self::init_policy(&path, ego, ctx, sigma_init),
-        };
+        });
 
         for _ in 0..GENERATIONS {
             let (x_nom, _) = noise_free(&pol.u);
 
-            // K perturbed rollouts with feedback (Algorithm 2, lines 3-10)
+            // K perturbed rollouts with feedback (Algorithm 2, lines 3-10);
+            // custom seam: the sampling workload
             let mut xs = vec![vec![ego; HORIZON + 1]; ROLLOUTS];
             let mut us = vec![vec![[0.0; 2]; HORIZON]; ROLLOUTS];
             let mut ctg = vec![vec![0.0; HORIZON + 1]; ROLLOUTS]; // cost-to-go
-            for k in 0..ROLLOUTS {
-                let mut x = ego;
-                for j in 0..HORIZON {
-                    let dx = [
-                        x.x - x_nom[j].x,
-                        x.y - x_nom[j].y,
-                        x.yaw - x_nom[j].yaw,
-                        x.speed - x_nom[j].speed,
-                    ];
-                    let eps = sample2(&mut self.rng, &pol.sigma_u[j]);
-                    let kx: V2 = [
-                        pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
-                        pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum(),
-                    ];
-                    let u = clamp_u([pol.u[j][0] + kx[0] + eps[0], pol.u[j][1] + kx[1] + eps[1]]);
-                    ctg[k][j] = running(&x, &u, j);
-                    us[k][j] = u;
-                    x = step(
-                        x,
-                        Control {
-                            accel: u[0],
-                            curvature: u[1],
-                        },
-                        ctx.dt,
-                    );
-                    xs[k][j + 1] = x;
+            ctx.time("rollouts", || {
+                for k in 0..ROLLOUTS {
+                    let mut x = ego;
+                    for j in 0..HORIZON {
+                        let dx = [
+                            x.x - x_nom[j].x,
+                            x.y - x_nom[j].y,
+                            x.yaw - x_nom[j].yaw,
+                            x.speed - x_nom[j].speed,
+                        ];
+                        let eps = sample2(&mut self.rng, &pol.sigma_u[j]);
+                        let kx: V2 = [
+                            pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
+                            pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum(),
+                        ];
+                        let u =
+                            clamp_u([pol.u[j][0] + kx[0] + eps[0], pol.u[j][1] + kx[1] + eps[1]]);
+                        ctg[k][j] = running(&x, &u, j);
+                        us[k][j] = u;
+                        x = step(
+                            x,
+                            Control {
+                                accel: u[0],
+                                curvature: u[1],
+                            },
+                            ctx.dt,
+                        );
+                        xs[k][j + 1] = x;
+                    }
+                    ctg[k][HORIZON] = 5.0 * state_cost(&x, HORIZON);
+                    for j in (0..HORIZON).rev() {
+                        ctg[k][j] += ctg[k][j + 1]; // suffix sums (eq. 10)
+                    }
                 }
-                ctg[k][HORIZON] = 5.0 * state_cost(&x, HORIZON);
-                for j in (0..HORIZON).rev() {
-                    ctg[k][j] += ctg[k][j + 1]; // suffix sums (eq. 10)
-                }
-            }
+            });
 
-            // reward-weighted updates per time step (Algorithm 2, lines 11-18)
+            // reward-weighted updates per time step (Algorithm 2, lines 11-18);
+            // custom seam: the DDP-style gradient extraction
             let snapshot = (pol.u.clone(), pol.gains.clone(), pol.sigma_u.clone());
             let mut new_x_nom = vec![ego; HORIZON];
-            for j in 0..HORIZON {
-                let (lo, hi) = ctg
-                    .iter()
-                    .map(|c| c[j])
-                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
-                        (l.min(c), h.max(c))
-                    });
-                let p: Vec<f64> = ctg
-                    .iter()
-                    .map(|c| (-BETA * (c[j] - lo) / (hi - lo).max(1e-12)).exp())
-                    .collect();
-                let psum: f64 = p.iter().sum();
+            ctx.time("policy_update", || {
+                for j in 0..HORIZON {
+                    let (lo, hi) = ctg
+                        .iter()
+                        .map(|c| c[j])
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
+                            (l.min(c), h.max(c))
+                        });
+                    let p: Vec<f64> = ctg
+                        .iter()
+                        .map(|c| (-BETA * (c[j] - lo) / (hi - lo).max(1e-12)).exp())
+                        .collect();
+                    let psum: f64 = p.iter().sum();
 
-                // Σ_τ ← (1−α)Σ_τ + α Σₖ pₖ δτ δτᵀ, δτ relative to the nominal
-                let mut s_tau = [[0.0; 6]; 6];
-                for k in 0..ROLLOUTS {
-                    let xn = xv(&x_nom[j]);
-                    let xk = xv(&xs[k][j]);
-                    let dtau = [
-                        xk[0] - xn[0],
-                        xk[1] - xn[1],
-                        xk[2] - xn[2],
-                        xk[3] - xn[3],
-                        us[k][j][0] - pol.u[j][0],
-                        us[k][j][1] - pol.u[j][1],
-                    ];
-                    let w = p[k] / psum;
-                    for a in 0..6 {
-                        for b in 0..6 {
-                            s_tau[a][b] += w * dtau[a] * dtau[b];
+                    // Σ_τ ← (1−α)Σ_τ + α Σₖ pₖ δτ δτᵀ, δτ relative to the nominal
+                    let mut s_tau = [[0.0; 6]; 6];
+                    for k in 0..ROLLOUTS {
+                        let xn = xv(&x_nom[j]);
+                        let xk = xv(&xs[k][j]);
+                        let dtau = [
+                            xk[0] - xn[0],
+                            xk[1] - xn[1],
+                            xk[2] - xn[2],
+                            xk[3] - xn[3],
+                            us[k][j][0] - pol.u[j][0],
+                            us[k][j][1] - pol.u[j][1],
+                        ];
+                        let w = p[k] / psum;
+                        for a in 0..6 {
+                            for b in 0..6 {
+                                s_tau[a][b] += w * dtau[a] * dtau[b];
+                            }
                         }
                     }
-                }
-                for (row, s_row) in pol.sigma_tau[j].iter_mut().zip(&s_tau) {
-                    for (v, s) in row.iter_mut().zip(s_row) {
-                        *v = (1.0 - ALPHA) * *v + ALPHA * s;
+                    for (row, s_row) in pol.sigma_tau[j].iter_mut().zip(&s_tau) {
+                        for (v, s) in row.iter_mut().zip(s_row) {
+                            *v = (1.0 - ALPHA) * *v + ALPHA * s;
+                        }
                     }
-                }
 
-                // K = Σᵤₓ Σₓₓ†, k = Σₖ pₖ(δu − Kδx), Σᵤ = Σᵤᵤ − ΣᵤₓΣₓₓ†Σₓᵤ + λ_exp R⁻¹
-                let st = &pol.sigma_tau[j];
-                let mut s_xx: M4 = [[0.0; 4]; 4];
-                let mut s_ux: M24 = [[0.0; 4]; 2];
-                let mut s_uu: M2 = [[0.0; 2]; 2];
-                for a in 0..4 {
-                    for b in 0..4 {
-                        s_xx[a][b] = st[a][b];
+                    // K = Σᵤₓ Σₓₓ†, k = Σₖ pₖ(δu − Kδx), Σᵤ = Σᵤᵤ − ΣᵤₓΣₓₓ†Σₓᵤ + λ_exp R⁻¹
+                    let st = &pol.sigma_tau[j];
+                    let mut s_xx: M4 = [[0.0; 4]; 4];
+                    let mut s_ux: M24 = [[0.0; 4]; 2];
+                    let mut s_uu: M2 = [[0.0; 2]; 2];
+                    for a in 0..4 {
+                        for b in 0..4 {
+                            s_xx[a][b] = st[a][b];
+                        }
                     }
-                }
-                for a in 0..2 {
-                    for b in 0..4 {
-                        s_ux[a][b] = st[4 + a][b];
-                    }
-                    for b in 0..2 {
-                        s_uu[a][b] = st[4 + a][4 + b];
-                    }
-                }
-                let xx_inv = inv4(&s_xx, LAMBDA_REG);
-                let mut gain: M24 = [[0.0; 4]; 2];
-                for a in 0..2 {
-                    for b in 0..4 {
-                        gain[a][b] = (0..4).map(|c| s_ux[a][c] * xx_inv[c][b]).sum();
-                    }
-                }
-                let mut k_ff = [0.0; 2];
-                for k in 0..ROLLOUTS {
-                    let dx = [
-                        xs[k][j].x - x_nom[j].x,
-                        xs[k][j].y - x_nom[j].y,
-                        xs[k][j].yaw - x_nom[j].yaw,
-                        xs[k][j].speed - x_nom[j].speed,
-                    ];
-                    let w = p[k] / psum;
                     for a in 0..2 {
-                        let kdx: f64 = gain[a].iter().zip(&dx).map(|(g, d)| g * d).sum();
-                        k_ff[a] += w * (us[k][j][a] - pol.u[j][a] - kdx);
+                        for b in 0..4 {
+                            s_ux[a][b] = st[4 + a][b];
+                        }
+                        for b in 0..2 {
+                            s_uu[a][b] = st[4 + a][4 + b];
+                        }
                     }
-                }
-                for a in 0..2 {
-                    for b in 0..2 {
-                        let uxxxu: f64 = (0..4)
-                            .map(|c| {
-                                (0..4)
-                                    .map(|d| s_ux[a][c] * xx_inv[c][d] * s_ux[b][d])
-                                    .sum::<f64>()
-                            })
-                            .sum();
-                        pol.sigma_u[j][a][b] = s_uu[a][b] - uxxxu
-                            + if a == b {
-                                pol.lambda_exp * sigma_init[a][a]
-                            } else {
-                                0.0
-                            };
+                    let xx_inv = inv4(&s_xx, LAMBDA_REG);
+                    let mut gain: M24 = [[0.0; 4]; 2];
+                    for a in 0..2 {
+                        for b in 0..4 {
+                            gain[a][b] = (0..4).map(|c| s_ux[a][c] * xx_inv[c][b]).sum();
+                        }
                     }
+                    let mut k_ff = [0.0; 2];
+                    for k in 0..ROLLOUTS {
+                        let dx = [
+                            xs[k][j].x - x_nom[j].x,
+                            xs[k][j].y - x_nom[j].y,
+                            xs[k][j].yaw - x_nom[j].yaw,
+                            xs[k][j].speed - x_nom[j].speed,
+                        ];
+                        let w = p[k] / psum;
+                        for a in 0..2 {
+                            let kdx: f64 = gain[a].iter().zip(&dx).map(|(g, d)| g * d).sum();
+                            k_ff[a] += w * (us[k][j][a] - pol.u[j][a] - kdx);
+                        }
+                    }
+                    for a in 0..2 {
+                        for b in 0..2 {
+                            let uxxxu: f64 = (0..4)
+                                .map(|c| {
+                                    (0..4)
+                                        .map(|d| s_ux[a][c] * xx_inv[c][d] * s_ux[b][d])
+                                        .sum::<f64>()
+                                })
+                                .sum();
+                            pol.sigma_u[j][a][b] = s_uu[a][b] - uxxxu
+                                + if a == b {
+                                    pol.lambda_exp * sigma_init[a][a]
+                                } else {
+                                    0.0
+                                };
+                        }
+                    }
+                    // PSD guard: the Schur complement of a noisy Σ_τ estimate can
+                    // lose definiteness; fall back to the road-informed prior
+                    let su = &pol.sigma_u[j];
+                    if su[0][0] <= 0.0
+                        || su[1][1] <= 0.0
+                        || su[0][0] * su[1][1] <= su[0][1] * su[1][0]
+                    {
+                        pol.sigma_u[j] = [
+                            [pol.lambda_exp.max(0.05) * sigma_init[0][0], 0.0],
+                            [0.0, pol.lambda_exp.max(0.05) * sigma_init[1][1]],
+                        ];
+                    }
+                    pol.gains[j] = gain;
+                    // nominal for the next generation: rollout mean plus feedforward
+                    for a in 0..2 {
+                        pol.u[j][a] =
+                            us.iter().map(|u| u[j][a]).sum::<f64>() / ROLLOUTS as f64 + k_ff[a];
+                    }
+                    let mean = |f: fn(&State) -> f64| {
+                        xs.iter().map(|x| f(&x[j])).sum::<f64>() / ROLLOUTS as f64
+                    };
+                    new_x_nom[j] = State {
+                        x: mean(|s| s.x),
+                        y: mean(|s| s.y),
+                        yaw: mean(|s| s.yaw),
+                        speed: mean(|s| s.speed),
+                    };
                 }
-                // PSD guard: the Schur complement of a noisy Σ_τ estimate can
-                // lose definiteness; fall back to the road-informed prior
-                let su = &pol.sigma_u[j];
-                if su[0][0] <= 0.0 || su[1][1] <= 0.0 || su[0][0] * su[1][1] <= su[0][1] * su[1][0]
-                {
-                    pol.sigma_u[j] = [
-                        [pol.lambda_exp.max(0.05) * sigma_init[0][0], 0.0],
-                        [0.0, pol.lambda_exp.max(0.05) * sigma_init[1][1]],
-                    ];
-                }
-                pol.gains[j] = gain;
-                // nominal for the next generation: rollout mean plus feedforward
-                for a in 0..2 {
-                    pol.u[j][a] =
-                        us.iter().map(|u| u[j][a]).sum::<f64>() / ROLLOUTS as f64 + k_ff[a];
-                }
-                let mean = |f: fn(&State) -> f64| {
-                    xs.iter().map(|x| f(&x[j])).sum::<f64>() / ROLLOUTS as f64
-                };
-                new_x_nom[j] = State {
-                    x: mean(|s| s.x),
-                    y: mean(|s| s.y),
-                    yaw: mean(|s| s.yaw),
-                    speed: mean(|s| s.speed),
-                };
-            }
+            });
 
             // close the loop: execute the updated policy noise-free
             let mut x = ego;

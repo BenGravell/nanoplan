@@ -47,8 +47,11 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
 
 impl Planner for LatticePlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = Path::new(ctx.centerline);
-        let (s0, d0) = path.project([ego.x, ego.y]);
+        let (path, s0, d0) = ctx.time("route", || {
+            let path = Path::new(ctx.centerline);
+            let (s0, d0) = path.project([ego.x, ego.y]);
+            (path, s0, d0)
+        });
         // ponytail: constant-speed profile; couple IDM into the lattice when needed
         let v = ego.speed.clamp(2.0, ctx.target_speed.max(2.0));
         // initial lateral rate, expressed per unit of segment parameter u; the
@@ -62,58 +65,64 @@ impl Planner for LatticePlanner {
             (2.0 * u3 - 3.0 * u2 + 1.0) * da + (u3 - 2.0 * u2 + u) * m0 + (3.0 * u2 - 2.0 * u3) * db
         };
 
-        // cost of one lattice edge, integrating over sampled points
+        // cost of one lattice edge, integrating over sampled points;
+        // custom seam: the hot loop of the DP search
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
-            let mut cost = 2.0 * (db - da).powi(2); // lateral smoothness
-            for i in 1..=SAMPLES_PER_SEGMENT {
-                let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
-                let s = sa + (sb - sa) * u;
-                let d = d_shape(da, db, m0, u);
-                cost += d * d / SAMPLES_PER_SEGMENT as f64; // stay near centerline
-                let p = path.frenet_to_xy(s, d);
-                let t = (s - s0) / v; // time when the ego gets there
-                for a in ctx.actors {
-                    // constant-velocity prediction of the actor
-                    let q = [
-                        a.x + a.speed * a.yaw.cos() * t,
-                        a.y + a.speed * a.yaw.sin() * t,
-                    ];
-                    let gap = (p[0] - q[0]).hypot(p[1] - q[1]);
-                    if gap < COLLISION_RADIUS_M {
-                        return f64::INFINITY;
+            ctx.time("edge_costs", || {
+                let mut cost = 2.0 * (db - da).powi(2); // lateral smoothness
+                for i in 1..=SAMPLES_PER_SEGMENT {
+                    let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
+                    let s = sa + (sb - sa) * u;
+                    let d = d_shape(da, db, m0, u);
+                    cost += d * d / SAMPLES_PER_SEGMENT as f64; // stay near centerline
+                    let p = path.frenet_to_xy(s, d);
+                    let t = (s - s0) / v; // time when the ego gets there
+                    for a in ctx.actors {
+                        // constant-velocity prediction of the actor
+                        let q = [
+                            a.x + a.speed * a.yaw.cos() * t,
+                            a.y + a.speed * a.yaw.sin() * t,
+                        ];
+                        let gap = (p[0] - q[0]).hypot(p[1] - q[1]);
+                        if gap < COLLISION_RADIUS_M {
+                            return f64::INFINITY;
+                        }
+                        cost += 20.0 / (gap * gap);
                     }
-                    cost += 20.0 / (gap * gap);
                 }
-            }
-            cost
+                cost
+            })
         };
 
         // DP over layers: the lattice is a layered DAG, so dynamic programming
         // finds the exact best path (A* would just add bookkeeping).
+        // (the nested edge_costs seam accounts for most of this)
         let mut prev: Vec<(f64, f64, Vec<f64>)> = vec![(d0, 0.0, vec![])]; // (d, cost, laterals so far)
-        for (layer, ds) in STATIONS_M.iter().enumerate() {
-            let sa = s0
-                + if layer == 0 {
-                    0.0
-                } else {
-                    STATIONS_M[layer - 1]
-                };
-            let sb = s0 + ds;
-            prev = LATERALS_M
-                .iter()
-                .map(|&db| {
-                    prev.iter()
-                        .map(|(da, c, laterals)| {
-                            let mut l = laterals.clone();
-                            l.push(db);
-                            let m0 = if layer == 0 { m0_first } else { 0.0 };
-                            (db, c + edge_cost(sa, *da, sb, db, m0), l)
-                        })
-                        .min_by(|a, b| a.1.total_cmp(&b.1))
-                        .unwrap()
-                })
-                .collect();
-        }
+        ctx.time("optimize", || {
+            for (layer, ds) in STATIONS_M.iter().enumerate() {
+                let sa = s0
+                    + if layer == 0 {
+                        0.0
+                    } else {
+                        STATIONS_M[layer - 1]
+                    };
+                let sb = s0 + ds;
+                prev = LATERALS_M
+                    .iter()
+                    .map(|&db| {
+                        prev.iter()
+                            .map(|(da, c, laterals)| {
+                                let mut l = laterals.clone();
+                                l.push(db);
+                                let m0 = if layer == 0 { m0_first } else { 0.0 };
+                                (db, c + edge_cost(sa, *da, sb, db, m0), l)
+                            })
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .unwrap()
+                    })
+                    .collect();
+            }
+        });
         let (_, best_cost, laterals) = prev.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
         if best_cost.is_infinite() {
             // every path collides: brake straight ahead
@@ -127,22 +136,24 @@ impl Planner for LatticePlanner {
         }
 
         // sample the winning path over time; d is cubic in t on each segment
-        let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((STATIONS_M[2] / (v * ctx.dt)) as usize))
-            .map(|i| {
-                let s_rel = (v * ctx.dt * i as f64).min(STATIONS_M[2]);
-                let seg = STATIONS_M.iter().position(|&m| s_rel <= m).unwrap();
-                let (sa, da) = if seg == 0 {
-                    (0.0, d0)
-                } else {
-                    (STATIONS_M[seg - 1], laterals[seg - 1])
-                };
-                let u = (s_rel - sa) / (STATIONS_M[seg] - sa);
-                let m0 = if seg == 0 { m0_first } else { 0.0 };
-                let d = d_shape(da, laterals[seg], m0, u);
-                path.frenet_to_xy(s0 + s_rel, d)
-            })
-            .collect();
-        xy_to_controls(ego, &pts, ctx.dt)
+        ctx.time("extract", || {
+            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((STATIONS_M[2] / (v * ctx.dt)) as usize))
+                .map(|i| {
+                    let s_rel = (v * ctx.dt * i as f64).min(STATIONS_M[2]);
+                    let seg = STATIONS_M.iter().position(|&m| s_rel <= m).unwrap();
+                    let (sa, da) = if seg == 0 {
+                        (0.0, d0)
+                    } else {
+                        (STATIONS_M[seg - 1], laterals[seg - 1])
+                    };
+                    let u = (s_rel - sa) / (STATIONS_M[seg] - sa);
+                    let m0 = if seg == 0 { m0_first } else { 0.0 };
+                    let d = d_shape(da, laterals[seg], m0, u);
+                    path.frenet_to_xy(s0 + s_rel, d)
+                })
+                .collect();
+            xy_to_controls(ego, &pts, ctx.dt)
+        })
     }
 }
 

@@ -3460,6 +3460,7 @@ dependencies = [
  "bevy_egui",
  "serde",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]

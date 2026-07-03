@@ -42,37 +42,46 @@ pub struct BezierIdmPlanner;
 
 impl Planner for BezierIdmPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = Path::new(ctx.centerline);
-        let (s0, _) = path.project([ego.x, ego.y]);
-        let lookahead = (3.0 * ego.speed).max(15.0);
-        let (end, end_yaw) = path.pose_at(s0 + lookahead);
-        let l3 = lookahead / 3.0;
-        // ends tangent to the ego heading and the lane heading
-        let b = [
-            [ego.x, ego.y],
-            [ego.x + l3 * ego.yaw.cos(), ego.y + l3 * ego.yaw.sin()],
-            [end[0] - l3 * end_yaw.cos(), end[1] - l3 * end_yaw.sin()],
-            end,
-        ];
-        let mut lead = lead_vehicle(&path, s0, ctx.actors);
+        let (path, s0) = ctx.time("route", || {
+            let path = Path::new(ctx.centerline);
+            let (s0, _) = path.project([ego.x, ego.y]);
+            (path, s0)
+        });
+        // custom seam: fitting the lane-return Bezier
+        let b = ctx.time("bezier_fit", || {
+            let lookahead = (3.0 * ego.speed).max(15.0);
+            let (end, end_yaw) = path.pose_at(s0 + lookahead);
+            let l3 = lookahead / 3.0;
+            // ends tangent to the ego heading and the lane heading
+            [
+                [ego.x, ego.y],
+                [ego.x + l3 * ego.yaw.cos(), ego.y + l3 * ego.yaw.sin()],
+                [end[0] - l3 * end_yaw.cos(), end[1] - l3 * end_yaw.sin()],
+                end,
+            ]
+        });
+        // custom seam: scanning the actors for the in-lane lead
+        let mut lead = ctx.time("lead_search", || lead_vehicle(&path, s0, ctx.actors));
         let mut v = ego.speed;
         let mut t = 0.0;
-        (0..ctx.horizon)
-            .map(|_| {
-                let accel = idm_accel(v, ctx.target_speed, lead);
-                let u = Control {
-                    accel,
-                    curvature: bezier_curvature(&b, t),
-                };
-                v = (v + accel * ctx.dt).max(0.0);
-                let d1 = bezier_d1(&b, t);
-                t = (t + v * ctx.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
-                if let Some((gap, lead_v)) = &mut lead {
-                    *gap = (*gap + (*lead_v - v) * ctx.dt).max(0.0);
-                }
-                u
-            })
-            .collect()
+        ctx.time("extract", || {
+            (0..ctx.horizon)
+                .map(|_| {
+                    let accel = idm_accel(v, ctx.target_speed, lead);
+                    let u = Control {
+                        accel,
+                        curvature: bezier_curvature(&b, t),
+                    };
+                    v = (v + accel * ctx.dt).max(0.0);
+                    let d1 = bezier_d1(&b, t);
+                    t = (t + v * ctx.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
+                    if let Some((gap, lead_v)) = &mut lead {
+                        *gap = (*gap + (*lead_v - v) * ctx.dt).max(0.0);
+                    }
+                    u
+                })
+                .collect()
+        })
     }
 }
 
