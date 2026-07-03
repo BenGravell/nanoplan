@@ -50,7 +50,8 @@ has only `total`, PI²-DDP shows `route`, `warm_start`, `rollouts`, and
 
 ### Scenario sources
 
-The dropdown offers three sources, concatenated in this order:
+The dropdown offers scenarios from up to four sources, concatenated in this
+order:
 
 1. **Six built-in scenarios** hardcoded in `src/main.rs`: a straight road
    with an offset start, an s-curve road, a stopped lead, oncoming traffic,
@@ -61,16 +62,24 @@ The dropdown offers three sources, concatenated in this order:
    in the web build too, with no filesystem access needed. Currently a
    braking lead and a lane cut-in, both driven by logged trajectory replay
    (see [src/scenarios/README.md#trajectory-replay](../src/scenarios/README.md#trajectory-replay)).
-3. **Desktop only**: any directories passed as command-line arguments, each
-   loaded with `nanoplan::scenarios::load_dir`:
+3. **Desktop only**: any files or directories passed as command-line
+   arguments, each loaded with `nanoplan::scenarios::load_path`:
 
    ```sh
-   cargo run -- path/to/exported_scenarios/
+   cargo run -- path/to/exported_scenarios/    # a directory of *.json files
+   cargo run -- path/to/one_scenario.json      # a single scenario file
    ```
 
-   Bad directories are skipped with a warning on stderr rather than
-   crashing the viewer. This is how you browse scenarios exported from a
-   real nuPlan log (see [below](#exporting-real-nuplan-scenarios)).
+   Bad paths are skipped with a warning on stderr rather than crashing the
+   viewer.
+4. **Desktop only, live**: the "nuPlan path" text field + "Load" button in
+   the viewer window itself — type a path to a `*.json` file or a directory
+   of them and click Load. Newly loaded scenarios are appended to the
+   dropdown and the first one is selected immediately; a status line reports
+   how many scenarios loaded, or why loading failed. This is the same
+   `load_path` used for CLI args, just without needing to relaunch — the way
+   to browse scenarios exported from a real nuPlan log (see
+   [below](#exporting-real-nuplan-scenarios)) during a live session.
 
 ## Batch evaluation
 
