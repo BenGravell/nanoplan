@@ -1,5 +1,10 @@
-//! The rollout cache and the chunked async simulation job — lets the viewer
-//! avoid blocking the UI thread on an expensive planner like PI²-DDP.
+//! Viewer-side scheduling and caching of `Rollout`s — not simulation logic
+//! itself, which lives entirely in `nanoplan::simulation` (`simulate()`,
+//! `IncrementalSim`). This is Bevy ECS plumbing on top of that: `ActiveJob`
+//! steps an `IncrementalSim` a fixed wall-clock budget per frame so an
+//! expensive planner (PI²-DDP) never blocks the UI thread, and
+//! `RolloutCache` remembers finished results so re-selecting a
+//! (scenario, planner) combo already run is instant.
 
 use std::collections::HashMap;
 

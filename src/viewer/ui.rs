@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use nanoplan::{IncrementalSim, Metrics, PlannerKind};
 
-use super::sim::{ActiveJob, RolloutCache};
+use super::rollouts::{ActiveJob, RolloutCache};
 use super::{DT, DURATION_S, PREVIEW_MAX_S, Scenarios, UiState};
 
 /// State for the in-app scenario-loading widget: type a path to a nuPlan

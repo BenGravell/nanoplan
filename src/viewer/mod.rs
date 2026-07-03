@@ -7,13 +7,13 @@ use nanoplan::planning::PLANNING_HORIZON_S;
 use nanoplan::{PlannerKind, Scenario, simulate};
 
 mod draw;
+mod rollouts;
 mod scenarios;
-mod sim;
 mod ui;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
-use sim::{ActiveJob, RolloutCache, step_active_job};
+use rollouts::{ActiveJob, RolloutCache, step_active_job};
 #[cfg(not(target_arch = "wasm32"))]
 use ui::ScenarioLoader;
 

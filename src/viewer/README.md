@@ -9,7 +9,7 @@ viewer::run(); }`) — everything else lives here.
 viewer/
 ├── mod.rs        run(), shared resources (Scenarios, UiState) and constants
 ├── scenarios.rs  where scenarios come from: built-ins, bundled JSON, CLI args
-├── sim.rs        RolloutCache and the chunked async simulation job
+├── rollouts.rs   RolloutCache and the chunked async simulation job
 ├── ui.rs         the egui control panel system
 ├── draw.rs       gizmo rendering: map, cars, future-preview overlay
 └── web.rs        wasm only — fetches the nuPlan scenario bundle at startup
@@ -17,15 +17,19 @@ viewer/
 
 ## Why simulation is chunked
 
+Simulation logic itself — `simulate()`, `IncrementalSim` — lives entirely in
+[`nanoplan::simulation`](../simulation/README.md); `rollouts.rs` only
+schedules and caches it for the viewer, it doesn't implement any of it.
+
 An expensive planner (PI²-DDP) can take seconds to run a full closed-loop
 rollout. Running that synchronously in the `ui` system would freeze the
-window on every scenario/planner change. `sim.rs`'s `ActiveJob` instead
-holds a [`nanoplan::IncrementalSim`](../simulation/README.md), stepped a
-fixed wall-clock budget per frame (`FRAME_BUDGET_MS`) until done, at which
-point the result moves into `RolloutCache` (keyed by `(scenario, planner)`,
-so re-selecting a combo already simulated is instant). `ui.rs` shows a
-"Simulate" button when the current selection is neither cached nor
-in-flight, and a progress bar while it's running.
+window on every scenario/planner change. `rollouts.rs`'s `ActiveJob` instead
+holds an `IncrementalSim`, stepped a fixed wall-clock budget per frame
+(`FRAME_BUDGET_MS`) until done, at which point the result moves into
+`RolloutCache` (keyed by `(scenario, planner)`, so re-selecting a combo
+already simulated is instant). `ui.rs` shows a "Simulate" button when the
+current selection is neither cached nor in-flight, and a progress bar while
+it's running.
 
 ## Desktop vs. web scenario sources
 
