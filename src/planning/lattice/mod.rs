@@ -10,7 +10,8 @@ use crate::wrap_angle;
 
 pub struct LatticePlanner;
 
-const LATERALS_M: [f64; 5] = [-3.5, -1.75, 0.0, 1.75, 3.5];
+const LATERALS_M: [f64; 9] = [-3.5, -2.625, -1.75, -0.875, 0.0, 0.875, 1.75, 2.625, 3.5];
+const STATION_LAYERS: usize = 5;
 const SAMPLES_PER_SEGMENT: usize = 8;
 // center-to-center; slightly over one car width plus margin
 const COLLISION_RADIUS_M: f64 = 2.5;
@@ -53,13 +54,11 @@ impl Planner for LatticePlanner {
         });
         // ponytail: constant-speed profile; couple IDM into the lattice when needed
         let v = ego.speed.clamp(2.0, ctx.target_speed.max(2.0));
-        // three evenly spaced layers reaching out to the full prediction
-        // horizon at the assumed cruise speed
-        let stations_m = [
-            v * PLANNING_HORIZON_S / 3.0,
-            v * PLANNING_HORIZON_S * 2.0 / 3.0,
-            v * PLANNING_HORIZON_S,
-        ];
+        // STATION_LAYERS evenly spaced layers reaching out to the full
+        // prediction horizon at the assumed cruise speed
+        let stations_m: [f64; STATION_LAYERS] = std::array::from_fn(|i| {
+            v * PLANNING_HORIZON_S * (i + 1) as f64 / STATION_LAYERS as f64
+        });
         // initial lateral rate, expressed per unit of segment parameter u; the
         // first segment must honor it or every replan restarts the swerve at
         // zero slope and the executed path lags the plan into obstacles
@@ -142,10 +141,11 @@ impl Planner for LatticePlanner {
         }
 
         // sample the winning path over time; d is cubic in t on each segment
+        let s_max = *stations_m.last().unwrap();
         ctx.time("extract", || {
-            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((stations_m[2] / (v * ctx.dt)) as usize))
+            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((s_max / (v * ctx.dt)) as usize))
                 .map(|i| {
-                    let s_rel = (v * ctx.dt * i as f64).min(stations_m[2]);
+                    let s_rel = (v * ctx.dt * i as f64).min(s_max);
                     let seg = stations_m.iter().position(|&m| s_rel <= m).unwrap();
                     let (sa, da) = if seg == 0 {
                         (0.0, d0)
