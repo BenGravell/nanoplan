@@ -7,6 +7,31 @@ use nanoplan::planning::Context;
 use nanoplan::scenarios::{Actor, MapData};
 use nanoplan::{Control, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step};
 
+/// Scenario JSONs bundled into the binary, so they ship to the web build too.
+const BUNDLED: [&str; 2] = [
+    include_str!("../scenarios/json/braking_lead.json"),
+    include_str!("../scenarios/json/cut_in.json"),
+];
+
+/// All scenarios the viewer offers: built-ins, bundled JSON (e.g. exported
+/// from nuPlan logs), and — on desktop — any directories passed as CLI args.
+fn all_scenarios() -> Vec<Scenario> {
+    let mut all = scenarios();
+    all.extend(
+        BUNDLED
+            .iter()
+            .map(|s| serde_json::from_str(s).expect("bundled scenario is valid JSON")),
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    for dir in std::env::args().skip(1) {
+        match nanoplan::scenarios::load_dir(std::path::Path::new(&dir)) {
+            Ok(loaded) => all.extend(loaded),
+            Err(e) => eprintln!("skipping scenario dir {dir}: {e}"),
+        }
+    }
+    all
+}
+
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
 const PREVIEW_MAX_S: f64 = 5.0;
@@ -145,7 +170,7 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
 }
 
 fn main() {
-    let scenes = scenarios();
+    let scenes = all_scenarios();
     let rollout = Sim(simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT));
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -350,5 +375,21 @@ fn draw(
         if let Some(last) = predicted.last() {
             draw_car(&mut gizmos, last, dim);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_scenarios_parse_and_simulate() {
+        let scenes = all_scenarios();
+        assert!(scenes.len() >= 8); // 6 built-ins + 2 bundled
+        let bundled = &scenes[6];
+        assert!(bundled.name.starts_with("nuplan:"));
+        assert!(!bundled.actors[0].trajectory.is_empty());
+        let r = simulate(bundled, PlannerKind::Straight, 2.0, DT);
+        assert_eq!(r.ego.len(), 21);
     }
 }
