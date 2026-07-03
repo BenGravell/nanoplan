@@ -1,4 +1,4 @@
-//! Scenario definitions and batch simulation.
+//! Scenario data, road geometry, loading, and generation.
 //!
 //! Scenarios are plain data (serde JSON) so large batches can come from
 //! anywhere: the built-in synthetic generator, or real nuPlan logs exported
@@ -6,7 +6,75 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Context, Control, Metrics, PlannerKind, Simulator, State, metrics, step, wrap_angle};
+use crate::simulation::{Control, State, step};
+use crate::wrap_angle;
+
+/// A polyline path with arc-length lookup and Frenet projection.
+pub struct Path {
+    pts: Vec<[f64; 2]>,
+    /// Cumulative arc length at each point.
+    s: Vec<f64>,
+}
+
+impl Path {
+    pub fn new(pts: &[[f64; 2]]) -> Self {
+        let mut s = vec![0.0];
+        for w in pts.windows(2) {
+            s.push(s.last().unwrap() + dist(w[0], w[1]));
+        }
+        Path {
+            pts: pts.to_vec(),
+            s,
+        }
+    }
+
+    pub fn length(&self) -> f64 {
+        *self.s.last().unwrap()
+    }
+
+    /// Position and heading at arc length `s` (clamped to the path).
+    pub fn pose_at(&self, s: f64) -> ([f64; 2], f64) {
+        let s = s.clamp(0.0, self.length());
+        let i = self
+            .s
+            .partition_point(|&x| x < s)
+            .clamp(1, self.pts.len() - 1);
+        let (a, b) = (self.pts[i - 1], self.pts[i]);
+        let seg = (self.s[i] - self.s[i - 1]).max(1e-9);
+        let u = (s - self.s[i - 1]) / seg;
+        let pos = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+        (pos, (b[1] - a[1]).atan2(b[0] - a[0]))
+    }
+
+    /// Frenet coordinates of a point: (arc length, signed lateral offset).
+    /// Positive offset is left of the path.
+    pub fn project(&self, p: [f64; 2]) -> (f64, f64) {
+        let mut best = (0.0, f64::INFINITY);
+        for (i, w) in self.pts.windows(2).enumerate() {
+            let (a, b) = (w[0], w[1]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len2 = (dx * dx + dy * dy).max(1e-12);
+            let u = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
+            let q = [a[0] + dx * u, a[1] + dy * u];
+            let d = dist(p, q);
+            if d < best.1.abs() {
+                // sign from the cross product of segment direction and offset
+                let cross = dx * (p[1] - q[1]) - dy * (p[0] - q[0]);
+                best = (self.s[i] + len2.sqrt() * u, d.copysign(cross));
+            }
+        }
+        best
+    }
+
+    pub fn frenet_to_xy(&self, s: f64, d: f64) -> [f64; 2] {
+        let (p, yaw) = self.pose_at(s);
+        [p[0] - d * yaw.sin(), p[1] + d * yaw.cos()]
+    }
+}
+
+fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
 
 /// A timestamped state along a logged actor trajectory.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -28,6 +96,25 @@ pub struct Actor {
     /// by time. Overrides `control` when non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trajectory: Vec<Waypoint>,
+}
+
+impl Actor {
+    /// States at ticks 0..=steps, spaced `dt` apart.
+    pub fn trace(&self, steps: usize, dt: f64) -> Vec<State> {
+        if self.trajectory.is_empty() {
+            let mut s = self.init;
+            std::iter::once(s)
+                .chain((0..steps).map(|_| {
+                    s = step(s, self.control, dt);
+                    s
+                }))
+                .collect()
+        } else {
+            (0..=steps)
+                .map(|i| replay(&self.trajectory, i as f64 * dt))
+                .collect()
+        }
+    }
 }
 
 /// Replayed state at time `t`: linear interpolation between waypoints
@@ -100,58 +187,6 @@ fn default_target_speed() -> f64 {
     10.0
 }
 
-/// A finished closed-loop simulation: ego and actor states at every tick,
-/// plus the metrics of the rollout.
-pub struct Rollout {
-    pub ego: Vec<State>,
-    pub actors: Vec<Vec<State>>,
-    pub metrics: Metrics,
-}
-
-/// Run a planner closed-loop through a scenario.
-pub fn simulate(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> Rollout {
-    let steps = (duration_s / dt) as usize;
-    let actors: Vec<Vec<State>> = sc
-        .actors
-        .iter()
-        .map(|a| {
-            if a.trajectory.is_empty() {
-                let mut s = a.init;
-                std::iter::once(s)
-                    .chain((0..steps).map(|_| {
-                        s = step(s, a.control, dt);
-                        s
-                    }))
-                    .collect()
-            } else {
-                (0..=steps)
-                    .map(|i| replay(&a.trajectory, i as f64 * dt))
-                    .collect()
-            }
-        })
-        .collect();
-    let mut sim = Simulator { state: sc.ego, dt };
-    let mut planner = kind.build();
-    let mut ego = vec![sc.ego];
-    ego.extend((0..steps).map(|i| {
-        let current: Vec<State> = actors.iter().map(|t| t[i]).collect();
-        let ctx = Context {
-            centerline: &sc.centerline,
-            actors: &current,
-            target_speed: sc.target_speed,
-            dt,
-            horizon: 1,
-        };
-        sim.tick(planner.as_mut(), &ctx)
-    }));
-    let metrics = metrics::evaluate(&ego, &actors, &sc.centerline, sc.target_speed, dt);
-    Rollout {
-        ego,
-        actors,
-        metrics,
-    }
-}
-
 /// Load every `*.json` scenario in a directory (non-recursive), sorted by
 /// file name.
 pub fn load_dir(dir: &std::path::Path) -> std::io::Result<Vec<Scenario>> {
@@ -189,44 +224,33 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                     ]
                 })
                 .collect();
+            let actor = |x, y, yaw, speed| Actor {
+                init: State { x, y, yaw, speed },
+                control: Control::default(),
+                trajectory: vec![],
+            };
             let (kind, actors) = match i % 4 {
                 0 => (
                     "lead",
-                    vec![Actor {
-                        init: State {
-                            x: rng.range(25.0, 80.0),
-                            speed: rng.range(0.0, 6.0),
-                            ..Default::default()
-                        },
-                        control: Control::default(),
-                        trajectory: vec![],
-                    }],
+                    vec![actor(rng.range(25.0, 80.0), 0.0, 0.0, rng.range(0.0, 6.0))],
                 ),
                 1 => (
                     "oncoming",
-                    vec![Actor {
-                        init: State {
-                            x: rng.range(120.0, 200.0),
-                            y: 4.0,
-                            yaw: std::f64::consts::PI,
-                            speed: rng.range(4.0, 10.0),
-                        },
-                        control: Control::default(),
-                        trajectory: vec![],
-                    }],
+                    vec![actor(
+                        rng.range(120.0, 200.0),
+                        4.0,
+                        std::f64::consts::PI,
+                        rng.range(4.0, 10.0),
+                    )],
                 ),
                 2 => (
                     "crossing",
-                    vec![Actor {
-                        init: State {
-                            x: rng.range(50.0, 110.0),
-                            y: -60.0,
-                            yaw: std::f64::consts::FRAC_PI_2,
-                            speed: rng.range(3.0, 8.0),
-                        },
-                        control: Control::default(),
-                        trajectory: vec![],
-                    }],
+                    vec![actor(
+                        rng.range(50.0, 110.0),
+                        -60.0,
+                        std::f64::consts::FRAC_PI_2,
+                        rng.range(3.0, 8.0),
+                    )],
                 ),
                 _ => ("open", vec![]),
             };
@@ -249,6 +273,15 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::simulate;
+
+    #[test]
+    fn frenet_roundtrip() {
+        let path = Path::new(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let (s, d) = path.project([10.0, 2.5]);
+        assert!((s - 30.0).abs() < 1e-9 && (d - 2.5).abs() < 1e-9);
+        assert_eq!(path.frenet_to_xy(s, d), [10.0, 2.5]);
+    }
 
     #[test]
     fn synthetic_batch_is_deterministic() {

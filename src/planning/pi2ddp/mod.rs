@@ -14,8 +14,10 @@
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
-use crate::planners::Path;
-use crate::{Context, Control, Planner, Rng, State, step};
+use crate::Rng;
+use crate::planning::{Context, Planner};
+use crate::scenarios::Path;
+use crate::simulation::{Control, State, step};
 
 const HORIZON: usize = 50;
 const ROLLOUTS: usize = 32; // K in the paper; K > n + m with margin
@@ -471,19 +473,10 @@ impl Planner for Pi2DdpPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Simulator, test_ctx};
-
-    const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
+    use crate::planning::test_run;
 
     fn run(ego: State, actors: &[State], ticks: usize) -> Vec<State> {
-        let mut planner = Pi2DdpPlanner::default();
-        let mut sim = Simulator {
-            state: ego,
-            dt: 0.1,
-        };
-        (0..ticks)
-            .map(|_| sim.tick(&mut planner, &test_ctx(&CENTERLINE, actors)))
-            .collect()
+        test_run(&mut Pi2DdpPlanner::default(), ego, actors, ticks)
     }
 
     #[test]

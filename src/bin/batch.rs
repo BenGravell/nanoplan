@@ -8,7 +8,7 @@
 //! logs with tools/export_nuplan_scenarios.py. A per-planner mean-score
 //! summary goes to stderr.
 
-use nanoplan::{Metrics, PlannerKind, scenario, simulate};
+use nanoplan::{Metrics, PlannerKind, scenarios, simulate};
 
 const DURATION_S: f64 = 20.0;
 const DT: f64 = 0.1;
@@ -31,9 +31,9 @@ fn main() {
         }
     }
 
-    let mut scenarios = scenario::synthetic_batch(count, seed);
+    let mut scenarios = scenarios::synthetic_batch(count, seed);
     for dir in &dirs {
-        let loaded = scenario::load_dir(std::path::Path::new(dir))
+        let loaded = scenarios::load_dir(std::path::Path::new(dir))
             .unwrap_or_else(|e| panic!("loading {dir}: {e}"));
         eprintln!("loaded {} scenarios from {dir}", loaded.len());
         scenarios.extend(loaded);
