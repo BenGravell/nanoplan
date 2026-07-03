@@ -185,12 +185,12 @@ stationary lead (`stops_behind_stopped_lead`).
 
 `lattice/mod.rs` — `LatticePlanner`
 
-An EM/Apollo-style planner. Samples a grid in the road's Frenet frame — three
-station layers spaced evenly out to `PLANNING_HORIZON_S = 10` s at the
-assumed cruise speed (`stations_m = v * [1/3, 2/3, 1] * PLANNING_HORIZON_S`)
-crossed with five lateral offsets (`LATERALS_M = [-3.5, -1.75, 0, 1.75, 3.5]`
-m) — connects consecutive layers with cubic-Hermite lateral segments, costs
-every edge
+An EM/Apollo-style planner. Samples a grid in the road's Frenet frame —
+`STATION_LAYERS = 5` layers spaced evenly out to `PLANNING_HORIZON_S = 10` s
+at the assumed cruise speed (`stations_m[i] = v * PLANNING_HORIZON_S * (i+1)
+/ STATION_LAYERS`) crossed with nine lateral offsets (`LATERALS_M = [-3.5,
+-2.625, -1.75, -0.875, 0, 0.875, 1.75, 2.625, 3.5]` m) — connects consecutive
+layers with cubic-Hermite lateral segments, costs every edge
 (smoothness + centerline proximity + constant-velocity-predicted-obstacle
 proximity, with a hard `f64::INFINITY` if predicted clearance drops below
 `COLLISION_RADIUS_M = 2.5` m), and picks the best path with exact dynamic
@@ -211,7 +211,7 @@ returning a bad path.
 
 **Seams**: `route`, `optimize` (the layer-by-layer DP loop) with `edge_costs`
 (custom — nested *inside* `optimize`; it's the hot loop, called
-`3 stations × 5 laterals × up to 5 predecessors` times per `plan()` call) as
+`5 stations × 9 laterals × up to 9 predecessors` times per `plan()` call) as
 a nested seam, then `extract` (sample the winning path into `xy_to_controls`).
 
 ## PI2-DDP
