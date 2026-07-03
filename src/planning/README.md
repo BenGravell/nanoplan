@@ -58,7 +58,7 @@ Everything a planner needs besides its own state and the ego pose. Notably:
 - **`horizon` is a request, not a contract.** A planner may return more or
   fewer controls; the simulator only ever consumes the first one during
   closed-loop simulation. The viewer's future-preview feature asks for a
-  larger horizon (e.g. 50 ticks) to draw a longer plan.
+  larger horizon (up to 100 ticks, `PLANNING_HORIZON_S`) to draw a longer plan.
 - **`centerline` is a raw polyline**, not a `Path`. Every planner that needs
   Frenet operations (arc length, projection, curvature-following) builds its
   own `scenarios::Path` from it — see [`src/scenarios/README.md`](../scenarios/README.md#path-the-frenet-helper).
