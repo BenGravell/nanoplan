@@ -19,7 +19,8 @@ use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, step};
 
-const HORIZON: usize = 50;
+// 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
+const HORIZON: usize = 100;
 const ROLLOUTS: usize = 32; // K in the paper; K > n + m with margin
 const GENERATIONS: usize = 4;
 const BETA: f64 = 10.0; // baseline sensitivity (eq. 12)

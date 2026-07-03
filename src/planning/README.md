@@ -185,10 +185,12 @@ stationary lead (`stops_behind_stopped_lead`).
 
 `lattice/mod.rs` — `LatticePlanner`
 
-An EM/Apollo-style planner. Samples a fixed grid in the road's Frenet frame
-— three station layers (`STATIONS_M = [15, 30, 45]` m) crossed with five
-lateral offsets (`LATERALS_M = [-3.5, -1.75, 0, 1.75, 3.5]` m) — connects
-consecutive layers with cubic-Hermite lateral segments, costs every edge
+An EM/Apollo-style planner. Samples a grid in the road's Frenet frame — three
+station layers spaced evenly out to `PLANNING_HORIZON_S = 10` s at the
+assumed cruise speed (`stations_m = v * [1/3, 2/3, 1] * PLANNING_HORIZON_S`)
+crossed with five lateral offsets (`LATERALS_M = [-3.5, -1.75, 0, 1.75, 3.5]`
+m) — connects consecutive layers with cubic-Hermite lateral segments, costs
+every edge
 (smoothness + centerline proximity + constant-velocity-predicted-obstacle
 proximity, with a hard `f64::INFINITY` if predicted clearance drops below
 `COLLISION_RADIUS_M = 2.5` m), and picks the best path with exact dynamic
@@ -218,8 +220,10 @@ a nested seam, then `extract` (sample the winning path into `xy_to_controls`).
 
 Sampling-based Differential Dynamic Programming, implementing Algorithm 2 of
 Lefebvre & Crevecoeur, *"Path Integral Policy Improvement with Differential
-Dynamic Programming"* (PI²-DDP). Each `plan()` call runs `GENERATIONS = 4`
-generations; each generation samples `ROLLOUTS = 32` perturbed control
+Dynamic Programming"* (PI²-DDP). `HORIZON = 100` ticks, i.e.
+`PLANNING_HORIZON_S = 10` s at the simulator's 0.1 s tick rate. Each `plan()`
+call runs `GENERATIONS = 4` generations; each generation samples
+`ROLLOUTS = 32` perturbed control
 sequences around a nominal trajectory (with feedback), weights them by
 exponentiated normalized cost-to-go (paper eq. 12), and extracts a DDP-style
 update from the reward-weighted rollout statistics:
