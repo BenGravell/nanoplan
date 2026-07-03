@@ -40,7 +40,12 @@ them first (standard library only, no devkit install):
 ```sh
 python3 tools/export_nuplan_scenarios.py path/to/log.db out_dir
 cargo run --release --bin batch -- --count 0 --dir out_dir
+cargo run --release -- out_dir    # or browse them in the viewer
 ```
+
+The viewer's scenario dropdown offers the built-ins, the bundled JSONs in
+[`scenarios/json/`](scenarios/json/) (which also ship in the web build), and
+any scenario directories passed as arguments on desktop.
 
 ## Web deploy
 

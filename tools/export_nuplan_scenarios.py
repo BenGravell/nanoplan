@@ -72,10 +72,14 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
         if len(centerline) < 2:
             continue  # ego is parked; no route to follow
 
+        # translate everything to the scenario's local origin: nuPlan uses
+        # global map coordinates (hundreds of km), which break f32 rendering
         first = ego_rows[0]
+        ox, oy = first["x"], first["y"]
+        centerline = [[round(x - ox, 3), round(y - oy, 3)] for x, y in centerline]
         ego = {
-            "x": first["x"],
-            "y": first["y"],
+            "x": 0.0,
+            "y": 0.0,
             "yaw": quaternion_yaw(first["qw"], first["qx"], first["qy"], first["qz"]),
             "speed": math.hypot(first["vx"], first["vy"]),
         }
@@ -111,8 +115,8 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
                 trajectory.append(
                     {
                         "t": round(t, 3),
-                        "x": b["x"],
-                        "y": b["y"],
+                        "x": round(b["x"] - ox, 3),
+                        "y": round(b["y"] - oy, 3),
                         "yaw": b["yaw"],
                         "speed": math.hypot(b["vx"], b["vy"]),
                     }
