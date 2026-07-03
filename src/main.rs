@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::planning::Context;
+use nanoplan::planning::{Context, PLANNING_HORIZON_S};
 use nanoplan::scenarios::{Actor, MapData};
 use nanoplan::{
     Control, IncrementalSim, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step,
@@ -39,7 +39,7 @@ fn all_scenarios() -> Vec<Scenario> {
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
-const PREVIEW_MAX_S: f64 = 5.0;
+const PREVIEW_MAX_S: f64 = PLANNING_HORIZON_S;
 const PX_PER_M: f32 = 6.0;
 /// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
 const CAR_SIZE_M: Vec2 = Vec2::new(5.176, 2.297);

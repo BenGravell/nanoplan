@@ -3,14 +3,13 @@
 //! a tree with cubic-in-time lateral segments, assigns node costs (offset,
 //! smoothness, predicted-obstacle proximity), and picks the best path.
 
-use crate::planning::{Context, Planner};
+use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
 use crate::wrap_angle;
 
 pub struct LatticePlanner;
 
-const STATIONS_M: [f64; 3] = [15.0, 30.0, 45.0];
 const LATERALS_M: [f64; 5] = [-3.5, -1.75, 0.0, 1.75, 3.5];
 const SAMPLES_PER_SEGMENT: usize = 8;
 // center-to-center; slightly over one car width plus margin
@@ -54,11 +53,18 @@ impl Planner for LatticePlanner {
         });
         // ponytail: constant-speed profile; couple IDM into the lattice when needed
         let v = ego.speed.clamp(2.0, ctx.target_speed.max(2.0));
+        // three evenly spaced layers reaching out to the full prediction
+        // horizon at the assumed cruise speed
+        let stations_m = [
+            v * PLANNING_HORIZON_S / 3.0,
+            v * PLANNING_HORIZON_S * 2.0 / 3.0,
+            v * PLANNING_HORIZON_S,
+        ];
         // initial lateral rate, expressed per unit of segment parameter u; the
         // first segment must honor it or every replan restarts the swerve at
         // zero slope and the executed path lags the plan into obstacles
         let (_, lane_yaw) = path.pose_at(s0);
-        let m0_first = ego.speed * wrap_angle(ego.yaw - lane_yaw).sin() * (STATIONS_M[0] / v);
+        let m0_first = ego.speed * wrap_angle(ego.yaw - lane_yaw).sin() * (stations_m[0] / v);
         // cubic Hermite in u with start slope m0 and flat end
         let d_shape = |da: f64, db: f64, m0: f64, u: f64| {
             let (u2, u3) = (u * u, u * u * u);
@@ -99,12 +105,12 @@ impl Planner for LatticePlanner {
         // (the nested edge_costs seam accounts for most of this)
         let mut prev: Vec<(f64, f64, Vec<f64>)> = vec![(d0, 0.0, vec![])]; // (d, cost, laterals so far)
         ctx.time("optimize", || {
-            for (layer, ds) in STATIONS_M.iter().enumerate() {
+            for (layer, ds) in stations_m.iter().enumerate() {
                 let sa = s0
                     + if layer == 0 {
                         0.0
                     } else {
-                        STATIONS_M[layer - 1]
+                        stations_m[layer - 1]
                     };
                 let sb = s0 + ds;
                 prev = LATERALS_M
@@ -137,16 +143,16 @@ impl Planner for LatticePlanner {
 
         // sample the winning path over time; d is cubic in t on each segment
         ctx.time("extract", || {
-            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((STATIONS_M[2] / (v * ctx.dt)) as usize))
+            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((stations_m[2] / (v * ctx.dt)) as usize))
                 .map(|i| {
-                    let s_rel = (v * ctx.dt * i as f64).min(STATIONS_M[2]);
-                    let seg = STATIONS_M.iter().position(|&m| s_rel <= m).unwrap();
+                    let s_rel = (v * ctx.dt * i as f64).min(stations_m[2]);
+                    let seg = stations_m.iter().position(|&m| s_rel <= m).unwrap();
                     let (sa, da) = if seg == 0 {
                         (0.0, d0)
                     } else {
-                        (STATIONS_M[seg - 1], laterals[seg - 1])
+                        (stations_m[seg - 1], laterals[seg - 1])
                     };
-                    let u = (s_rel - sa) / (STATIONS_M[seg] - sa);
+                    let u = (s_rel - sa) / (stations_m[seg] - sa);
                     let m0 = if seg == 0 { m0_first } else { 0.0 };
                     let d = d_shape(da, laterals[seg], m0, u);
                     path.frenet_to_xy(s0 + s_rel, d)

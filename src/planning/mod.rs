@@ -14,6 +14,12 @@ pub use straight::StraightPlanner;
 
 use crate::simulation::{Control, State};
 
+/// How far ahead planners with a genuine receding-horizon cost model
+/// (lattice, PI²-DDP) look when predicting collisions and optimizing a
+/// trajectory. Not `Context::horizon`, which is just the requested length
+/// of the *returned* control trajectory — see its doc comment.
+pub const PLANNING_HORIZON_S: f64 = 10.0;
+
 /// Everything a planner sees besides the ego state.
 pub struct Context<'a> {
     /// Lane centerline the ego should follow, as a polyline.
