@@ -137,6 +137,7 @@ impl IncrementalSim {
             dt: self.dt,
             horizon: 1,
             latency: Some(&self.recorder),
+            diagnostics: None,
         };
         let state = self.sim.tick(self.planner.as_mut(), &ctx);
         self.latency.absorb(self.recorder.take());

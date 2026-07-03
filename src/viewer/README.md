@@ -47,3 +47,18 @@ Both are additive to the six built-in scenarios and the two bundled via
 
 See [`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources) for the
 user-facing description of all four sources.
+
+## Introspection diagnostics
+
+The "diagnostic points" / "diagnostic trajectories" checkboxes in `ui.rs`
+(shown only when `state.planner.has_diagnostics()`, i.e. the Frenet lattice
+or PI²-DDP is selected — see
+[`src/planning/README.md#introspection-diagnostics`](../planning/README.md#introspection-diagnostics))
+render whatever the planner recorded into a `nanoplan::planning::Diagnostics`
+during the *future-preview* replan in `draw.rs`. That replan already runs
+every frame while `preview_s > 0` (it's how the pink plan-preview line gets
+drawn); when either checkbox is on, `draw.rs` additionally passes a
+`Diagnostics` recorder into that same `plan()` call and draws its points
+(yellow) and trajectories (cyan) as gizmos. Nothing is recorded, and the
+checkboxes have no effect, while `preview_s == 0` — there's no replan
+happening to record from.

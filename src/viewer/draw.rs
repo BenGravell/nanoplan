@@ -2,7 +2,7 @@
 //! overlay via Bevy gizmos.
 
 use bevy::prelude::*;
-use nanoplan::planning::Context;
+use nanoplan::planning::{Context, Diagnostics};
 use nanoplan::{Control, Path, Scenario, State, step};
 
 use super::rollouts::RolloutCache;
@@ -12,8 +12,15 @@ const PX_PER_M: f32 = 6.0;
 /// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
 const CAR_SIZE_M: Vec2 = Vec2::new(5.176, 2.297);
 const ACCENT: Color = Color::srgb(1.0, 0.25, 0.85);
+const DIAG_POINT: Color = Color::srgb(0.95, 0.85, 0.2);
+const DIAG_TRAJECTORY: Color = Color::srgb(0.2, 0.85, 0.95);
 
-fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
+fn ctx<'a>(
+    sc: &'a Scenario,
+    actors: &'a [State],
+    horizon: usize,
+    diagnostics: Option<&'a Diagnostics>,
+) -> Context<'a> {
     Context {
         centerline: &sc.centerline,
         actors,
@@ -21,6 +28,7 @@ fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a>
         dt: DT,
         horizon,
         latency: None,
+        diagnostics,
     }
 }
 
@@ -128,9 +136,27 @@ pub(crate) fn draw(
     if k == 0 {
         return;
     }
-    // planned ego future: replan from the scrubbed state, roll out k ticks
+    // planned ego future: replan from the scrubbed state, roll out k ticks.
+    // Only ask for diagnostics when a checkbox wants them — recording is
+    // extra work the planner otherwise skips entirely (see Context::diagnostics).
+    let want_diag = state.show_diag_points || state.show_diag_trajectories;
+    let recorder = Diagnostics::default();
     let current: Vec<State> = rollout.actors.iter().map(|t| t[idx]).collect();
-    let plan = state.planner.build().plan(ego, &ctx(sc, &current, k));
+    let plan_ctx = ctx(sc, &current, k, want_diag.then_some(&recorder));
+    let plan = state.planner.build().plan(ego, &plan_ctx);
+    if want_diag {
+        let diag = recorder.take();
+        if state.show_diag_trajectories {
+            for traj in &diag.trajectories {
+                gizmos.linestrip_2d(traj.iter().copied().map(ppx), DIAG_TRAJECTORY);
+            }
+        }
+        if state.show_diag_points {
+            for &p in &diag.points {
+                gizmos.circle_2d(ppx(p), 0.3 * PX_PER_M, DIAG_POINT);
+            }
+        }
+    }
     let planned = rollout_controls(ego, &plan[..k.min(plan.len())]);
     gizmos.linestrip_2d(std::iter::once(&ego).chain(&planned).map(px), ACCENT);
     if let Some(last) = planned.last() {

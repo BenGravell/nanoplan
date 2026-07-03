@@ -30,6 +30,11 @@ pub(crate) struct UiState {
     pub planner: PlannerKind,
     pub time_s: f32,
     pub preview_s: f32,
+    /// Show the current planner's diagnostic sample points (only recorded
+    /// while `preview_s > 0`, since that's the only replan collecting them).
+    pub show_diag_points: bool,
+    /// Show the current planner's diagnostic trajectories/connectors.
+    pub show_diag_trajectories: bool,
 }
 
 pub fn run() {
@@ -56,6 +61,8 @@ pub fn run() {
         planner: PlannerKind::Straight,
         time_s: 0.0,
         preview_s: 0.0,
+        show_diag_points: false,
+        show_diag_trajectories: false,
     })
     .insert_resource(cache)
     .init_non_send::<ActiveJob>()

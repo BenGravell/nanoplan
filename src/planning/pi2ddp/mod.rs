@@ -243,7 +243,7 @@ impl Planner for Pi2DdpPlanner {
             _ => Self::init_policy(&path, ego, ctx, sigma_init),
         });
 
-        for _ in 0..GENERATIONS {
+        for generation in 0..GENERATIONS {
             let (x_nom, _) = noise_free(&pol.u);
 
             // K perturbed rollouts with feedback (Algorithm 2, lines 3-10);
@@ -286,6 +286,20 @@ impl Planner for Pi2DdpPlanner {
                     }
                 }
             });
+
+            // diagnostic overlay: the final generation's sampled rollouts,
+            // both as a point cloud and as trajectories
+            if generation == GENERATIONS - 1
+                && let Some(diag) = ctx.diagnostics
+            {
+                for traj in &xs {
+                    let pts: Vec<[f64; 2]> = traj.iter().map(|s| [s.x, s.y]).collect();
+                    for &p in &pts {
+                        diag.record_point(p);
+                    }
+                    diag.record_trajectory(pts);
+                }
+            }
 
             // reward-weighted updates per time step (Algorithm 2, lines 11-18);
             // custom seam: the DDP-style gradient extraction
@@ -547,5 +561,25 @@ mod tests {
         assert!(min_gap > 2.0, "min gap {min_gap}");
         let max_offset = trace.iter().map(|s| s.y.abs()).fold(0.0, f64::max);
         assert!(max_offset < 5.5, "left the road, max offset {max_offset}");
+    }
+
+    #[test]
+    fn records_diagnostics_when_requested() {
+        use crate::planning::Diagnostics;
+
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let diag = Diagnostics::default();
+        let mut ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &[]);
+        ctx.diagnostics = Some(&diag);
+        Pi2DdpPlanner::default().plan(ego, &ctx);
+        let data = diag.take();
+        // the final generation's ROLLOUTS sampled trajectories
+        assert_eq!(data.trajectories.len(), ROLLOUTS);
+        assert!(data.trajectories.iter().all(|t| t.len() == HORIZON + 1));
+        // every state along every rollout, flattened
+        assert_eq!(data.points.len(), ROLLOUTS * (HORIZON + 1));
     }
 }

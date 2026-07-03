@@ -44,6 +44,7 @@ pub struct Context<'a> {
     pub dt: f64,                      // tick length of the returned controls
     pub horizon: usize,               // requested control-trajectory length
     pub latency: Option<&'a Latency>, // recorder; see below
+    pub diagnostics: Option<&'a Diagnostics>, // recorder; see below
 }
 ```
 
@@ -116,6 +117,29 @@ full in its module doc. The short version:
   reads straight from that.
 
 See each planner's section below for which custom seams it adds and why.
+
+## Introspection diagnostics
+
+`diagnostics.rs` is the same optional-recorder shape as `latency.rs`, for a
+different purpose: exposing the search geometry a planner considered, not
+timing it. `ctx.diagnostics` is `Some` only when the viewer's diagnostic
+overlay is switched on (see
+[`src/viewer/README.md`](../viewer/README.md#introspection-diagnostics)) —
+everywhere else, including `simulate()`'s closed-loop tick loop, it's `None`
+and planners record nothing, so there's no cost outside that one on-demand
+replan.
+
+`DiagnosticsData` has two plain fields planners push into as they see fit:
+
+- `points: Vec<[f64; 2]>` — standalone samples (the lattice's grid nodes,
+  PI²-DDP's rollout states).
+- `trajectories: Vec<Vec<[f64; 2]>>` — polylines (the lattice's DP edges,
+  PI²-DDP's sampled rollouts).
+
+Only the Frenet lattice and PI²-DDP record anything —
+`PlannerKind::has_diagnostics()` reports which — since the strawman and
+Bezier+IDM planners have no receding-horizon search to show. See each
+planner's section below for exactly what it records.
 
 ## Test harness
 
@@ -214,6 +238,12 @@ returning a bad path.
 `5 stations × 9 laterals × up to 9 predecessors` times per `plan()` call) as
 a nested seam, then `extract` (sample the winning path into `xy_to_controls`).
 
+**Diagnostics**: every `(station, lateral)` grid node as a `point` (plus the
+tree root at the ego's current position), and every DP edge sampled at
+`SAMPLES_PER_SEGMENT` points as a `trajectory` — the whole search graph the
+DP considered, not just the winning path (that's the separate future-preview
+line, always drawn regardless of the diagnostic overlay).
+
 ## PI2-DDP
 
 `pi2ddp/mod.rs` — `Pi2DdpPlanner`
@@ -267,3 +297,10 @@ occasional full road-informed re-init when the shift check misses),
 `rollouts` (custom — the `ROLLOUTS × HORIZON` sampling loop, by far the most
 expensive part: typically ~85-90% of `total` time), `policy_update` (custom
 — the per-timestep DDP gradient extraction).
+
+**Diagnostics**: the final generation's `ROLLOUTS` sampled state sequences —
+each one recorded both as a `trajectory` (the polyline through its `HORIZON`
+states) and flattened into `points` (every state along every rollout), so
+the overlay can show the sampling distribution's spread either as paths or
+as a density of points. Only the last generation is recorded; earlier
+generations are refinement steps toward it, not additional information.

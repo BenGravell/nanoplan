@@ -102,6 +102,9 @@ impl Planner for LatticePlanner {
         // DP over layers: the lattice is a layered DAG, so dynamic programming
         // finds the exact best path (A* would just add bookkeeping).
         // (the nested edge_costs seam accounts for most of this)
+        if let Some(diag) = ctx.diagnostics {
+            diag.record_point(path.frenet_to_xy(s0, d0)); // tree root
+        }
         let mut prev: Vec<(f64, f64, Vec<f64>)> = vec![(d0, 0.0, vec![])]; // (d, cost, laterals so far)
         ctx.time("optimize", || {
             for (layer, ds) in stations_m.iter().enumerate() {
@@ -115,12 +118,29 @@ impl Planner for LatticePlanner {
                 prev = LATERALS_M
                     .iter()
                     .map(|&db| {
+                        if let Some(diag) = ctx.diagnostics {
+                            diag.record_point(path.frenet_to_xy(sb, db));
+                        }
                         prev.iter()
                             .map(|(da, c, laterals)| {
                                 let mut l = laterals.clone();
                                 l.push(db);
                                 let m0 = if layer == 0 { m0_first } else { 0.0 };
-                                (db, c + edge_cost(sa, *da, sb, db, m0), l)
+                                let edge_cost = c + edge_cost(sa, *da, sb, db, m0);
+                                if let Some(diag) = ctx.diagnostics {
+                                    // sample the cubic Hermite connector between the
+                                    // two grid nodes, for the diagnostic overlay
+                                    let traj = (0..=SAMPLES_PER_SEGMENT)
+                                        .map(|i| {
+                                            let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
+                                            let s = sa + (sb - sa) * u;
+                                            let d = d_shape(*da, db, m0, u);
+                                            path.frenet_to_xy(s, d)
+                                        })
+                                        .collect();
+                                    diag.record_trajectory(traj);
+                                }
+                                (db, edge_cost, l)
                             })
                             .min_by(|a, b| a.1.total_cmp(&b.1))
                             .unwrap()
@@ -198,5 +218,30 @@ mod tests {
         let end = trace.last().unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");
         assert!(end.x > 60.0, "did not pass the obstacle, x {}", end.x);
+    }
+
+    #[test]
+    fn records_diagnostics_when_requested() {
+        use crate::planning::Diagnostics;
+
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let diag = Diagnostics::default();
+        let mut ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &[]);
+        ctx.diagnostics = Some(&diag);
+        LatticePlanner.plan(ego, &ctx);
+        let data = diag.take();
+        // tree root + STATION_LAYERS * LATERALS_M.len() grid nodes
+        assert_eq!(data.points.len(), 1 + STATION_LAYERS * LATERALS_M.len());
+        // layer 0 has 1 predecessor, layers 1.. have LATERALS_M.len() each
+        let edges = LATERALS_M.len() + (STATION_LAYERS - 1) * LATERALS_M.len() * LATERALS_M.len();
+        assert_eq!(data.trajectories.len(), edges);
+        assert!(
+            data.trajectories
+                .iter()
+                .all(|t| t.len() == SAMPLES_PER_SEGMENT + 1)
+        );
     }
 }

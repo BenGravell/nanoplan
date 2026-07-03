@@ -85,6 +85,15 @@ pub(crate) fn ui(
             egui::Slider::new(&mut state.preview_s, 0.0..=PREVIEW_MAX_S as f32)
                 .text("future preview [s]"),
         );
+        if state.planner.has_diagnostics() {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut state.show_diag_points, "diagnostic points");
+                ui.checkbox(&mut state.show_diag_trajectories, "diagnostic trajectories");
+            });
+            if state.preview_s == 0.0 && (state.show_diag_points || state.show_diag_trajectories) {
+                ui.label("(needs future preview > 0 — that's what replans and records them)");
+            }
+        }
         ui.separator();
 
         let key = (state.scenario, state.planner);
