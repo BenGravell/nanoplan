@@ -27,7 +27,24 @@ jobs:
       name: github-pages
     runs-on: ubuntu-latest
     steps:
+      # actions/deploy-pages intermittently fails fast with "Deployment
+      # failed, try again later" — a transient error from the Pages backend
+      # itself, unrelated to the build (runs 9 and 14 both hit this with an
+      # already-successful build). Retry a few times before giving up.
       - uses: actions/deploy-pages@v4
+        id: deploy1
+        continue-on-error: true
         with:
           # ride out slow Pages queues (run 6 timed out at the 10 min default)
+          timeout: 1800000
+      - uses: actions/deploy-pages@v4
+        id: deploy2
+        if: steps.deploy1.outcome == 'failure'
+        continue-on-error: true
+        with:
+          timeout: 1800000
+      - uses: actions/deploy-pages@v4
+        id: deploy3
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        with:
           timeout: 1800000
