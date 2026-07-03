@@ -156,6 +156,7 @@ fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a>
         target_speed: sc.target_speed,
         dt: DT,
         horizon,
+        latency: None,
     }
 }
 
@@ -249,6 +250,20 @@ fn ui(
             ui.strong(format!("{tick_score:.2}"));
             ui.strong(format!("{:.2}", rollout.0.metrics.score));
             ui.end_row();
+        });
+        ui.separator();
+        ui.label("planner latency");
+        egui::Grid::new("latency").show(ui, |ui| {
+            ui.label("seam");
+            ui.label("mean [ms]");
+            ui.label("max [ms]");
+            ui.end_row();
+            for seam in &rollout.0.latency.seams {
+                ui.label(seam.name);
+                ui.label(format!("{:.3}", seam.mean_ms()));
+                ui.label(format!("{:.3}", seam.max_ms));
+                ui.end_row();
+            }
         });
     });
     if (state.scenario, state.planner) != prev {

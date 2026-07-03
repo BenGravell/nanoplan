@@ -1,11 +1,13 @@
 //! The planner interface and one module per planner.
 
 pub mod bezier_idm;
+pub mod latency;
 pub mod lattice;
 pub mod pi2ddp;
 pub mod straight;
 
 pub use bezier_idm::BezierIdmPlanner;
+pub use latency::{Latency, LatencyStats, SeamStats};
 pub use lattice::LatticePlanner;
 pub use pi2ddp::Pi2DdpPlanner;
 pub use straight::StraightPlanner;
@@ -24,6 +26,19 @@ pub struct Context<'a> {
     pub dt: f64,
     /// Requested number of controls (planners may return fewer or more).
     pub horizon: usize,
+    /// Latency recorder for this plan call, when diagnostics are collected.
+    pub latency: Option<&'a Latency>,
+}
+
+impl Context<'_> {
+    /// Time `f` under the seam `name` when diagnostics are on; otherwise
+    /// just run it. See [`latency`] for the standardized seam names.
+    pub fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
+        match self.latency {
+            Some(l) => l.time(name, f),
+            None => f(),
+        }
+    }
 }
 
 /// A planner turns the current state into a control trajectory.
@@ -77,6 +92,7 @@ pub(crate) fn test_ctx<'a>(centerline: &'a [[f64; 2]], actors: &'a [State]) -> C
         target_speed: 10.0,
         dt: 0.1,
         horizon: 10,
+        latency: None,
     }
 }
 
