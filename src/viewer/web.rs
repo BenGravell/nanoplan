@@ -11,7 +11,7 @@ use std::rc::Rc;
 use bevy::prelude::*;
 use nanoplan::Scenario;
 
-use super::Scenarios;
+use super::{Scenarios, UiState};
 
 /// Relative, so it resolves under the page's own base path both for
 /// `trunk serve` (http://localhost:8080/) and the GitHub Pages deploy
@@ -63,4 +63,100 @@ pub(crate) fn absorb_fetch(fetch: NonSend<WebScenarioFetch>, mut scenes: ResMut<
         info!("loaded {} scenario(s) from {BUNDLE_URL}", loaded.len());
     }
     scenes.0.extend(loaded);
+}
+
+type LoadResult = Result<Vec<Scenario>, String>;
+
+/// State for the in-app scenario-loading widget on web: opens the browser's
+/// native file picker and loads whatever `*.json` files the user selects —
+/// the web equivalent of desktop's "nuPlan path" widget (`ui::ScenarioLoader`
+/// in `ui.rs`), which needs arbitrary filesystem access wasm doesn't have.
+/// Lets a user visiting the deployed site browse scenarios exported from
+/// their own nuPlan log, not just whatever a maintainer baked into
+/// `web_bundle.json` at deploy time.
+#[derive(Default)]
+pub(crate) struct WebScenarioLoader {
+    result: Rc<RefCell<Option<LoadResult>>>,
+    loading: Rc<RefCell<bool>>,
+    status: Option<Result<String, String>>,
+}
+
+impl WebScenarioLoader {
+    pub(crate) fn is_loading(&self) -> bool {
+        *self.loading.borrow()
+    }
+
+    pub(crate) fn status(&self) -> Option<&Result<String, String>> {
+        self.status.as_ref()
+    }
+
+    /// Opens the file picker and, once the user picks files (or cancels),
+    /// stashes the result for `absorb_load` to merge in next frame.
+    /// A no-op if a pick is already in flight.
+    pub(crate) fn spawn_pick(&self) {
+        if *self.loading.borrow() {
+            return;
+        }
+        *self.loading.borrow_mut() = true;
+        let result_slot = self.result.clone();
+        let loading_slot = self.loading.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            *result_slot.borrow_mut() = Some(load_picked_files().await);
+            *loading_slot.borrow_mut() = false;
+        });
+    }
+}
+
+async fn load_picked_files() -> LoadResult {
+    let Some(files) = rfd::AsyncFileDialog::new()
+        .add_filter("scenario JSON", &["json"])
+        .pick_files()
+        .await
+    else {
+        return Ok(Vec::new()); // dialog cancelled
+    };
+    let mut scenarios = Vec::new();
+    for file in files {
+        let bytes = file.read().await;
+        // accept either a single exported scenario or a bundle array — the
+        // same two shapes the startup bundle fetch and desktop's load_path
+        // both accept
+        if let Ok(one) = serde_json::from_slice::<Scenario>(&bytes) {
+            scenarios.push(one);
+        } else if let Ok(many) = serde_json::from_slice::<Vec<Scenario>>(&bytes) {
+            scenarios.extend(many);
+        } else {
+            return Err(format!(
+                "{}: not a valid scenario JSON file",
+                file.file_name()
+            ));
+        }
+    }
+    Ok(scenarios)
+}
+
+/// Once a frame: if a file pick-and-load has landed, merge it into the
+/// scenario list and select the first newly loaded one (matching desktop's
+/// Load button), and record a status message for the UI to show.
+pub(crate) fn absorb_load(
+    mut loader: NonSendMut<WebScenarioLoader>,
+    mut scenes: ResMut<Scenarios>,
+    mut state: ResMut<UiState>,
+) {
+    let Some(result) = loader.result.borrow_mut().take() else {
+        return;
+    };
+    match result {
+        Ok(loaded) if loaded.is_empty() => {} // dialog cancelled: leave prior status as-is
+        Ok(loaded) => {
+            let n = loaded.len();
+            state.scenario = scenes.0.len();
+            scenes.0.extend(loaded);
+            loader.status = Some(Ok(format!(
+                "loaded {n} scenario{}",
+                if n == 1 { "" } else { "s" }
+            )));
+        }
+        Err(e) => loader.status = Some(Err(e)),
+    }
 }
