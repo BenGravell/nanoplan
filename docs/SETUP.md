@@ -30,6 +30,41 @@ that, incremental builds are fast. `[profile.dev]` in
 and `opt-level = 3` for dependencies — the standard bevy debug-profile
 tradeoff that keeps iteration snappy without sacrificing runtime frame rate.
 
+## Profiling build times
+
+```sh
+python3 tools/build_timings.py            # incremental build, reports the report path + slowest crates
+python3 tools/build_timings.py --clean    # cargo clean first: a true from-scratch baseline
+python3 tools/build_timings.py --top 30 -- --release --bin batch   # extra args go to `cargo build`
+```
+
+A thin wrapper around cargo's built-in `--timings` report (`target/cargo-timings/cargo-timing.html`):
+runs the build, then prints wall time, CPU time (i.e. the parallelism
+factor), and the slowest individual crates to compile. Used to find two
+concrete wins already applied in this repo:
+
+- **`2d_bevy_render` looked minimal but wasn't.** It routes through bevy's
+  `common_api` feature bundle, which pulls in `bevy_ui`, `bevy_ui_render`,
+  `bevy_animation`, `bevy_scene`, and every picking backend regardless — none
+  of which this app uses. Listing the individual render features instead
+  (see [`Cargo.toml`](../Cargo.toml)) dropped all of them from the build.
+- **`bevy_egui`'s own `default` feature set does the same thing**: its
+  `bevy_ui` feature (on by default) drags `bevy_ui`/`bevy_ui_render` back in
+  even with them off on the `bevy` dependency, for embedding egui inside
+  bevy_ui layouts (also unused here). `default-features = false` plus an
+  explicit list (`manage_clipboard`, `default_fonts`, `render`, `picking`)
+  fixed it.
+
+Together these cut a clean `cargo build` from **739.6s wall / 2872.1s CPU
+(3.9x parallelism, 467 units)** to **505.9s wall / 1991.0s CPU (3.9x
+parallelism, 410 units)** on a 4-core machine — a **31.6% wall-time
+reduction** — mostly by removing 57 whole compilation units from the
+dependency graph (`bevy_ui`, `bevy_ui_render`, `bevy_animation`, `bevy_text`,
+`webbrowser`, and their transitive deps) rather than compiling the same code
+faster; `[profile.dev] debug = "line-tables-only"` (instead of full
+debuginfo) accounts for the rest, trading per-variable debugger info for
+faster codegen and linking (panic/backtrace file:line info is unaffected).
+
 ### Linux system dependencies
 
 Bevy's windowing and audio backends link against system libraries that
@@ -72,12 +107,16 @@ one target artifact"*.
 
 ### wasm-specific notes
 
-- **Bevy features are trimmed** in [`Cargo.toml`](../Cargo.toml)
-  (`default_app`, `default_platform`, `2d_bevy_render`, `bevy_picking`) —
-  no 3D, no audio, no UI widgets beyond what `bevy_egui` needs. This keeps
-  the wasm binary from ballooning; a full-feature bevy wasm build easily
-  hits 30-50 MB unoptimized. `[profile.release]` additionally sets
-  `opt-level = "s"`, thin LTO, and stripped debuginfo.
+- **Bevy and bevy_egui features are trimmed** in
+  [`Cargo.toml`](../Cargo.toml) to individual render features (`bevy_render`,
+  `bevy_sprite_render`, `bevy_gizmos_render`, ...) rather than the coarse
+  `2d_bevy_render` bundle, and `bevy_egui` has `default-features = false` —
+  see the comments there for why (the bundle and bevy_egui's defaults each
+  pull in bevy_ui/bevy_ui_render/bevy_animation/bevy_scene, unused here).
+  This keeps the wasm binary from ballooning; a full-feature bevy wasm build
+  easily hits 30-50 MB unoptimized. `[profile.release]` additionally sets
+  `opt-level = "s"`, thin LTO, and stripped debuginfo. See
+  [Profiling build times](#profiling-build-times) for how this was found.
 - **Timing** (`src/planning/latency.rs`) uses the [`web-time`](https://docs.rs/web-time)
   crate instead of `std::time::Instant`, which panics on wasm.
 - **`wasm-opt` version matters.** Trunk's own `wasm-opt` download (invoked
