@@ -53,7 +53,7 @@ has only `total`, PI²-DDP shows `route`, `warm_start`, `rollouts`, and
 The dropdown offers scenarios from up to five sources, concatenated in this
 order:
 
-1. **Six built-in scenarios** hardcoded in `src/main.rs`: a straight road
+1. **Six built-in scenarios** hardcoded in `src/viewer/scenarios.rs`: a straight road
    with an offset start, an s-curve road, a stopped lead, oncoming traffic,
    crossing traffic, and a curving lead (chosen to make constant-velocity
    prediction error visible).

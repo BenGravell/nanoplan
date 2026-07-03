@@ -129,7 +129,7 @@ one target artifact"*.
   (`cargo run -- some_dir/`) are a desktop-only feature — the wasm build has
   no filesystem, so that code path is `#[cfg(not(target_arch = "wasm32"))]`.
   Instead, the wasm build fetches `scenarios/web_bundle.json` at startup
-  (`main.rs`'s `web_scenarios` module, wasm-only, using `gloo-net` +
+  (`src/viewer/web.rs`, wasm-only, using `gloo-net` +
   `wasm_bindgen_futures::spawn_local` — polled once a frame the same way
   `IncrementalSim`'s async simulation jobs are). Build it with
   `python3 tools/bundle_web_scenarios.py` after exporting scenarios into

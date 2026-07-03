@@ -113,7 +113,7 @@ This is the seam between all four components. In order:
    incrementally during the loop.
 5. Package `ego`, `actors`, `metrics`, `latency` into a `Rollout`.
 
-Both consumers — `src/main.rs` (the viewer) and `src/bin/batch.rs` (the
+Both consumers — `src/viewer/` (the viewer) and `src/bin/batch.rs` (the
 batch runner) — call this one function and nothing else from `simulation`
 except the `State`/`Control` types and, in the viewer's future-preview code,
 `step()` directly (to roll a *hypothetical* plan forward without re-running

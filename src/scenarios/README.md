@@ -159,7 +159,7 @@ extrapolating or panicking past its ends.
 simulation tick, one of two ways:
 
 - **No trajectory** (the common/default case, and what every hand-authored
-  built-in scenario in `src/main.rs` and every `synthetic_batch` scenario
+  built-in scenario in `src/viewer/scenarios.rs` and every `synthetic_batch` scenario
   uses): integrate `init` under the constant `control` with
   [`step()`](../simulation/README.md#the-kinematic-model), the same Euler
   step the ego uses.

@@ -32,7 +32,7 @@ Every planner implements the same `Planner` trait and reads the same
 `Context` (road centerline, actor states, target speed, horizon). `simulate()`
 wires a `Scenario` through a chosen planner and the `Simulator` tick loop,
 producing a `Rollout`: the ego and actor traces, the tickwise `Metrics`, and
-per-planner `LatencyStats`. The viewer (`src/main.rs`) and the batch runner
+per-planner `LatencyStats`. The viewer (`src/viewer/`) and the batch runner
 (`src/bin/batch.rs`) are both thin consumers of `simulate()` — neither owns
 planning, simulation, or scoring logic itself.
 
