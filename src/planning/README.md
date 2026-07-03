@@ -11,7 +11,8 @@ planning/
 ├── straight/     strawman: zero control, always
 ├── bezier_idm/   cubic Bezier back to the centerline + IDM speed
 ├── lattice/      Frenet lattice, sampled grid + dynamic programming
-└── pi2ddp/       sampling-based DDP (PI²-DDP)
+├── pi2ddp/       sampling-based DDP (PI²-DDP)
+└── rrt_star/     RRT*, cubic-polynomial (differential-flatness) steering
 ```
 
 ## The `Planner` trait
@@ -67,14 +68,14 @@ Everything a planner needs besides its own state and the ego pose. Notably:
 ## `PlannerKind`
 
 ```rust
-pub enum PlannerKind { Straight, BezierIdm, Lattice, Pi2Ddp }
+pub enum PlannerKind { Straight, BezierIdm, Lattice, Pi2Ddp, RrtStar }
 ```
 
 The selection/comparison seam. `PlannerKind::ALL` is the definitive list the
 viewer's dropdown and the batch runner iterate over; `.name()` gives the
 display string; `.build()` returns a fresh `Box<dyn Planner>`.
 
-**To add a fifth planner:**
+**To add another planner:**
 
 1. Create `planning/my_planner/mod.rs` implementing `Planner`.
 2. Add `pub mod my_planner;` and `pub use my_planner::MyPlanner;` to
@@ -136,7 +137,7 @@ replan.
 - `trajectories: Vec<Vec<[f64; 2]>>` — polylines (the lattice's DP edges,
   PI²-DDP's sampled rollouts).
 
-Only the Frenet lattice and PI²-DDP record anything —
+Only the Frenet lattice, PI²-DDP, and RRT* record anything —
 `PlannerKind::has_diagnostics()` reports which — since the strawman and
 Bezier+IDM planners have no receding-horizon search to show. See each
 planner's section below for exactly what it records.
@@ -304,3 +305,100 @@ states) and flattened into `points` (every state along every rollout), so
 the overlay can show the sampling distribution's spread either as paths or
 as a density of points. Only the last generation is recorded; earlier
 generations are refinement steps toward it, not additional information.
+
+## RRT*
+
+`rrt_star/mod.rs` — `RrtStarPlanner`
+
+Rapidly-exploring Random Tree Star: grows a tree of poses from the ego's
+current state toward random (station, lateral) samples in the road frame,
+connects each new node to the cheapest collision-free nearby parent, and
+rewires existing nodes when a cheaper path through the new node appears
+(the "star" — plain RRT would just keep the first parent found, which isn't
+asymptotically optimal). `MAX_ITERS = 300` samples per `plan()` call.
+
+**The steering function is differential flatness, not a straight line or an
+arc.** A unicycle/bicycle's heading (`atan2(y', x')`) and curvature
+(`(x'y'' - y'x'') / |·|^3`) are both fully determined by its flat outputs
+`(x, y)` and their derivatives — so `CubicSteer` fits an independent cubic
+polynomial to `x(s)` and `y(s)` (Hermite form, tangent magnitude
+`chord / 3`, the same heuristic [Bezier + IDM](#bezier--idm) uses) matching
+position and heading *direction* at both ends, and the connection is
+guaranteed kinematically smooth without ever solving for heading or
+curvature directly.
+
+**Steering-angle limiting, not post-hoc curvature rejection, is what makes
+the tree grow at all.** Early on, this module aimed each new edge straight
+at its random sample (or matched every node's heading to the lane); either
+way, two independently-drawn directions connected by a *short* Hermite
+tangent needs far more curvature than any real car has, and nearly every
+candidate steer failed the curvature check — measured by instrumenting
+`feasible`'s own rejections, under 10 of 300 samples per tick were passing,
+even on an empty road. `max_yaw_change(step_len)` inverts this: it caps how
+far a new edge's direction may turn away from its parent's *own* heading,
+scaled so the resulting curve's peak curvature (`≈ 48 * dyaw / step_len` for
+this tangent magnitude, found empirically) stays within `MAX_CURVATURE`.
+Both of a new edge's tangents then point the same way — a straight hop, zero
+curvature by construction — so a real swerve is built from several small,
+individually gentle turns rather than one edge trying to do it all.
+
+**Every edge moves forward in Frenet station.** Nearest-neighbor search,
+parent candidates, and rewire candidates are all restricted to the correct
+side of the new node's station (behind for parents, ahead for rewiring).
+Early versions picked "nearest" by raw Euclidean distance alone, which could
+pick a node already *further along* than a sample that was merely close to
+it laterally — steering "toward" the sample then walked backward in station,
+and stitched into the winning path's arc-length parameterization, made the
+ego's own extracted trajectory momentarily reverse in `x` (caught by
+eyeballing this module's own closed-loop test trace, not just its
+pass/fail).
+
+**Warm start, with hysteresis, is what makes obstacle avoidance consistent
+tick to tick.** `RrtStarPlanner` doesn't just keep an `Rng`
+([PI²-DDP](#pi2-ddp)'s pattern) — it remembers `prev_path`, last tick's
+winning polyline, and replays whatever part of it is still ahead of the ego
+and still collision-free against this tick's actors as a ready-made chain of
+nodes before any random sampling happens. Without this, a tree rebuilt from
+independent samples every 0.1 s tick can find a differently-shaped detour
+each time; since the simulator only ever executes one control per plan, a
+closed-loop trajectory stitched from many such plans doesn't inherit any
+single one's safety margin — the exact failure the `swerves_around_stopped_obstacle`
+test caught (realized clearance well under any individual plan's own
+`COLLISION_RADIUS_M`). Goal selection then *prefers* a warm-started node
+over a fresh one unless the fresh one makes meaningfully more progress (more
+than one `PROGRESS_TOLERANCE_M` bucket), so a good detour, once found, isn't
+abandoned for a marginally-cheaper alternative next tick.
+
+**Deterministic bypass seeding is what makes a good detour reliably
+*findable* in the first place.** Before the random-sampling loop runs, every
+actor gets a fixed, unconditional ramp of candidate waypoints tried on both
+sides (station offsets `[-20, -10, -3, 3, 10, 20]` m around it, lateral
+offset ramping `0.25× → 0.6× → 1.0× → 1.0× → 0.6× → 0` of a safe bypass
+distance) via the same `try_extend` the random loop uses, seeded in
+increasing-station order so each waypoint chains onto the previous one on
+the same side. Randomized "informed sampling" (try a safe offset next to a
+random actor with some probability) found a wide detour on some ticks and a
+narrower one on others — the same consistency problem warm start addresses,
+one level up. Trying identical candidates every tick means the tree finds
+(and keeps refining, via warm start and rewiring) the *same* detour every
+time.
+
+**Progress, not raw distance, decides the goal**, bucketed to
+`PROGRESS_TOLERANCE_M` rather than compared exactly: without bucketing, a
+node a hair's-breadth further along but squeezing past an obstacle would beat
+a node a few centimeters short but giving it a much wider berth, every
+single time, since station is compared before cost (which includes an
+obstacle-proximity term) ever gets a say.
+
+**Seams**: `route` (build the `Path`), `warm_start` (custom — replaying the
+previous winning path), `optimize` (the `MAX_ITERS`-sample tree-growing
+loop; the deterministic bypass seeding and the final extract step aren't
+timed separately since they're comparatively cheap), `extract` (resample the
+winning path — itself a `scenarios::Path` built from the tree's polyline —
+at `v * dt` intervals and convert to controls via the same technique as the
+[Frenet lattice's](#frenet-lattice) `xy_to_controls`).
+
+**Diagnostics**: every tree node (after the root) as a `point`, and the
+sampled polyline of the edge that added it as a `trajectory` — the whole
+search tree considered, not just the winning path, mirroring the lattice's
+approach.
