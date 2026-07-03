@@ -45,7 +45,10 @@ Both are additive to the six built-in scenarios and the two bundled via
   - `WebScenarioFetch`/`spawn_fetch`/`absorb_fetch`: fetches
     `scenarios/web_bundle.json` — a single static file, built by
     `tools/bundle_web_scenarios.py` and copied into `dist/` by Trunk — once
-    at startup via `gloo-net`.
+    at startup via `gloo-net`. Ships with 115 procedurally generated
+    scenarios by default (see
+    [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)),
+    since there's no real nuPlan corpus checked into this repo.
   - `WebScenarioLoader`/`spawn_pick`/`absorb_load`: opens the browser's
     native file picker via `rfd::AsyncFileDialog` (wasm backend: a hidden
     `<input type="file">`, so it's automatable in tests via a filechooser

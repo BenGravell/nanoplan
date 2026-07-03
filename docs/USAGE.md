@@ -86,13 +86,14 @@ order:
    It's a single compact JSON array (built by
    `tools/bundle_web_scenarios.py` from a directory of scenario files, one
    HTTP request instead of one per scenario) that Trunk copies into `dist/`
-   at build time. Ships empty by default (no real nuPlan corpus is checked
-   into this repo — see the note in
-   [Exporting real nuPlan scenarios](#exporting-real-nuplan-scenarios)); a
-   maintainer populates it by exporting into `scenarios/web/` and rerunning
-   the bundler before deploying. A failed or empty fetch degrades silently
-   (a warning in the browser console, zero extra scenarios) rather than
-   breaking the viewer.
+   at build time. Ships with 115 generated scenarios by default (see
+   [Generating a diverse default scenario set](#generating-a-diverse-default-scenario-set)
+   below) since there's no real nuPlan corpus checked into this repo — see
+   the note in [Exporting real nuPlan scenarios](#exporting-real-nuplan-scenarios).
+   A maintainer can replace them by exporting real logs into `scenarios/web/`
+   and rerunning the bundler before deploying. A failed or empty fetch
+   degrades silently (a warning in the browser console, zero extra
+   scenarios) rather than breaking the viewer.
 6. **Web only, live**: the "Load scenario file(s)…" button in the viewer —
    opens the browser's native file picker (via the `rfd` crate) so a visitor
    can browse to their own exported `*.json` scenario file(s) — a single
@@ -193,6 +194,42 @@ trunk build --release --public-url /nanoplan/    # copies it into dist/
 > exercised against a real nuPlan log in this repository (the dataset
 > requires registration to download). Treat the first run against your own
 > log as a shakedown, and please report schema mismatches.
+
+## Generating a diverse default scenario set
+
+Since there's no real nuPlan corpus checked into this repo,
+`tools/generate_diverse_scenarios.py` procedurally fills the same role for
+the web build: it writes a large, varied set of scenarios straight into
+`scenarios/web/`, tagged with nuPlan-style scenario-type names (stopping
+with a lead, starting a turn, traversing an intersection, near multiple
+vehicles, congested stop-and-go, cutting in, merging onto a highway, and
+more — see the script for the full list), spanning a wide range of speeds
+(residential to highway), road geometries (straight, sine curves, arcs,
+S-curves, roundabout-like loops), and agent interactions. It's what
+populates the 115 scenarios shipped in `scenarios/web_bundle.json` by
+default.
+
+```sh
+python3 tools/generate_diverse_scenarios.py --clean   # writes scenarios/web/*.json
+python3 tools/bundle_web_scenarios.py                  # writes scenarios/web_bundle.json
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--out` | `scenarios/web` | Output directory. |
+| `--variations` | `5` | How many randomized variations to generate per scenario category. |
+| `--seed` | `1` | RNG seed; same seed + variations always produces byte-identical scenarios. |
+| `--clean` | off | Remove the output directory first, instead of adding to whatever's already there. |
+
+A random subset of scenarios additionally gets a `[wet_road]` /
+`[night_low_visibility]` / `[dense_fog]` / `[school_zone_caution]` suffix and
+a reduced `target_speed` — nanoplan has no weather/visibility model, so this
+is the only way the schema can express a driving-condition axis; it's a
+difficulty/flavor variation, not a claim that the viewer renders weather.
+
+Regenerating replaces the *procedural* scenarios; it doesn't touch anything
+exported from a real log via `export_nuplan_scenarios.py` unless you point
+both tools at the same directory.
 
 ## Web deploy
 

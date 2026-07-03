@@ -241,6 +241,18 @@ actor-response families above. Randomness comes from the crate-level `Rng`
 pulling in the `rand` crate specifically so batches and their expected
 scores are reproducible byte-for-byte across machines and CI runs).
 
+A separate, much larger generator lives outside the crate:
+[`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)
+writes scenarios straight into `scenarios/web/` across ~20 nuPlan-style
+scenario-type categories (turns, intersections, cut-ins, stop-and-go
+traffic, and more), each with a fully scripted actor trajectory rather than
+a constant `Control` — see
+[docs/USAGE.md#generating-a-diverse-default-scenario-set](../../docs/USAGE.md#generating-a-diverse-default-scenario-set).
+It's what populates the 115 scenarios shipped in the default
+`scenarios/web_bundle.json`; `synthetic_batch` above is the batch runner's
+own generator and is unrelated (Rust, not Python; used by `--count`, not the
+web build).
+
 ## nuPlan export mapping
 
 `tools/export_nuplan_scenarios.py` (documented for *usage* in
