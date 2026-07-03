@@ -49,7 +49,7 @@ pub trait Planner {
 
 /// Configuration: which planner to run. Lets the app and the batch runner
 /// compare planners on the same scenario.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlannerKind {
     Straight,
     BezierIdm,

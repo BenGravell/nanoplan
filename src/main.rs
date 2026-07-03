@@ -1,11 +1,16 @@
 //! Interactive viewer: scrub through a simulated scenario and preview the
 //! planned ego future and predicted actor motion.
 
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use nanoplan::planning::Context;
 use nanoplan::scenarios::{Actor, MapData};
-use nanoplan::{Control, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step};
+use nanoplan::{
+    Control, IncrementalSim, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step,
+};
+use web_time::Instant;
 
 /// Scenario JSONs bundled into the binary, so they ship to the web build too.
 const BUNDLED: [&str; 2] = [
@@ -145,9 +150,22 @@ struct UiState {
     preview_s: f32,
 }
 
-/// The current closed-loop simulation shown in the viewer.
-#[derive(Resource)]
-struct Sim(Rollout);
+/// Finished closed-loop simulations, keyed by scenario + planner so
+/// re-selecting a combo we've already simulated is instant.
+#[derive(Resource, Default)]
+struct RolloutCache(HashMap<(usize, PlannerKind), Rollout>);
+
+/// A simulation in progress, time-sliced across frames so an expensive
+/// planner (PI²-DDP) never blocks the UI thread — see `IncrementalSim`.
+///
+/// `IncrementalSim` holds a `Box<dyn Planner>` and an interior-mutable
+/// latency recorder, neither of which are `Sync`, so this is a `NonSend`
+/// resource rather than a regular one.
+#[derive(Default)]
+struct ActiveJob(Option<((usize, PlannerKind), IncrementalSim)>);
+
+/// Per-frame wall-clock budget for stepping the active job.
+const FRAME_BUDGET_MS: u64 = 8;
 
 fn ctx<'a>(sc: &'a Scenario, actors: &'a [State], horizon: usize) -> Context<'a> {
     Context {
@@ -172,7 +190,11 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
 
 fn main() {
     let scenes = all_scenarios();
-    let rollout = Sim(simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT));
+    let mut cache = RolloutCache::default();
+    cache.0.insert(
+        (0, PlannerKind::Straight),
+        simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT),
+    );
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -191,20 +213,34 @@ fn main() {
             time_s: 0.0,
             preview_s: 0.0,
         })
-        .insert_resource(rollout)
+        .insert_resource(cache)
+        .init_non_send::<ActiveJob>()
         .add_systems(Startup, |mut commands: Commands| {
             commands.spawn(Camera2d);
         })
         .add_systems(EguiPrimaryContextPass, ui)
-        .add_systems(Update, draw)
+        .add_systems(Update, (step_active_job, draw).chain())
         .run();
+}
+
+/// Advance the in-flight simulation (if any) by one frame's time budget,
+/// so an expensive planner never blocks the UI thread. Once it finishes,
+/// the result moves into the cache and the job slot frees up.
+fn step_active_job(mut job: NonSendMut<ActiveJob>, mut cache: ResMut<RolloutCache>) {
+    let Some((_, sim)) = &mut job.0 else { return };
+    sim.step_until(Instant::now() + std::time::Duration::from_millis(FRAME_BUDGET_MS));
+    if sim.is_done() {
+        let (key, sim) = job.0.take().unwrap();
+        cache.0.insert(key, sim.finish());
+    }
 }
 
 fn ui(
     mut contexts: EguiContexts,
     scenes: Res<Scenarios>,
     mut state: ResMut<UiState>,
-    mut rollout: ResMut<Sim>,
+    cache: Res<RolloutCache>,
+    mut job: NonSendMut<ActiveJob>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let prev = (state.scenario, state.planner);
@@ -229,45 +265,61 @@ fn ui(
                 .text("future preview [s]"),
         );
         ui.separator();
-        let idx = (state.time_s as f64 / DT).round() as usize;
-        let (tick_scores, tick_score) = rollout.0.metrics.at(idx);
-        egui::Grid::new("metrics").show(ui, |ui| {
-            ui.label("");
-            ui.label("@t");
-            ui.label("agg");
-            ui.end_row();
-            for ((label, tick), avg) in Metrics::LABELS
-                .iter()
-                .zip(tick_scores)
-                .zip(rollout.0.metrics.aggregate)
-            {
-                ui.label(*label);
-                ui.label(format!("{tick:.2}"));
-                ui.label(format!("{avg:.2}"));
-                ui.end_row();
+
+        let key = (state.scenario, state.planner);
+        match (cache.0.get(&key), &job.0) {
+            (Some(rollout), _) => {
+                let idx = (state.time_s as f64 / DT).round() as usize;
+                let (tick_scores, tick_score) = rollout.metrics.at(idx);
+                egui::Grid::new("metrics").show(ui, |ui| {
+                    ui.label("");
+                    ui.label("@t");
+                    ui.label("agg");
+                    ui.end_row();
+                    for ((label, tick), avg) in Metrics::LABELS
+                        .iter()
+                        .zip(tick_scores)
+                        .zip(rollout.metrics.aggregate)
+                    {
+                        ui.label(*label);
+                        ui.label(format!("{tick:.2}"));
+                        ui.label(format!("{avg:.2}"));
+                        ui.end_row();
+                    }
+                    ui.strong("closed-loop score");
+                    ui.strong(format!("{tick_score:.2}"));
+                    ui.strong(format!("{:.2}", rollout.metrics.score));
+                    ui.end_row();
+                });
+                ui.separator();
+                ui.label("planner latency");
+                egui::Grid::new("latency").show(ui, |ui| {
+                    ui.label("seam");
+                    ui.label("mean [ms]");
+                    ui.label("max [ms]");
+                    ui.end_row();
+                    for seam in &rollout.latency.seams {
+                        ui.label(seam.name);
+                        ui.label(format!("{:.3}", seam.mean_ms()));
+                        ui.label(format!("{:.3}", seam.max_ms));
+                        ui.end_row();
+                    }
+                });
             }
-            ui.strong("closed-loop score");
-            ui.strong(format!("{tick_score:.2}"));
-            ui.strong(format!("{:.2}", rollout.0.metrics.score));
-            ui.end_row();
-        });
-        ui.separator();
-        ui.label("planner latency");
-        egui::Grid::new("latency").show(ui, |ui| {
-            ui.label("seam");
-            ui.label("mean [ms]");
-            ui.label("max [ms]");
-            ui.end_row();
-            for seam in &rollout.0.latency.seams {
-                ui.label(seam.name);
-                ui.label(format!("{:.3}", seam.mean_ms()));
-                ui.label(format!("{:.3}", seam.max_ms));
-                ui.end_row();
+            (None, Some((active_key, sim))) if *active_key == key => {
+                ui.add(egui::ProgressBar::new(sim.progress()).text("simulating…"));
             }
-        });
+            (None, _) => {
+                if ui.button("Simulate").clicked() {
+                    job.0 = Some((
+                        key,
+                        IncrementalSim::start(&scenes.0[key.0], key.1, DURATION_S, DT),
+                    ));
+                }
+            }
+        }
     });
     if (state.scenario, state.planner) != prev {
-        rollout.0 = simulate(&scenes.0[state.scenario], state.planner, DURATION_S, DT);
         state.time_s = 0.0;
     }
     // future preview active: frame the whole screen in the accent color
@@ -356,17 +408,23 @@ fn draw(
     mut gizmos: Gizmos,
     state: Res<UiState>,
     scenes: Res<Scenarios>,
-    rollout: Res<Sim>,
+    cache: Res<RolloutCache>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
     let sc = &scenes.0[state.scenario];
-    let idx = ((state.time_s as f64 / DT).round() as usize).min(rollout.0.ego.len() - 1);
-    let ego = rollout.0.ego[idx];
+    draw_map(&mut gizmos, sc);
+
+    // Nothing simulated for the current selection yet (still queued/running):
+    // just show the map and wait for the cache to fill in.
+    let Some(rollout) = cache.0.get(&(state.scenario, state.planner)) else {
+        return;
+    };
+    let idx = ((state.time_s as f64 / DT).round() as usize).min(rollout.ego.len() - 1);
+    let ego = rollout.ego[idx];
     camera.translation = px(&ego).extend(camera.translation.z);
 
-    draw_map(&mut gizmos, sc);
     draw_car(&mut gizmos, &ego, Color::WHITE);
-    for actor in &rollout.0.actors {
+    for actor in &rollout.actors {
         draw_car(&mut gizmos, &actor[idx], Color::srgb(0.6, 0.6, 0.6));
     }
 
@@ -375,7 +433,7 @@ fn draw(
         return;
     }
     // planned ego future: replan from the scrubbed state, roll out k ticks
-    let current: Vec<State> = rollout.0.actors.iter().map(|t| t[idx]).collect();
+    let current: Vec<State> = rollout.actors.iter().map(|t| t[idx]).collect();
     let plan = state.planner.build().plan(ego, &ctx(sc, &current, k));
     let planned = rollout_controls(ego, &plan[..k.min(plan.len())]);
     gizmos.linestrip_2d(std::iter::once(&ego).chain(&planned).map(px), ACCENT);
@@ -384,7 +442,7 @@ fn draw(
     }
     // predicted actor futures: constant velocity from the scrubbed state
     let dim = ACCENT.with_alpha(0.5);
-    for actor in &rollout.0.actors {
+    for actor in &rollout.actors {
         let predicted = rollout_controls(actor[idx], &vec![Control::default(); k]);
         gizmos.linestrip_2d(std::iter::once(&actor[idx]).chain(&predicted).map(px), dim);
         if let Some(last) = predicted.last() {

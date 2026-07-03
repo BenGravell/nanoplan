@@ -1,6 +1,7 @@
 //! The kinematic vehicle model and the closed-loop simulator.
 
 use serde::{Deserialize, Serialize};
+use web_time::Instant;
 
 use crate::metrics::{self, Metrics};
 use crate::planning::{Context, Latency, LatencyStats, Planner, PlannerKind};
@@ -68,35 +69,107 @@ pub struct Rollout {
     pub latency: LatencyStats,
 }
 
-/// Run a planner closed-loop through a scenario.
+/// Run a planner closed-loop through a scenario, all at once.
+///
+/// For an expensive planner (PI²-DDP can take seconds over a full rollout —
+/// see [`IncrementalSim`]) this blocks the calling thread until every tick
+/// is done. Fine for tests and the batch runner; the viewer uses
+/// `IncrementalSim` instead so it doesn't freeze while this runs.
 pub fn simulate(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> Rollout {
-    let steps = (duration_s / dt) as usize;
-    let actors: Vec<Vec<State>> = sc.actors.iter().map(|a| a.trace(steps, dt)).collect();
-    let mut sim = Simulator { state: sc.ego, dt };
-    let mut planner = kind.build();
-    let recorder = Latency::default();
-    let mut latency = LatencyStats::default();
-    let mut ego = vec![sc.ego];
-    ego.extend((0..steps).map(|i| {
-        let current: Vec<State> = actors.iter().map(|t| t[i]).collect();
-        let ctx = Context {
-            centerline: &sc.centerline,
-            actors: &current,
+    IncrementalSim::start(sc, kind, duration_s, dt).finish()
+}
+
+/// A `simulate()` run split into resumable chunks, so a caller with a frame
+/// budget (a GUI) can advance it a little at a time instead of blocking
+/// until the whole rollout is done.
+///
+/// This is deliberately not multithreaded: the viewer targets wasm as well
+/// as desktop, and wasm has no portable way to run a planner on another
+/// thread without extra tooling (`wasm-bindgen-rayon`, `SharedArrayBuffer`,
+/// a special build). Time-slicing across frames works identically on both
+/// targets with no platform-specific code.
+pub struct IncrementalSim {
+    actors: Vec<Vec<State>>,
+    centerline: Vec<[f64; 2]>,
+    target_speed: f64,
+    dt: f64,
+    sim: Simulator,
+    planner: Box<dyn Planner>,
+    recorder: Latency,
+    latency: LatencyStats,
+    ego: Vec<State>,
+    steps_total: usize,
+}
+
+impl IncrementalSim {
+    pub fn start(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> Self {
+        let steps_total = (duration_s / dt) as usize;
+        IncrementalSim {
+            actors: sc.actors.iter().map(|a| a.trace(steps_total, dt)).collect(),
+            centerline: sc.centerline.clone(),
             target_speed: sc.target_speed,
             dt,
+            sim: Simulator { state: sc.ego, dt },
+            planner: kind.build(),
+            recorder: Latency::default(),
+            latency: LatencyStats::default(),
+            ego: vec![sc.ego],
+            steps_total,
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.ego.len() > self.steps_total
+    }
+
+    /// Fraction of ticks completed, for a progress bar.
+    pub fn progress(&self) -> f32 {
+        (self.ego.len() - 1) as f32 / self.steps_total.max(1) as f32
+    }
+
+    fn tick_once(&mut self) {
+        let i = self.ego.len() - 1;
+        let current: Vec<State> = self.actors.iter().map(|t| t[i]).collect();
+        let ctx = Context {
+            centerline: &self.centerline,
+            actors: &current,
+            target_speed: self.target_speed,
+            dt: self.dt,
             horizon: 1,
-            latency: Some(&recorder),
+            latency: Some(&self.recorder),
         };
-        let state = sim.tick(planner.as_mut(), &ctx);
-        latency.absorb(recorder.take());
-        state
-    }));
-    let metrics = metrics::evaluate(&ego, &actors, &sc.centerline, sc.target_speed, dt);
-    Rollout {
-        ego,
-        actors,
-        metrics,
-        latency,
+        let state = self.sim.tick(self.planner.as_mut(), &ctx);
+        self.latency.absorb(self.recorder.take());
+        self.ego.push(state);
+    }
+
+    /// Run ticks until `deadline` (wall clock) or completion, whichever
+    /// comes first.
+    pub fn step_until(&mut self, deadline: Instant) {
+        while !self.is_done() && Instant::now() < deadline {
+            self.tick_once();
+        }
+    }
+
+    /// Run any remaining ticks synchronously and compute the final
+    /// `Rollout`. Cheap (returns immediately) if already done.
+    pub fn finish(mut self) -> Rollout {
+        while !self.is_done() {
+            self.tick_once();
+        }
+        let metrics = metrics::evaluate(
+            &self.ego,
+            &self.actors,
+            &self.centerline,
+            self.target_speed,
+            self.dt,
+        );
+        Rollout {
+            ego: self.ego,
+            actors: self.actors,
+            metrics,
+            latency: self.latency,
+        }
     }
 }
 
@@ -116,6 +189,27 @@ mod tests {
         let total = r.latency.seams.iter().find(|s| s.name == "total").unwrap();
         assert_eq!(total.calls, 20); // one per plan() call
         assert!(total.max_ms >= total.mean_ms());
+    }
+
+    #[test]
+    fn incremental_sim_matches_simulate_and_reports_progress() {
+        let sc = &crate::scenarios::synthetic_batch(1, 5)[0];
+        let expected = simulate(sc, PlannerKind::Lattice, 2.0, 0.1);
+
+        let mut job = IncrementalSim::start(sc, PlannerKind::Lattice, 2.0, 0.1);
+        assert_eq!(job.progress(), 0.0);
+        assert!(!job.is_done());
+        // a deadline already in the past advances zero ticks
+        job.step_until(web_time::Instant::now());
+        assert_eq!(job.progress(), 0.0);
+        // a generous deadline runs it to completion in one call
+        job.step_until(web_time::Instant::now() + std::time::Duration::from_secs(3600));
+        assert!(job.is_done());
+        assert_eq!(job.progress(), 1.0);
+
+        let r = job.finish();
+        assert_eq!(r.ego, expected.ego);
+        assert_eq!(r.metrics.score, expected.metrics.score);
     }
 
     #[test]
