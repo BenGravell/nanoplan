@@ -27,6 +27,7 @@ pub(crate) fn ui(
     cache: Res<RolloutCache>,
     mut job: NonSendMut<ActiveJob>,
     #[cfg(not(target_arch = "wasm32"))] mut loader: ResMut<ScenarioLoader>,
+    #[cfg(target_arch = "wasm32")] loader: NonSend<super::web::WebScenarioLoader>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let prev = (state.scenario, state.planner);
@@ -73,6 +74,29 @@ pub(crate) fn ui(
                 }
             });
             if let Some(status) = &loader.status {
+                let (color, msg) = match status {
+                    Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
+                    Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),
+                };
+                ui.colored_label(color, msg);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            ui.horizontal(|ui| {
+                let label = if loader.is_loading() {
+                    "Loading…"
+                } else {
+                    "Load scenario file(s)…"
+                };
+                if ui
+                    .add_enabled(!loader.is_loading(), egui::Button::new(label))
+                    .clicked()
+                {
+                    loader.spawn_pick();
+                }
+            });
+            if let Some(status) = loader.status() {
                 let (color, msg) = match status {
                     Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
                     Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),

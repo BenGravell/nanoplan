@@ -12,7 +12,7 @@ viewer/
 ├── rollouts.rs   RolloutCache and the chunked async simulation job
 ├── ui.rs         the egui control panel system
 ├── draw.rs       gizmo rendering: map, cars, future-preview overlay
-└── web.rs        wasm only — fetches the nuPlan scenario bundle at startup
+└── web.rs        wasm only — fetches the startup bundle, drives the file-picker widget
 ```
 
 ## Why simulation is chunked
@@ -39,14 +39,26 @@ Both are additive to the six built-in scenarios and the two bundled via
 - **Desktop** (`ui.rs`'s `ScenarioLoader`, `scenarios.rs`'s CLI-arg loop):
   the wasm build has no filesystem, so these are `#[cfg(not(target_arch =
   "wasm32"))]`. Both go through `nanoplan::scenarios::load_path`.
-- **Web** (`web.rs`): the wasm build fetches `scenarios/web_bundle.json` —
-  a single static file, built by `tools/bundle_web_scenarios.py` and copied
-  into `dist/` by Trunk — once at startup via `gloo-net`, using the same
+- **Web** (`web.rs`), two independent mechanisms, both using the same
   "spawn async, poll each frame, merge into state when ready" pattern as
-  `ActiveJob`.
+  `ActiveJob`:
+  - `WebScenarioFetch`/`spawn_fetch`/`absorb_fetch`: fetches
+    `scenarios/web_bundle.json` — a single static file, built by
+    `tools/bundle_web_scenarios.py` and copied into `dist/` by Trunk — once
+    at startup via `gloo-net`.
+  - `WebScenarioLoader`/`spawn_pick`/`absorb_load`: opens the browser's
+    native file picker via `rfd::AsyncFileDialog` (wasm backend: a hidden
+    `<input type="file">`, so it's automatable in tests via a filechooser
+    handler) when the "Load scenario file(s)…" button in `ui.rs` is
+    clicked, reads each picked file's bytes, and parses it as either a
+    single `Scenario` or a `Vec<Scenario>`. The web equivalent of desktop's
+    `ScenarioLoader` — the one way a visitor to the deployed site can bring
+    their own nuPlan-exported scenarios into the running app, since nothing
+    short of a page reload can add to what `WebScenarioFetch` grabbed at
+    startup.
 
 See [`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources) for the
-user-facing description of all four sources.
+user-facing description of all sources.
 
 ## Introspection diagnostics
 

@@ -75,7 +75,8 @@ pub fn run() {
     app.insert_resource(ScenarioLoader::default());
     #[cfg(target_arch = "wasm32")]
     app.init_non_send::<web::WebScenarioFetch>()
+        .init_non_send::<web::WebScenarioLoader>()
         .add_systems(Startup, web::spawn_fetch)
-        .add_systems(Update, web::absorb_fetch);
+        .add_systems(Update, (web::absorb_fetch, web::absorb_load));
     app.run();
 }

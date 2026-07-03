@@ -93,6 +93,15 @@ order:
    the bundler before deploying. A failed or empty fetch degrades silently
    (a warning in the browser console, zero extra scenarios) rather than
    breaking the viewer.
+6. **Web only, live**: the "Load scenario file(s)…" button in the viewer —
+   opens the browser's native file picker (via the `rfd` crate) so a visitor
+   can browse to their own exported `*.json` scenario file(s) — a single
+   scenario, or a bundle array like `web_bundle.json`'s format — and load
+   them into the running app without a maintainer having to bake them into
+   the deployed bundle first. This is the web equivalent of desktop's
+   "nuPlan path" widget above: same "append to the dropdown, select the
+   first newly loaded one" behavior, same status line, just picking files
+   through the browser's dialog instead of typing a filesystem path.
 
 ## Batch evaluation
 
