@@ -3,10 +3,9 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use nanoplan::scenario::{Actor, MapData};
-use nanoplan::{
-    Context, Control, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step,
-};
+use nanoplan::planning::Context;
+use nanoplan::scenarios::{Actor, MapData};
+use nanoplan::{Control, Metrics, Path, PlannerKind, Rollout, Scenario, State, simulate, step};
 
 const DT: f64 = 0.1;
 const DURATION_S: f64 = 20.0;
