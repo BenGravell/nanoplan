@@ -51,7 +51,7 @@ fn ppx(p: [f64; 2]) -> Vec2 {
 }
 
 /// Draw the scenario's map: road boundaries, centerline, lane divider,
-/// crosswalks, and the goal pose at the end of the route.
+/// crosswalks, cross streets, and the goal pose at the end of the route.
 fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
     let path = Path::new(&sc.centerline);
     let len = path.length();
@@ -69,6 +69,32 @@ fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
         line(0.0).map(|(s, d)| ppx(path.frenet_to_xy(s, d))),
         Color::srgb(0.35, 0.35, 0.35),
     );
+    for &s in &sc.map.cross_streets {
+        // A straight perpendicular road through the main road at this
+        // station, purely so a crossing/intersection actor has a road to
+        // be driving on instead of appearing to cross empty space. `along`
+        // reuses the main road's own heading as the cross street's width
+        // axis; `perp` (rotated 90°) is the cross street's own direction
+        // of travel.
+        let (center, heading) = path.pose_at(s);
+        let along = [heading.cos(), heading.sin()];
+        let perp = [-heading.sin(), heading.cos()];
+        const CROSS_HALF_LEN_M: f64 = 70.0;
+        let pt = |t: f64, w: f64| {
+            ppx([
+                center[0] + perp[0] * t + along[0] * w,
+                center[1] + perp[1] * t + along[1] * w,
+            ])
+        };
+        for w in [-sc.map.road_half_width, sc.map.road_half_width] {
+            gizmos.line_2d(pt(-CROSS_HALF_LEN_M, w), pt(CROSS_HALF_LEN_M, w), boundary);
+        }
+        gizmos.line_2d(
+            pt(-CROSS_HALF_LEN_M, 0.0),
+            pt(CROSS_HALF_LEN_M, 0.0),
+            Color::srgb(0.35, 0.35, 0.35),
+        );
+    }
     if let Some(d) = sc.map.divider_d {
         // dashed divider between opposing lanes: 3 m dash, 3 m gap
         let mut s = 0.0;

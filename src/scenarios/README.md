@@ -111,18 +111,28 @@ pub struct Waypoint {
 
 ```rust
 pub struct MapData {
-    pub road_half_width: f64,     // default 5.5 — matches the drivable-area metric's threshold
-    pub divider_d: Option<f64>,   // Some(offset) draws a dashed lane divider at that Frenet offset
-    pub crosswalk_s: Vec<f64>,    // stations along the centerline where a crosswalk band is drawn
+    pub road_half_width: f64,      // default 5.5 — matches the drivable-area metric's threshold
+    pub divider_d: Option<f64>,    // Some(offset) draws a dashed lane divider at that Frenet offset
+    pub crosswalk_s: Vec<f64>,     // stations along the centerline where a crosswalk band is drawn
+    pub cross_streets: Vec<f64>,   // stations where a perpendicular street is drawn crossing the road
 }
 ```
 
 This is purely descriptive: the viewer draws it (road boundary lines, dashed
-divider, crosswalk stripes), and `road_half_width` happens to match the
-constant the [`drivable_area`](../metrics/README.md) metric uses — but
-metrics read their own constant, not this field, so changing `road_half_width`
-in a scenario file does not change what counts as off-road for scoring
-purposes. If you need that coupled, the metric constant is the one to edit.
+divider, crosswalk stripes, cross streets), and `road_half_width` happens to
+match the constant the [`drivable_area`](../metrics/README.md) metric uses —
+but metrics read their own constant, not this field, so changing
+`road_half_width` in a scenario file does not change what counts as off-road
+for scoring purposes. If you need that coupled, the metric constant is the
+one to edit.
+
+`cross_streets` exists because the `Scenario` format has only ever modeled a
+single road (`centerline`) — an intersection/crossing actor's trajectory
+takes it well off that road (e.g. approaching from `d = ±60`), and with
+nothing else drawn, it looks like it's driving through empty space. Each
+station in `cross_streets` draws a straight perpendicular road through the
+main one, purely as a visual explanation of where such an actor is coming
+from — it isn't itself a lane the planner or metrics know anything about.
 
 ## `Path`, the Frenet helper
 
