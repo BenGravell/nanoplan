@@ -66,8 +66,8 @@ user-facing description of all sources.
 ## Introspection diagnostics
 
 The "diagnostic points" / "diagnostic trajectories" checkboxes in `ui.rs`
-(shown only when `state.planner.has_diagnostics()`, i.e. the Frenet lattice
-or PI²-DDP is selected — see
+(shown only when `state.planner.has_diagnostics()`, i.e. the Frenet lattice,
+PI²-DDP, or RRT* is selected — see
 [`src/planning/README.md#introspection-diagnostics`](../planning/README.md#introspection-diagnostics))
 render whatever the planner recorded into a `nanoplan::planning::Diagnostics`
 during the *future-preview* replan in `draw.rs`. That replan already runs

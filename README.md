@@ -2,7 +2,7 @@
 
 Ultra minimalist motion planner for car-like vehicles, written in Rust.
 
-Four planners share one kinematic model, one closed-loop simulator, and one
+Five planners share one kinematic model, one closed-loop simulator, and one
 set of nuPlan-derived quality metrics, so they can be scrubbed side by side
 in an interactive [Bevy](https://bevy.org) viewer or swept over hundreds of
 scenarios from the command line.
@@ -38,7 +38,7 @@ planning, simulation, or scoring logic itself.
 
 | Component | README | What it owns |
 |---|---|---|
-| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, and the four planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP |
+| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, and the five planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP, RRT* |
 | Simulation | [src/simulation/README.md](src/simulation/README.md) | `State`/`Control`, the kinematic bicycle-free step, `Simulator`, and `simulate()`/`Rollout` |
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
@@ -64,6 +64,7 @@ A few more directories hold data rather than code:
 | Bezier + IDM | Cubic Bezier back to the lane centerline; Intelligent Driver Model for speed | [src/planning/README.md#bezier--idm](src/planning/README.md#bezier--idm) |
 | Frenet lattice | EM/Apollo-style: sample a station×lateral grid, DP over layers | [src/planning/README.md#frenet-lattice](src/planning/README.md#frenet-lattice) |
 | PI²-DDP | Sampling-based DDP (Lefebvre & Crevecoeur), road-informed exploration | [src/planning/README.md#pi2-ddp](src/planning/README.md#pi2-ddp) |
+| RRT* | Rapidly-exploring random tree with rewiring; steers between poses with a cubic polynomial via differential flatness | [src/planning/README.md#rrt](src/planning/README.md#rrt) |
 
 ## Provenance
 
@@ -71,6 +72,11 @@ A few more directories hold data rather than code:
   Differential Dynamic Programming."
 - **Frenet lattice**: the EM-planner family (Apollo, and the lattice planners
   surveyed in the sampling-based-DDP literature).
+- **RRT***: Karaman & Frazzoli, "Sampling-based Algorithms for Optimal Motion
+  Planning" (the asymptotically-optimal rewiring step over plain RRT); the
+  steering function between poses is a cubic polynomial chosen via
+  differential flatness of the unicycle/bicycle model's flat outputs
+  `(x, y)`, a standard technique in nonholonomic motion planning.
 - **IDM**: the Intelligent Driver Model, standard car-following model.
 - **nuPlan**: scenario schema, vehicle parameters, and closed-loop metric
   definitions vendored from [nuplan-devkit](https://github.com/motional/nuplan-devkit)
