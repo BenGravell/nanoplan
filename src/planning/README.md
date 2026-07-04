@@ -6,7 +6,7 @@ subdirectory per planner implementation.
 
 ```
 planning/
-├── mod.rs        Planner trait, Context, PlannerKind, test harness
+├── mod.rs        Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
 ├── latency.rs    Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── cost.rs       shared trajectory-cost function — see "The shared cost function" below
 ├── straight/     strawman: zero control, always
@@ -40,10 +40,8 @@ hatch for "couldn't find anything, don't do anything worse."
 
 ```rust
 pub struct Context<'a> {
-    pub centerline: &'a [[f64; 2]],   // the lane the ego should follow
+    pub road: &'a Road,               // centerline + target speed + tick length
     pub actors: &'a [State],          // other vehicles, current states only
-    pub target_speed: f64,            // desired cruise speed
-    pub dt: f64,                      // tick length of the returned controls
     pub horizon: usize,               // requested control-trajectory length
     pub latency: Option<&'a Latency>, // recorder; see below
     pub diagnostics: Option<&'a Diagnostics>, // recorder; see below
@@ -52,6 +50,11 @@ pub struct Context<'a> {
 
 Everything a planner needs besides its own state and the ego pose. Notably:
 
+- **`road` is the fixed setting of the whole run** — the
+  [`scenarios::Road`](../scenarios/README.md#road-the-fixed-setting-of-a-run)
+  parameter object bundling the lane centerline, the desired cruise speed,
+  and the tick length of the returned controls. Planners read
+  `ctx.road.centerline`, `ctx.road.target_speed`, and `ctx.road.dt`.
 - **`actors` is current-tick only.** Planners see no future information
   about other vehicles — if they want a prediction, they compute one
   themselves (every existing planner does simple constant-velocity
@@ -62,27 +65,40 @@ Everything a planner needs besides its own state and the ego pose. Notably:
   fewer controls; the simulator only ever consumes the first one during
   closed-loop simulation. The viewer's future-preview feature asks for a
   larger horizon (up to 100 ticks, `PLANNING_HORIZON_S`) to draw a longer plan.
-- **`centerline` is a raw polyline**, not a `Path`. Every planner that needs
-  Frenet operations (arc length, projection, curvature-following) builds its
-  own `scenarios::Path` from it — see [`src/scenarios/README.md`](../scenarios/README.md#path-the-frenet-helper).
+- **`road.centerline` is a raw polyline**, not a `Path`. Every planner that
+  needs Frenet operations (arc length, projection, curvature-following)
+  builds its own `scenarios::Path` from it — see
+  [`src/scenarios/README.md`](../scenarios/README.md#path-the-frenet-helper).
 
-## `PlannerKind`
+## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
 pub enum PlannerKind { Straight, BezierIdm, Lattice, Pi2Ddp, RrtStar }
+
+pub struct PlannerSpec {
+    pub kind: PlannerKind,
+    pub name: &'static str,             // display string
+    pub build: fn() -> Box<dyn Planner>, // fresh instance (Factory Method slot)
+    pub has_diagnostics: bool,          // records into Diagnostics?
+}
 ```
 
-The selection/comparison seam. `PlannerKind::ALL` is the definitive list the
-viewer's dropdown and the batch runner iterate over; `.name()` gives the
-display string; `.build()` returns a fresh `Box<dyn Planner>`.
+The selection/comparison seam. `PlannerKind` is just the key (a `Copy` enum,
+usable as a hash-map key); everything else about a planner lives in its row
+of the `SPECS` table, reached via `kind.spec()` — `.name()`, `.build()`, and
+`.has_diagnostics()` are thin accessors over it. `PlannerKind::ALL` is the
+definitive list the viewer's dropdown and the batch runner iterate over. A
+`specs_align_with_kinds` test pins the table's row order to the enum's
+discriminants.
 
 **To add another planner:**
 
 1. Create `planning/my_planner/mod.rs` implementing `Planner`.
 2. Add `pub mod my_planner;` and `pub use my_planner::MyPlanner;` to
    `planning/mod.rs`.
-3. Add a `PlannerKind::MyPlanner` variant, extend `ALL`, `name()`, and
-   `build()`.
+3. Add a `PlannerKind::MyPlanner` variant, extend `ALL`, and add one
+   complete `PlannerSpec` row to `SPECS` (name, constructor, whether it
+   records diagnostics).
 
 Nothing outside `planning/` needs to change — the viewer, the batch runner,
 and the metrics evaluator all iterate `PlannerKind::ALL` or take
@@ -145,11 +161,13 @@ planner's section below for exactly what it records.
 
 ## Test harness
 
-`planning/mod.rs` exposes two `#[cfg(test)]` helpers shared by every
+`planning/mod.rs` exposes three `#[cfg(test)]` helpers shared by every
 planner's tests:
 
-- `test_ctx(centerline, actors) -> Context` — a `Context` with sane defaults
-  (`target_speed: 10.0`, `dt: 0.1`, `horizon: 10`, `latency: None`).
+- `test_road(centerline) -> Road` — a `Road` with sane defaults
+  (`target_speed: 10.0`, `dt: 0.1`).
+- `test_ctx(&road, actors) -> Context` — a `Context` over that road
+  (`horizon: 10`, no recorders).
 - `test_run(planner, ego, actors, ticks) -> Vec<State>` — drives a planner
   closed-loop through a fixed straight centerline for `ticks` steps and
   returns the ego trace, for assertions like "ends up within 0.5 m of the

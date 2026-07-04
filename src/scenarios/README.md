@@ -134,6 +134,29 @@ station in `cross_streets` draws a straight perpendicular road through the
 main one, purely as a visual explanation of where such an actor is coming
 from — it isn't itself a lane the planner or metrics know anything about.
 
+## `Road`, the fixed setting of a run
+
+```rust
+pub struct Road {
+    pub centerline: Vec<[f64; 2]>, // route reference path
+    pub target_speed: f64,         // cruise speed; doubles as the metrics' speed limit
+    pub dt: f64,                   // tick length everything is sampled at
+}
+
+impl Scenario {
+    pub fn road(&self, dt: f64) -> Road; // one run's Road at tick length dt
+}
+```
+
+Not part of the JSON format — a `Road` is derived per *run*, pairing the
+scenario's `centerline`/`target_speed` with the caller-chosen `dt` (see
+[`src/simulation/README.md`](../simulation/README.md#why-this-design) for
+why `dt` belongs to the experiment, not the scenario). These three values
+always travel together — the planning `Context` embeds a `&Road`, the
+simulator holds one for the whole run, and `metrics::evaluate` scores
+against one — so they move as a single parameter object instead of a
+recurring three-argument list.
+
 ## `Path`, the Frenet helper
 
 ```rust

@@ -10,9 +10,10 @@ viewer/
 ├── mod.rs        run(), shared resources (Scenarios, UiState) and constants
 ├── scenarios.rs  where scenarios come from: built-ins, bundled JSON, CLI args
 ├── rollouts.rs   RolloutCache and the chunked async simulation job
+├── loader.rs     ScenarioSource trait + Loader resource; desktop path-loading source
 ├── ui.rs         the egui control panel system
 ├── draw.rs       gizmo rendering: map, cars, future-preview overlay
-└── web.rs        wasm only — fetches the startup bundle, drives the file-picker widget
+└── web.rs        wasm only — fetches the startup bundle; web file-picker ScenarioSource
 ```
 
 ## Why simulation is chunked
@@ -34,11 +35,20 @@ it's running.
 ## Desktop vs. web scenario sources
 
 Both are additive to the six built-in scenarios and the two bundled via
-`include_str!` in `scenarios.rs`:
+`include_str!` in `scenarios.rs`.
 
-- **Desktop** (`ui.rs`'s `ScenarioLoader`, `scenarios.rs`'s CLI-arg loop):
-  the wasm build has no filesystem, so these are `#[cfg(not(target_arch =
-  "wasm32"))]`. Both go through `nanoplan::scenarios::load_path`.
+The in-app loading widget goes through one seam: `loader.rs`'s
+`ScenarioSource` trait (Strategy — one platform implementation each,
+selected in `Loader::default()`). `ui.rs` only calls
+`loader.source.widget(ui)` and handles the returned scenarios; merging them
+into the list, selecting the first new one, and the green/red status line
+are platform-independent and exist once, in `ui.rs`/`Loader`. The platform
+sources are:
+
+- **Desktop** (`loader.rs`'s `DesktopLoader`, plus `scenarios.rs`'s CLI-arg
+  loop): the wasm build has no filesystem, so these are
+  `#[cfg(not(target_arch = "wasm32"))]`. Both go through
+  `nanoplan::scenarios::load_path`.
 - **Web** (`web.rs`), two independent mechanisms, both using the same
   "spawn async, poll each frame, merge into state when ready" pattern as
   `ActiveJob`:
@@ -49,16 +59,16 @@ Both are additive to the six built-in scenarios and the two bundled via
     scenarios by default (see
     [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)),
     since there's no real nuPlan corpus checked into this repo.
-  - `WebScenarioLoader`/`spawn_pick`/`absorb_load`: opens the browser's
+  - `WebScenarioLoader`, the web `ScenarioSource`: opens the browser's
     native file picker via `rfd::AsyncFileDialog` (wasm backend: a hidden
     `<input type="file">`, so it's automatable in tests via a filechooser
-    handler) when the "Load scenario file(s)…" button in `ui.rs` is
-    clicked, reads each picked file's bytes, and parses it as either a
-    single `Scenario` or a `Vec<Scenario>`. The web equivalent of desktop's
-    `ScenarioLoader` — the one way a visitor to the deployed site can bring
-    their own nuPlan-exported scenarios into the running app, since nothing
-    short of a page reload can add to what `WebScenarioFetch` grabbed at
-    startup.
+    handler) when its "Load scenario file(s)…" button is clicked, reads
+    each picked file's bytes, and parses it as either a single `Scenario`
+    or a `Vec<Scenario>`, handing the result back through `widget()`. The
+    web equivalent of `DesktopLoader` — the one way a visitor to the
+    deployed site can bring their own nuPlan-exported scenarios into the
+    running app, since nothing short of a page reload can add to what
+    `WebScenarioFetch` grabbed at startup.
 
 See [`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources) for the
 user-facing description of all sources.
