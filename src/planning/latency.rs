@@ -9,9 +9,16 @@
 //! - `route`: turning the centerline into the planner's road representation
 //! - `optimize`: computing the trajectory/decision
 //! - `extract`: converting the internal solution into controls
+//! - `cost`: evaluating the shared trajectory-cost function
+//!   ([`super::cost`]) at one sample. Every planner that samples and
+//!   compares candidate trajectories (the lattice, PI²-DDP, RRT*) times its
+//!   calls into `cost::point_cost` under this name, so the viewer's latency
+//!   table can compare "time spent pricing candidates" across planners even
+//!   though each calls it a different number of times in a different
+//!   structural loop.
 //!
-//! Planners add their own seams for phases only they have (e.g. the
-//! lattice's `edge_costs`, PI²-DDP's `rollouts`). Seams may nest — they are
+//! Planners add their own seams for phases only they have (e.g. PI²-DDP's
+//! `rollouts`). Seams may nest — they are
 //! independent named spans, not a partition of `total`. A seam recorded
 //! several times within one `plan()` call is summed for that call.
 

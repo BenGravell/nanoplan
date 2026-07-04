@@ -3,6 +3,7 @@
 //! a tree with cubic-in-time lateral segments, assigns node costs (offset,
 //! smoothness, predicted-obstacle proximity), and picks the best path.
 
+use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
@@ -13,8 +14,6 @@ pub struct LatticePlanner;
 const LATERALS_M: [f64; 9] = [-3.5, -2.625, -1.75, -0.875, 0.0, 0.875, 1.75, 2.625, 3.5];
 const STATION_LAYERS: usize = 5;
 const SAMPLES_PER_SEGMENT: usize = 8;
-// center-to-center; slightly over one car width plus margin
-const COLLISION_RADIUS_M: f64 = 2.5;
 
 /// Turn a sampled position trajectory (spaced `dt` apart, starting one tick
 /// after the ego) into controls for the kinematic model.
@@ -70,38 +69,48 @@ impl Planner for LatticePlanner {
             (2.0 * u3 - 3.0 * u2 + 1.0) * da + (u3 - 2.0 * u2 + u) * m0 + (3.0 * u2 - 2.0 * u3) * db
         };
 
-        // cost of one lattice edge, integrating over sampled points;
-        // custom seam: the hot loop of the DP search
+        // cost of one lattice edge: planner-specific lateral-smoothness and
+        // centerline-pull terms (structural to the DP search itself) plus
+        // the shared cost of each sampled point, timed under the "cost"
+        // seam so it's comparable across planners. Curvature at each point
+        // is a numerical estimate off the last three sampled points
+        // (`cost::curvature_of`) — the lattice has no closed-form curve to
+        // evaluate directly, unlike RRT*'s steering function.
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
-            ctx.time("edge_costs", || {
-                let mut cost = 2.0 * (db - da).powi(2); // lateral smoothness
-                for i in 1..=SAMPLES_PER_SEGMENT {
-                    let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
-                    let s = sa + (sb - sa) * u;
-                    let d = d_shape(da, db, m0, u);
-                    cost += d * d / SAMPLES_PER_SEGMENT as f64; // stay near centerline
-                    let p = path.frenet_to_xy(s, d);
-                    let t = (s - s0) / v; // time when the ego gets there
-                    for a in ctx.actors {
-                        // constant-velocity prediction of the actor
-                        let q = [
-                            a.x + a.speed * a.yaw.cos() * t,
-                            a.y + a.speed * a.yaw.sin() * t,
-                        ];
-                        let gap = (p[0] - q[0]).hypot(p[1] - q[1]);
-                        if gap < COLLISION_RADIUS_M {
-                            return f64::INFINITY;
-                        }
-                        cost += 20.0 / (gap * gap);
-                    }
+            let mut total = 2.0 * (db - da).powi(2); // lateral smoothness
+            let mut prev2: Option<[f64; 2]> = None;
+            let mut prev1 = path.frenet_to_xy(sa, da);
+            for i in 1..=SAMPLES_PER_SEGMENT {
+                let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
+                let s = sa + (sb - sa) * u;
+                let d = d_shape(da, db, m0, u);
+                total += d * d / SAMPLES_PER_SEGMENT as f64; // stay near centerline
+                let p = path.frenet_to_xy(s, d);
+                let curvature = prev2.map_or(0.0, |p0| cost::curvature_of(p0, prev1, p));
+                let sample = Sample {
+                    xy: p,
+                    lateral: d,
+                    speed: v,
+                    curvature,
+                    t: (s - s0) / v, // time when the ego gets there
+                    ..Default::default()
+                };
+                let point = ctx.time("cost", || {
+                    cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+                });
+                if point.is_infinite() {
+                    return f64::INFINITY;
                 }
-                cost
-            })
+                total += point;
+                prev2 = Some(prev1);
+                prev1 = p;
+            }
+            total
         };
 
         // DP over layers: the lattice is a layered DAG, so dynamic programming
         // finds the exact best path (A* would just add bookkeeping).
-        // (the nested edge_costs seam accounts for most of this)
+        // (the nested "cost" seam accounts for most of this)
         if let Some(diag) = ctx.diagnostics {
             diag.record_point(path.frenet_to_xy(s0, d0)); // tree root
         }

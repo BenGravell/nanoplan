@@ -8,6 +8,7 @@ subdirectory per planner implementation.
 planning/
 ├── mod.rs        Planner trait, Context, PlannerKind, test harness
 ├── latency.rs    Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
+├── cost.rs       shared trajectory-cost function — see "The shared cost function" below
 ├── straight/     strawman: zero control, always
 ├── bezier_idm/   cubic Bezier back to the centerline + IDM speed
 ├── lattice/      Frenet lattice, sampled grid + dynamic programming
@@ -158,6 +159,84 @@ Every planner's own tests are closed-loop in this style rather than
 single-call unit tests, because a single `plan()` call proves much less than
 "the receding-horizon loop actually converges/avoids/stops."
 
+## The shared cost function
+
+The three search-based planners — the Frenet lattice, PI²-DDP, and RRT* —
+all find a trajectory by sampling candidates and comparing a scalar cost;
+`bezier_idm` and `straight` don't (see their own sections below for why
+they're out of scope here). Before this module existed, each planner priced
+a candidate with its own inline formula, hand-tuned independently, with its
+own actor-prediction code, its own collision radius, and its own idea of
+"off the road" — three different, undocumented definitions of "good."
+
+`cost.rs` factors the metrics-motivated part of that formula into one
+function, `point_cost(sample, target_speed, actors)`, called by all three
+planners under the same seam name, `"cost"` (see "Latency diagnostics"
+above). It's deliberately grounded in the same quantities
+[`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
+than inventing new ones:
+
+- **Hard collision and off-road rejection** — `f64::INFINITY` if a sampled
+  point is closer than `metrics::collisions`' own threshold
+  (`2 × CAR_RADIUS_M`) to any actor's predicted position, or further than
+  `metrics::drivable_area::ROAD_HALF_WIDTH_M` from the centerline. A planner
+  should reject these outright, not merely disfavor them.
+- **Actor prediction** reuses `metrics::project` — the same constant-
+  velocity, constant-heading model `metrics::ttc` scores against — instead
+  of each planner reimplementing the same three lines independently.
+- **Soft terms** scaled to match: actor-proximity (inverse-square, inside
+  the hard collision radius), road-edge proximity, speed tracked against
+  `speed_limit::MAX_OVERSPEED_MS`, and comfort (longitudinal and lateral
+  accel) tracked against `comfort`'s own empirical bounds. Lateral accel is
+  `speed² × curvature` — algebraically the same quantity
+  `comfort::Kinematics` measures as `yaw_rate × speed`, since the kinematic
+  model defines `yaw_rate = speed × curvature`.
+
+**No analytic derivatives, by construction.** `point_cost` takes
+already-known numbers — position, speed, curvature, accel — and returns a
+plain `f64`; there's no gradient anywhere in its signature or its callers.
+This is a deliberate design constraint, not an oversight: every planner in
+this codebase finds a good trajectory purely by sampling and comparing,
+never by differentiating cost or dynamics (no iLQR/SQP/LQR-style
+linearization). Where a planner needs curvature as an input, it gets it one
+of two ways, both compatible with that constraint:
+
+- **A closed-form fact about an already-*fixed* candidate curve.** RRT*'s
+  `CubicSteer::curvature` evaluates the curvature of a specific Hermite
+  polynomial it already committed to — a geometric property of one
+  candidate, not a gradient used to choose the next one.
+- **A purely numerical estimate off sampled points.** `cost::curvature_of`
+  computes the Menger curvature of three points (twice the triangle area
+  over the product of the three side lengths) — plain arithmetic, no
+  derivative of any parametric formula. The lattice, which has no
+  closed-form curve of its own, uses this.
+
+**What stays planner-specific.** Each planner keeps its own structural
+terms outside `point_cost` — the pieces that shape *how its search moves*,
+not what counts as a good outcome, and that no metric measures:
+
+- The lattice and RRT* both keep their own centerline-pull term (there's no
+  "hug the centerline" metric — driving anywhere within the drivable area
+  scores the same); the lattice also keeps its DP-layer lateral-smoothness
+  term, and RRT*'s edge cost keeps its arc-length accumulation, since that
+  *is* what the "star" rewiring optimizes.
+- PI²-DDP keeps its own centerline-pull term the same way, plus a
+  control-effort quadratic in `running` tied to its own exploration
+  covariance (the paper's "linear solvability" trick) — specific to how
+  PI²-DDP's sampling distribution is parameterized, not a quality judgment.
+- PI²-DDP also converts `point_cost`'s `f64::INFINITY` into a large finite
+  `cost::HARD_VIOLATION_PENALTY` instead: its rollout weighting (eq. 12)
+  min/max-normalizes cost across rollouts at each timestep, which breaks if
+  the range is infinite. The lattice and RRT* have no such statistic and
+  propagate the actual infinity, rejecting the candidate outright.
+- The road-edge and actor-proximity soft terms inside `point_cost` are
+  weighted for PI²-DDP's benefit specifically: the lattice's sampling grid
+  never reaches them and RRT* has its own tighter hard bounds
+  (`DRIVABLE_HALF_WIDTH_M`, `COLLISION_MARGIN_M`), so those two barely feel
+  them, but PI²-DDP's continuous search has no hard accept/reject step at
+  all — these soft terms are its *only* safety margin, so they're weighted
+  to bite hard rather than softly.
+
 ---
 
 ## Strawman
@@ -215,12 +294,15 @@ An EM/Apollo-style planner. Samples a grid in the road's Frenet frame —
 at the assumed cruise speed (`stations_m[i] = v * PLANNING_HORIZON_S * (i+1)
 / STATION_LAYERS`) crossed with nine lateral offsets (`LATERALS_M = [-3.5,
 -2.625, -1.75, -0.875, 0, 0.875, 1.75, 2.625, 3.5]` m) — connects consecutive
-layers with cubic-Hermite lateral segments, costs every edge
-(smoothness + centerline proximity + constant-velocity-predicted-obstacle
-proximity, with a hard `f64::INFINITY` if predicted clearance drops below
-`COLLISION_RADIUS_M = 2.5` m), and picks the best path with exact dynamic
-programming over the layered DAG (a proper A* would only add bookkeeping
-over a graph this small).
+layers with cubic-Hermite lateral segments, costs every edge (its own
+lateral-smoothness and centerline-pull terms, plus the [shared cost
+function](#the-shared-cost-function) per sampled point — including its hard
+`f64::INFINITY` reject on predicted collision or leaving the drivable area),
+and picks the best path with exact dynamic programming over the layered DAG
+(a proper A* would only add bookkeeping over a graph this small). Curvature
+at each sampled point, needed for the shared cost's comfort term, comes from
+`cost::curvature_of` — the lattice has no closed-form curve of its own, so
+it estimates curvature numerically off the last three sampled points.
 
 The path's initial segment matches the ego's *current* lateral rate (via the
 Hermite tangent `m0_first`) rather than starting flat — without this, every
@@ -234,10 +316,11 @@ source for the deferred upgrade path). If every sampled path collides, the
 planner gives up and brakes straight ahead (`accel: -4.0`) rather than
 returning a bad path.
 
-**Seams**: `route`, `optimize` (the layer-by-layer DP loop) with `edge_costs`
-(custom — nested *inside* `optimize`; it's the hot loop, called
-`5 stations × 9 laterals × up to 9 predecessors` times per `plan()` call) as
-a nested seam, then `extract` (sample the winning path into `xy_to_controls`).
+**Seams**: `route`, `optimize` (the layer-by-layer DP loop) with `cost`
+(the shared cost function — nested *inside* `optimize`; it's the hot loop,
+called `5 stations × 9 laterals × up to 9 predecessors × 8 samples` times
+per `plan()` call) as a nested seam, then `extract` (sample the winning path
+into `xy_to_controls`).
 
 **Diagnostics**: every `(station, lateral)` grid node as a `point` (plus the
 tree root at the ego's current position), and every DP edge sampled at
@@ -272,10 +355,17 @@ nominal control sequence isn't zero, it's a pure-pursuit tracker toward the
 centerline plus proportional speed hold (`init_policy`); the initial
 curvature exploration variance `σ_κ` is sized so sampled trajectories span
 roughly the lane half-width (`LANE_HALF_M = 1.75` m) by the preview
-distance, rather than an arbitrary constant. The running cost is also
-road-based: lateral offset, heading-to-lane error, a road-edge hinge penalty
-to discourage leaving the drivable width, speed tracking, and
-constant-velocity actor proximity.
+distance, rather than an arbitrary constant. The running cost prices the
+control just applied against the [shared cost function](#the-shared-cost-function)
+— curvature and accel are exactly `u`, the commanded control, since this
+kinematic model defines them as the instantaneous curvature and
+acceleration — plus PI²-DDP's own centerline-pull term and a control-effort
+quadratic tied to the sampling covariance (the paper's "linear solvability"
+trick). Unlike the lattice and RRT*, which reject a colliding or off-road
+candidate outright, PI²-DDP has no such hard accept/reject step in its
+continuous search, so the shared cost's soft road-edge and actor-proximity
+terms are weighted heavily for its benefit specifically — see "The shared
+cost function" above.
 
 The policy **warm-starts** across ticks: if the ego ended up close to where
 the previous plan predicted (`expected_next`, within 1 m), the policy shifts
@@ -296,8 +386,9 @@ test):
 **Seams**: `route` (build the `Path`), `warm_start` (custom — includes the
 occasional full road-informed re-init when the shift check misses),
 `rollouts` (custom — the `ROLLOUTS × HORIZON` sampling loop, by far the most
-expensive part: typically ~85-90% of `total` time), `policy_update` (custom
-— the per-timestep DDP gradient extraction).
+expensive part: typically ~85-90% of `total` time) with `cost` (the shared
+cost function, called once per rollout per timestep) nested inside it,
+`policy_update` (custom — the per-timestep DDP gradient extraction).
 
 **Diagnostics**: the final generation's `ROLLOUTS` sampled state sequences —
 each one recorded both as a `trajectory` (the polyline through its `HORIZON`
@@ -364,7 +455,7 @@ each time; since the simulator only ever executes one control per plan, a
 closed-loop trajectory stitched from many such plans doesn't inherit any
 single one's safety margin — the exact failure the `swerves_around_stopped_obstacle`
 test caught (realized clearance well under any individual plan's own
-`COLLISION_RADIUS_M`). Goal selection then *prefers* a warm-started node
+`COLLISION_MARGIN_M`). Goal selection then *prefers* a warm-started node
 over a fresh one unless the fresh one makes meaningfully more progress (more
 than one `PROGRESS_TOLERANCE_M` bucket), so a good detour, once found, isn't
 abandoned for a marginally-cheaper alternative next tick.
@@ -383,6 +474,19 @@ one level up. Trying identical candidates every tick means the tree finds
 (and keeps refining, via warm start and rewiring) the *same* detour every
 time.
 
+**Feasibility and edge cost both go through the [shared cost
+function](#the-shared-cost-function).** `feasible` additionally enforces its
+own tighter margins before ever calling it — `DRIVABLE_HALF_WIDTH_M` (5.0 m,
+inside the shared function's own 5.5 m road-edge check) and
+`COLLISION_MARGIN_M` (3.0 m, ahead of the shared 2.5 m collision diameter)
+— headroom for the fact that a curve is only checked at `STEER_SAMPLES`
+discrete points, so the true closest approach between samples can dip a
+little further than what gets tested. `edge_cost` keeps its own arc-length
+accumulation (the actual quantity the "star" rewiring minimizes) and
+lateral-offset pull, adding the shared cost per sampled point on top;
+curvature comes from `CubicSteer::curvature`, a closed-form fact about the
+already-fixed candidate curve, not a search gradient.
+
 **Progress, not raw distance, decides the goal**, bucketed to
 `PROGRESS_TOLERANCE_M` rather than compared exactly: without bucketing, a
 node a hair's-breadth further along but squeezing past an obstacle would beat
@@ -396,7 +500,11 @@ loop; the deterministic bypass seeding and the final extract step aren't
 timed separately since they're comparatively cheap), `extract` (resample the
 winning path — itself a `scenarios::Path` built from the tree's polyline —
 at `v * dt` intervals and convert to controls via the same technique as the
-[Frenet lattice's](#frenet-lattice) `xy_to_controls`).
+[Frenet lattice's](#frenet-lattice) `xy_to_controls`). `cost` (the shared
+cost function) nests inside all three of `warm_start`, the (untimed)
+deterministic bypass seeding, and `optimize` alike, since `feasible` and
+`edge_cost` — where it's called, once per sampled point — are shared by
+every caller of `try_extend`.
 
 **Diagnostics**: every tree node (after the root) as a `point`, and the
 sampled polyline of the edge that added it as a `trajectory` — the whole

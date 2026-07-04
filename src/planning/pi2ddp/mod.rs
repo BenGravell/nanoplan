@@ -15,9 +15,11 @@
 //! the lane width at the preview distance.
 
 use crate::Rng;
+use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, step};
+use crate::wrap_angle;
 
 // 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
 const HORIZON: usize = 100;
@@ -28,7 +30,6 @@ const ALPHA: f64 = 0.5; // covariance damping (eq. 36)
 const LAMBDA_REG: f64 = 1e-3; // inverse regularization heuristic
 const SIGMA_ACCEL: f64 = 1.0; // [m/s²] exploration std
 const LANE_HALF_M: f64 = 1.75;
-const COLLISION_RADIUS_M: f64 = 2.5;
 // physical actuation limits; also keep near-singular Σₓₓ inversions from
 // blowing the policy up when near-stationary rollouts lack state diversity
 const ACCEL_LIMIT: f64 = 5.0;
@@ -178,36 +179,45 @@ impl Planner for Pi2DdpPlanner {
         // linear solvability: control cost is the inverse of the exploration
         let r_diag = [1.0 / sigma_init[0][0], 1.0 / sigma_init[1][1]];
 
-        let state_cost = |x: &State, j: usize| {
+        // Shared cost of being at `x` at tick `j` having just applied
+        // `(accel, curvature)` — the road/actor/comfort terms every search
+        // planner now agrees on (`cost::point_cost`), plus a planner-specific
+        // centerline-pull term (no metric measures "distance from
+        // centerline" directly — it's a structural bias toward the lane the
+        // lattice and RRT* also keep as their own terms, not part of the
+        // shared cost). `curvature`/`accel` are exactly the control just
+        // applied: this kinematic model defines them as the instantaneous
+        // curvature and acceleration, so there's nothing to estimate. A hard
+        // violation (collision, or off the drivable area) becomes
+        // `cost::HARD_VIOLATION_PENALTY`, a large but finite number, rather
+        // than `f64::INFINITY` — the min/max-normalized rollout weighting
+        // below (eq. 12) can't divide by an infinite range. The terminal
+        // call (no control has been applied yet) passes zero for both, so it
+        // prices position/speed but not comfort.
+        let state_cost = |x: &State, curvature: f64, accel: f64, j: usize| {
             let (s, d) = path.project([x.x, x.y]);
             let (_, lane_yaw) = path.pose_at(s);
-            let yaw_err = (x.yaw - lane_yaw + std::f64::consts::PI)
-                .rem_euclid(std::f64::consts::TAU)
-                - std::f64::consts::PI;
-            // heading term damps the lateral oscillation a bare d² invites;
-            // the hinge keeps swerves inside the drivable road width
-            let road_edge = (d.abs() - 4.0).max(0.0);
-            let mut c = 0.5 * d * d
-                + 2.0 * yaw_err * yaw_err
-                + 200.0 * road_edge * road_edge
-                + 0.3 * (x.speed - ctx.target_speed).powi(2);
-            let t = j as f64 * ctx.dt;
-            for a in ctx.actors {
-                let q = [
-                    a.x + a.speed * a.yaw.cos() * t,
-                    a.y + a.speed * a.yaw.sin() * t,
-                ];
-                let gap = (x.x - q[0]).hypot(x.y - q[1]);
-                c += if gap < COLLISION_RADIUS_M {
-                    1e4
-                } else {
-                    200.0 / (gap * gap)
-                };
+            let sample = Sample {
+                xy: [x.x, x.y],
+                lateral: d,
+                heading_err: wrap_angle(x.yaw - lane_yaw),
+                speed: x.speed,
+                curvature,
+                accel,
+                t: j as f64 * ctx.dt,
+            };
+            let c = 0.5 * d * d
+                + ctx.time("cost", || {
+                    cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+                });
+            if c.is_infinite() {
+                cost::HARD_VIOLATION_PENALTY
+            } else {
+                c
             }
-            c
         };
         let running = |x: &State, u: &V2, j: usize| {
-            state_cost(x, j) + 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1])
+            state_cost(x, u[1], u[0], j) + 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1])
         };
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
@@ -225,7 +235,7 @@ impl Planner for Pi2DdpPlanner {
                 );
                 xs.push(x);
             }
-            (xs, cost + 5.0 * state_cost(&x, HORIZON))
+            (xs, cost + 5.0 * state_cost(&x, 0.0, 0.0, HORIZON))
         };
 
         // warm start: shift the previous policy one step if the sim followed it
@@ -280,7 +290,7 @@ impl Planner for Pi2DdpPlanner {
                         );
                         xs[k][j + 1] = x;
                     }
-                    ctg[k][HORIZON] = 5.0 * state_cost(&x, HORIZON);
+                    ctg[k][HORIZON] = 5.0 * state_cost(&x, 0.0, 0.0, HORIZON);
                     for j in (0..HORIZON).rev() {
                         ctg[k][j] += ctg[k][j + 1]; // suffix sums (eq. 10)
                     }

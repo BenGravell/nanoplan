@@ -14,6 +14,7 @@
 //! curvature directly.
 
 use crate::Rng;
+use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
@@ -24,15 +25,16 @@ const STEP_MAX_M: f64 = 6.0;
 const NEIGHBOR_RADIUS_M: f64 = 12.0;
 const LATERAL_BOUND_M: f64 = 4.5;
 const GOAL_BIAS: f64 = 0.1;
-// center-to-center; a bit more than the Frenet lattice's 2.5 m threshold to
-// leave headroom for the discrete curve sampling below (the true closest
-// approach between two sampled points can dip a little further than what
-// gets checked)
-const COLLISION_RADIUS_M: f64 = 3.0;
 // curvature a steer is rejected past
 const MAX_CURVATURE: f64 = 0.35;
 const STEER_SAMPLES: usize = 8;
 const LATERAL_COST_WEIGHT: f64 = 0.5;
+// planner-specific safety margin, a bit more than the shared cost
+// function's hard-collision threshold (`cost::COLLISION_DIAMETER_M` = 2.5 m)
+// to leave headroom for the discrete curve sampling below (the true closest
+// approach between two sampled points can dip a little further than what
+// gets checked)
+const COLLISION_MARGIN_M: f64 = 3.0;
 // see the goal-selection comment in `plan` for why this exists
 const PROGRESS_TOLERANCE_M: f64 = 3.0;
 // a bit inside the drivable_area metric's own ROAD_HALF_WIDTH_M (5.5, see
@@ -148,21 +150,23 @@ struct Node {
 }
 
 /// Whether every sampled point on `segment` clears every actor's
-/// constant-velocity-predicted position by `COLLISION_RADIUS_M`, and the
-/// curve's curvature stays within what's actually drivable. `s0`/`v`
-/// convert a segment point's station into a predicted time the same way
-/// the Frenet lattice does.
+/// constant-velocity-predicted position (via the shared cost function's
+/// hard-collision check, plus this planner's own `COLLISION_MARGIN_M`
+/// headroom), stays on the drivable road, and keeps the curve's curvature
+/// within what's actually drivable. `s0`/`v` convert a segment point's
+/// station into a predicted time the same way the Frenet lattice does.
 fn feasible(
     curve: &CubicSteer,
     segment: &[[f64; 2]],
     path: &Path,
     s0: f64,
     v: f64,
-    actors: &[State],
+    ctx: &Context,
 ) -> bool {
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
-        if curve.curvature(u).abs() > MAX_CURVATURE {
+        let curvature = curve.curvature(u);
+        if curvature.abs() > MAX_CURVATURE {
             return false;
         }
         let (s, d) = path.project(p);
@@ -173,46 +177,78 @@ fn feasible(
         // still let some edges drift off-road mid-segment, caught the same
         // way as the other structural bugs here: running the batch runner
         // over general synthetic scenarios and finding `drivable_area`
-        // scoring 0 despite every sampled *target* being in-bounds.
+        // scoring 0 despite every sampled *target* being in-bounds. This
+        // is tighter than the shared cost function's own road-edge check
+        // (`drivable_area::ROAD_HALF_WIDTH_M`, 5.5 m), on purpose: a bypass
+        // should never count as "successful" avoidance by driving right up
+        // against the true edge.
         if d.abs() > DRIVABLE_HALF_WIDTH_M {
             return false;
         }
         let t = (s - s0) / v;
-        for a in actors {
-            let q = [
-                a.x + a.speed * a.yaw.cos() * t,
-                a.y + a.speed * a.yaw.sin() * t,
-            ];
-            if dist(p, q) < COLLISION_RADIUS_M {
+        for a in ctx.actors {
+            let predicted = crate::metrics::project(a, t);
+            if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
                 return false;
             }
+        }
+        let sample = Sample {
+            xy: p,
+            lateral: d,
+            speed: v,
+            curvature,
+            t,
+            ..Default::default()
+        };
+        if ctx
+            .time("cost", || {
+                cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+            })
+            .is_infinite()
+        {
+            return false;
         }
     }
     true
 }
 
-/// Cost of one edge: arc length (via the sampled polyline), a
-/// lateral-offset penalty pulling the tree toward the lane center, and an
-/// inverse-square actor-proximity term — the same ingredients as the
-/// lattice's edge cost, added incrementally rather than over a fixed grid.
-fn edge_cost(segment: &[[f64; 2]], path: &Path, s0: f64, v: f64, actors: &[State]) -> f64 {
-    let mut cost = 0.0;
+/// Cost of one edge: arc length (via the sampled polyline, RRT*'s own
+/// cost-to-come — the "star" rewiring is built around minimizing exactly
+/// this), a lateral-offset penalty pulling the tree toward the lane center
+/// (both structural to how this search shapes its tree), plus the shared
+/// cost of each sampled point, timed under the "cost" seam so it's
+/// comparable across planners. Curvature comes from the steering curve's
+/// own closed-form derivative (`CubicSteer::curvature`) — a geometric fact
+/// about this already-fixed candidate, not a search gradient.
+fn edge_cost(
+    segment: &[[f64; 2]],
+    curve: &CubicSteer,
+    path: &Path,
+    s0: f64,
+    v: f64,
+    ctx: &Context,
+) -> f64 {
+    let mut total = 0.0;
     for w in segment.windows(2) {
-        cost += dist(w[0], w[1]);
+        total += dist(w[0], w[1]);
     }
-    for &p in segment {
+    for (i, &p) in segment.iter().enumerate() {
+        let u = i as f64 / (segment.len() - 1) as f64;
         let (s, d) = path.project(p);
-        cost += LATERAL_COST_WEIGHT * d * d / segment.len() as f64;
-        let t = (s - s0) / v;
-        for a in actors {
-            let q = [
-                a.x + a.speed * a.yaw.cos() * t,
-                a.y + a.speed * a.yaw.sin() * t,
-            ];
-            cost += 30.0 / dist(p, q).max(0.1).powi(2);
-        }
+        total += LATERAL_COST_WEIGHT * d * d / segment.len() as f64;
+        let sample = Sample {
+            xy: p,
+            lateral: d,
+            speed: v,
+            curvature: curve.curvature(u),
+            t: (s - s0) / v,
+            ..Default::default()
+        };
+        total += ctx.time("cost", || {
+            cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+        });
     }
-    cost
+    total
 }
 
 /// Try to grow the tree one step toward `target`: find the nearest node
@@ -229,7 +265,7 @@ fn try_extend(
     path: &Path,
     s0: f64,
     v: f64,
-    actors: &[State],
+    ctx: &Context,
     target: [f64; 2],
 ) -> bool {
     let target_s = path.project(target).0;
@@ -269,8 +305,8 @@ fn try_extend(
         .filter_map(|&j| {
             let curve = CubicSteer::new(nodes[j].pos, nodes[j].yaw, new_pos, new_yaw);
             let segment = curve.sample(STEER_SAMPLES);
-            feasible(&curve, &segment, path, s0, v, actors).then(|| {
-                let cost = nodes[j].cost + edge_cost(&segment, path, s0, v, actors);
+            feasible(&curve, &segment, path, s0, v, ctx).then(|| {
+                let cost = nodes[j].cost + edge_cost(&segment, &curve, path, s0, v, ctx);
                 (j, cost, segment)
             })
         })
@@ -301,10 +337,10 @@ fn try_extend(
     for j in rewire_candidates {
         let curve = CubicSteer::new(new_pos, new_yaw, nodes[j].pos, nodes[j].yaw);
         let segment = curve.sample(STEER_SAMPLES);
-        if !feasible(&curve, &segment, path, s0, v, actors) {
+        if !feasible(&curve, &segment, path, s0, v, ctx) {
             continue;
         }
-        let rewired_cost = cost + edge_cost(&segment, path, s0, v, actors);
+        let rewired_cost = cost + edge_cost(&segment, &curve, path, s0, v, ctx);
         if rewired_cost < nodes[j].cost {
             nodes[j].cost = rewired_cost;
             nodes[j].parent = Some(new_idx);
@@ -410,10 +446,10 @@ impl Planner for RrtStarPlanner {
                 let yaw = wrap_angle(parent.yaw + dyaw);
                 let curve = CubicSteer::new(parent.pos, parent.yaw, p, yaw);
                 let segment = curve.sample(STEER_SAMPLES);
-                if !feasible(&curve, &segment, &path, s0, v, ctx.actors) {
+                if !feasible(&curve, &segment, &path, s0, v, ctx) {
                     break; // stale from here on; random sampling takes over
                 }
-                let cost = parent.cost + edge_cost(&segment, &path, s0, v, ctx.actors);
+                let cost = parent.cost + edge_cost(&segment, &curve, &path, s0, v, ctx);
                 let idx = nodes.len();
                 nodes.push(Node {
                     pos: p,
@@ -440,7 +476,7 @@ impl Planner for RrtStarPlanner {
         // trajectory stitched from differently-shaped detours doesn't
         // inherit any single one's safety margin — that's what the
         // swerves_around_stopped_obstacle test caught (min gaps well under
-        // any individual plan's own COLLISION_RADIUS_M). Trying the same
+        // any individual plan's own COLLISION_MARGIN_M). Trying the same
         // candidates every time means the tree finds (and, via warm start
         // and rewiring, keeps refining) the *same* detour every tick.
         // Each side's ramp is seeded as a *chain*, not independent points:
@@ -453,7 +489,7 @@ impl Planner for RrtStarPlanner {
         for a in ctx.actors {
             let (a_s, a_d) = path.project([a.x, a.y]);
             for side in [-1.0, 1.0] {
-                let bypass = (a_d + side * (COLLISION_RADIUS_M + 2.0))
+                let bypass = (a_d + side * (COLLISION_MARGIN_M + 2.0))
                     .clamp(-DRIVABLE_HALF_WIDTH_M, DRIVABLE_HALF_WIDTH_M);
                 for (station_offset, lateral) in [
                     (-20.0, 0.25 * bypass),
@@ -464,7 +500,7 @@ impl Planner for RrtStarPlanner {
                     (20.0, 0.0),
                 ] {
                     let target = path.frenet_to_xy(a_s + station_offset, lateral);
-                    try_extend(&mut nodes, &path, s0, v, ctx.actors, target);
+                    try_extend(&mut nodes, &path, s0, v, ctx, target);
                 }
             }
         }
@@ -479,14 +515,7 @@ impl Planner for RrtStarPlanner {
                         self.rng.range(-LATERAL_BOUND_M, LATERAL_BOUND_M),
                     )
                 };
-                try_extend(
-                    &mut nodes,
-                    &path,
-                    s0,
-                    v,
-                    ctx.actors,
-                    path.frenet_to_xy(s, d),
-                );
+                try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
             }
         });
 
