@@ -2,8 +2,10 @@
 //! at the speed limit, clamped to [0, 1]. Smooth — aggregates by average.
 //! ponytail: no expert trajectory; the speed limit stands in
 
-/// `station` is the ego's arc length along the route at every tick.
-pub fn score(station: &[f64], i: usize, dt: f64, speed_limit: f64) -> f64 {
+use crate::metrics::TickCtx;
+
+pub fn score(ctx: &TickCtx, i: usize) -> f64 {
+    let station = ctx.station;
     let n = station.len();
     let ds = if i + 1 < n {
         station[i + 1] - station[i]
@@ -12,5 +14,5 @@ pub fn score(station: &[f64], i: usize, dt: f64, speed_limit: f64) -> f64 {
     } else {
         0.0
     };
-    (ds / dt / speed_limit.max(0.1)).clamp(0.0, 1.0)
+    (ds / ctx.dt / ctx.speed_limit.max(0.1)).clamp(0.0, 1.0)
 }

@@ -16,7 +16,7 @@ pub use planning::{
     BezierIdmPlanner, Context, LatticePlanner, Pi2DdpPlanner, Planner, PlannerKind, RrtStarPlanner,
     StraightPlanner,
 };
-pub use scenarios::{Path, Scenario};
+pub use scenarios::{Path, Road, Scenario};
 pub use simulation::{Control, IncrementalSim, Rollout, Simulator, State, simulate, step};
 
 /// Deterministic xorshift* RNG with Box-Muller normals; avoids a rand

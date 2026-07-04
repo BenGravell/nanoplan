@@ -17,6 +17,7 @@ from `main`; see [Web deploy](docs/USAGE.md#web-deploy)).
 | Install the toolchain and get a build running | [docs/SETUP.md](docs/SETUP.md) |
 | Run the viewer, the batch tool, or export real nuPlan scenarios | [docs/USAGE.md](docs/USAGE.md) |
 | Understand or extend a specific part of the code | the component READMEs below |
+| Know *why* a core abstraction is shaped the way it is | [docs/adr/](docs/adr/) |
 
 ## Architecture
 

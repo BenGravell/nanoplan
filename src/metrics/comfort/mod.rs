@@ -1,8 +1,16 @@
 //! Comfort: 1 while every kinematic quantity at this tick is within nuPlan's
 //! empirical expert bounds. Smooth — aggregates by average.
 
+use crate::metrics::TickCtx;
 use crate::simulation::State;
 use crate::wrap_angle;
+
+/// Comfort at tick `i`: reads the [`Kinematics`] precomputed for the whole
+/// rollout (forward differences need the neighboring ticks, so they can't
+/// be built tickwise).
+pub fn score(ctx: &TickCtx, i: usize) -> f64 {
+    ctx.kinematics.score(i)
+}
 
 // comfort thresholds (empirical expert bounds from nuPlan). The longitudinal
 // and lateral accel bounds are also shared with the planners' cost function

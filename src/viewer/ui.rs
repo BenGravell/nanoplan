@@ -3,31 +3,20 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use nanoplan::{IncrementalSim, Metrics, PlannerKind};
+use nanoplan::metrics::METRICS;
+use nanoplan::{IncrementalSim, PlannerKind};
 
+use super::loader::Loader;
 use super::rollouts::{ActiveJob, RolloutCache};
 use super::{DT, DURATION_S, PREVIEW_MAX_S, Scenarios, UiState};
 
-/// State for the in-app scenario-loading widget: type a path to a nuPlan
-/// export (a `*.json` file or a directory of them) and load it live,
-/// without relaunching with CLI args. Desktop only — wasm has no arbitrary
-/// filesystem access.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Resource, Default)]
-pub(crate) struct ScenarioLoader {
-    path: String,
-    status: Option<Result<String, String>>,
-}
-
-#[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
 pub(crate) fn ui(
     mut contexts: EguiContexts,
     mut scenes: ResMut<Scenarios>,
     mut state: ResMut<UiState>,
     cache: Res<RolloutCache>,
     mut job: NonSendMut<ActiveJob>,
-    #[cfg(not(target_arch = "wasm32"))] mut loader: ResMut<ScenarioLoader>,
-    #[cfg(target_arch = "wasm32")] loader: NonSend<super::web::WebScenarioLoader>,
+    mut loader: NonSendMut<Loader>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let prev = (state.scenario, state.planner);
@@ -46,63 +35,28 @@ pub(crate) fn ui(
                     ui.selectable_value(&mut state.planner, kind, kind.name());
                 }
             });
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            ui.horizontal(|ui| {
-                ui.label("nuPlan path:");
-                ui.text_edit_singleline(&mut loader.path);
-                if ui.button("Load").clicked() {
-                    loader.status = Some(
-                        match nanoplan::scenarios::load_path(std::path::Path::new(
-                            loader.path.trim(),
-                        )) {
-                            Ok(loaded) if loaded.is_empty() => {
-                                Err("no *.json scenarios found there".into())
-                            }
-                            Ok(loaded) => {
-                                let n = loaded.len();
-                                state.scenario = scenes.0.len();
-                                scenes.0.extend(loaded);
-                                Ok(format!(
-                                    "loaded {n} scenario{}",
-                                    if n == 1 { "" } else { "s" }
-                                ))
-                            }
-                            Err(e) => Err(e.to_string()),
-                        },
-                    );
+        // scenario loading: the platform source renders its own widget and
+        // reports loads; merging and the status line are platform-independent
+        if let Some(result) = loader.source.widget(ui) {
+            loader.status = Some(match result {
+                Ok(loaded) => {
+                    let n = loaded.len();
+                    state.scenario = scenes.0.len();
+                    scenes.0.extend(loaded);
+                    Ok(format!(
+                        "loaded {n} scenario{}",
+                        if n == 1 { "" } else { "s" }
+                    ))
                 }
+                Err(e) => Err(e),
             });
-            if let Some(status) = &loader.status {
-                let (color, msg) = match status {
-                    Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
-                    Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),
-                };
-                ui.colored_label(color, msg);
-            }
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            ui.horizontal(|ui| {
-                let label = if loader.is_loading() {
-                    "Loading…"
-                } else {
-                    "Load scenario file(s)…"
-                };
-                if ui
-                    .add_enabled(!loader.is_loading(), egui::Button::new(label))
-                    .clicked()
-                {
-                    loader.spawn_pick();
-                }
-            });
-            if let Some(status) = loader.status() {
-                let (color, msg) = match status {
-                    Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
-                    Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),
-                };
-                ui.colored_label(color, msg);
-            }
+        if let Some(status) = &loader.status {
+            let (color, msg) = match status {
+                Ok(msg) => (egui::Color32::from_rgb(120, 210, 140), msg),
+                Err(msg) => (egui::Color32::from_rgb(230, 100, 100), msg),
+            };
+            ui.colored_label(color, msg);
         }
         ui.add(egui::Slider::new(&mut state.time_s, 0.0..=DURATION_S as f32).text("time [s]"));
         ui.add(
@@ -130,12 +84,12 @@ pub(crate) fn ui(
                     ui.label("@t");
                     ui.label("agg");
                     ui.end_row();
-                    for ((label, tick), avg) in Metrics::LABELS
+                    for ((spec, tick), avg) in METRICS
                         .iter()
                         .zip(tick_scores)
                         .zip(rollout.metrics.aggregate)
                     {
-                        ui.label(*label);
+                        ui.label(spec.label);
                         ui.label(format!("{tick:.2}"));
                         ui.label(format!("{avg:.2}"));
                         ui.end_row();

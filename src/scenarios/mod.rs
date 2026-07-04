@@ -176,6 +176,26 @@ impl Default for MapData {
     }
 }
 
+/// The fixed setting of one closed-loop run: the route to drive, the speed
+/// to drive it at, and the tick length everything is sampled at.
+///
+/// These three values always travel together — planners read them from the
+/// planning `Context`, the simulator holds them for the whole run, and the
+/// metrics score the finished rollout against them — so they move as one
+/// object instead of a recurring (centerline, target_speed, dt) parameter
+/// list. `target_speed` doubles as the speed limit the metrics score
+/// against, matching nuPlan's use of the lane speed limit as the target.
+#[derive(Debug, Clone)]
+pub struct Road {
+    /// Lane centerline / route reference path, as a polyline.
+    pub centerline: Vec<[f64; 2]>,
+    /// Desired cruise speed; also the speed limit for scoring.
+    pub target_speed: f64,
+    /// Tick length: the simulator step, the spacing of returned control
+    /// trajectories, and the sampling interval of metric inputs.
+    pub dt: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
     pub name: String,
@@ -188,6 +208,17 @@ pub struct Scenario {
     pub target_speed: f64,
     #[serde(default)]
     pub map: MapData,
+}
+
+impl Scenario {
+    /// The [`Road`] of one run through this scenario at tick length `dt`.
+    pub fn road(&self, dt: f64) -> Road {
+        Road {
+            centerline: self.centerline.clone(),
+            target_speed: self.target_speed,
+            dt,
+        }
+    }
 }
 
 fn default_target_speed() -> f64 {

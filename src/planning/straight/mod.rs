@@ -14,7 +14,7 @@ impl Planner for StraightPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning::test_ctx;
+    use crate::planning::{test_ctx, test_road};
     use crate::simulation::Simulator;
 
     #[test]
@@ -28,8 +28,8 @@ mod tests {
             },
             dt: 0.1,
         };
-        let centerline = [[0.0, 0.0], [100.0, 0.0]];
-        let ctx = test_ctx(&centerline, &[]);
+        let road = test_road(&[[0.0, 0.0], [100.0, 0.0]]);
+        let ctx = test_ctx(&road, &[]);
         let mut planner = StraightPlanner;
         for _ in 0..100 {
             sim.tick(&mut planner, &ctx);

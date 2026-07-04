@@ -101,16 +101,19 @@ This is the seam between all four components. In order:
    (`Actor::trace`, in [`scenarios`](../scenarios/README.md#actor-motion)) —
    either replaying a logged trajectory or integrating a constant control.
    Actors are **not** replanned during the loop; only the ego is.
-2. Build `kind.build()` into a fresh `Box<dyn Planner>` and a `Simulator`
-   seeded at `sc.ego`.
-3. Step `duration_s / dt` ticks. Each tick builds a `Context` with the
-   actors' states *at that tick* (sliced from their precomputed traces),
-   calls `sim.tick(...)`, and drains the tick's latency spans into a running
-   `LatencyStats` via `LatencyStats::absorb`.
+2. Build `kind.build()` into a fresh `Box<dyn Planner>`, a `Simulator`
+   seeded at `sc.ego`, and the run's fixed
+   [`Road`](../scenarios/README.md#road-the-fixed-setting-of-a-run)
+   (`sc.road(dt)`).
+3. Step `duration_s / dt` ticks. Each tick builds a `Context` over that
+   `Road` with the actors' states *at that tick* (sliced from their
+   precomputed traces), calls `sim.tick(...)`, and drains the tick's latency
+   spans into a running `LatencyStats` via `LatencyStats::absorb`.
 4. Once the full ego trace exists, call
-   [`metrics::evaluate`](../metrics/README.md) once over the whole thing —
-   metrics are a pure post-hoc function of the finished traces, not computed
-   incrementally during the loop.
+   [`metrics::evaluate`](../metrics/README.md) once over the whole thing
+   (the finished traces plus the same `Road`) — metrics are a pure post-hoc
+   function of simulation output, not computed incrementally during the
+   loop.
 5. Package `ego`, `actors`, `metrics`, `latency` into a `Rollout`.
 
 Both consumers — `src/viewer/` (the viewer) and `src/bin/batch.rs` (the

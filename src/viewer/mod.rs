@@ -7,6 +7,7 @@ use nanoplan::planning::PLANNING_HORIZON_S;
 use nanoplan::{PlannerKind, Scenario, simulate};
 
 mod draw;
+mod loader;
 mod rollouts;
 mod scenarios;
 mod ui;
@@ -14,8 +15,6 @@ mod ui;
 mod web;
 
 use rollouts::{ActiveJob, RolloutCache, step_active_job};
-#[cfg(not(target_arch = "wasm32"))]
-use ui::ScenarioLoader;
 
 pub(crate) const DT: f64 = 0.1;
 pub(crate) const DURATION_S: f64 = 20.0;
@@ -66,17 +65,15 @@ pub fn run() {
     })
     .insert_resource(cache)
     .init_non_send::<ActiveJob>()
+    .init_non_send::<loader::Loader>()
     .add_systems(Startup, |mut commands: Commands| {
         commands.spawn(Camera2d);
     })
     .add_systems(EguiPrimaryContextPass, ui::ui)
     .add_systems(Update, (step_active_job, draw::draw).chain());
-    #[cfg(not(target_arch = "wasm32"))]
-    app.insert_resource(ScenarioLoader::default());
     #[cfg(target_arch = "wasm32")]
     app.init_non_send::<web::WebScenarioFetch>()
-        .init_non_send::<web::WebScenarioLoader>()
         .add_systems(Startup, web::spawn_fetch)
-        .add_systems(Update, (web::absorb_fetch, web::absorb_load));
+        .add_systems(Update, web::absorb_fetch);
     app.run();
 }

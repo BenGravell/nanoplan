@@ -5,7 +5,7 @@ use web_time::Instant;
 
 use crate::metrics::{self, Metrics};
 use crate::planning::{Context, Latency, LatencyStats, Planner, PlannerKind};
-use crate::scenarios::Scenario;
+use crate::scenarios::{Road, Scenario};
 
 /// Ego state: position, yaw, and speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -90,9 +90,7 @@ pub fn simulate(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> R
 /// targets with no platform-specific code.
 pub struct IncrementalSim {
     actors: Vec<Vec<State>>,
-    centerline: Vec<[f64; 2]>,
-    target_speed: f64,
-    dt: f64,
+    road: Road,
     sim: Simulator,
     planner: Box<dyn Planner>,
     recorder: Latency,
@@ -106,9 +104,7 @@ impl IncrementalSim {
         let steps_total = (duration_s / dt) as usize;
         IncrementalSim {
             actors: sc.actors.iter().map(|a| a.trace(steps_total, dt)).collect(),
-            centerline: sc.centerline.clone(),
-            target_speed: sc.target_speed,
-            dt,
+            road: sc.road(dt),
             sim: Simulator { state: sc.ego, dt },
             planner: kind.build(),
             recorder: Latency::default(),
@@ -131,10 +127,8 @@ impl IncrementalSim {
         let i = self.ego.len() - 1;
         let current: Vec<State> = self.actors.iter().map(|t| t[i]).collect();
         let ctx = Context {
-            centerline: &self.centerline,
+            road: &self.road,
             actors: &current,
-            target_speed: self.target_speed,
-            dt: self.dt,
             horizon: 1,
             latency: Some(&self.recorder),
             diagnostics: None,
@@ -158,13 +152,7 @@ impl IncrementalSim {
         while !self.is_done() {
             self.tick_once();
         }
-        let metrics = metrics::evaluate(
-            &self.ego,
-            &self.actors,
-            &self.centerline,
-            self.target_speed,
-            self.dt,
-        );
+        let metrics = metrics::evaluate(&self.ego, &self.actors, &self.road);
         Rollout {
             ego: self.ego,
             actors: self.actors,

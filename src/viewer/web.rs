@@ -9,9 +9,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use bevy::prelude::*;
+use bevy_egui::egui;
 use nanoplan::Scenario;
 
-use super::{Scenarios, UiState};
+use super::Scenarios;
+use super::loader::{LoadResult, ScenarioSource};
 
 /// Relative, so it resolves under the page's own base path both for
 /// `trunk serve` (http://localhost:8080/) and the GitHub Pages deploy
@@ -65,35 +67,27 @@ pub(crate) fn absorb_fetch(fetch: NonSend<WebScenarioFetch>, mut scenes: ResMut<
     scenes.0.extend(loaded);
 }
 
-type LoadResult = Result<Vec<Scenario>, String>;
-
-/// State for the in-app scenario-loading widget on web: opens the browser's
-/// native file picker and loads whatever `*.json` files the user selects —
-/// the web equivalent of desktop's "nuPlan path" widget (`ui::ScenarioLoader`
-/// in `ui.rs`), which needs arbitrary filesystem access wasm doesn't have.
-/// Lets a user visiting the deployed site browse scenarios exported from
-/// their own nuPlan log, not just whatever a maintainer baked into
-/// `web_bundle.json` at deploy time.
+/// Web scenario source: opens the browser's native file picker and loads
+/// whatever `*.json` files the user selects — the web equivalent of
+/// desktop's "nuPlan path" widget (`loader::DesktopLoader`), which needs
+/// arbitrary filesystem access wasm doesn't have. Lets a user visiting the
+/// deployed site browse scenarios exported from their own nuPlan log, not
+/// just whatever a maintainer baked into `web_bundle.json` at deploy time.
 #[derive(Default)]
 pub(crate) struct WebScenarioLoader {
     result: Rc<RefCell<Option<LoadResult>>>,
     loading: Rc<RefCell<bool>>,
-    status: Option<Result<String, String>>,
 }
 
 impl WebScenarioLoader {
-    pub(crate) fn is_loading(&self) -> bool {
+    fn is_loading(&self) -> bool {
         *self.loading.borrow()
     }
 
-    pub(crate) fn status(&self) -> Option<&Result<String, String>> {
-        self.status.as_ref()
-    }
-
     /// Opens the file picker and, once the user picks files (or cancels),
-    /// stashes the result for `absorb_load` to merge in next frame.
+    /// stashes the result for `widget` to poll on a later frame.
     /// A no-op if a pick is already in flight.
-    pub(crate) fn spawn_pick(&self) {
+    fn spawn_pick(&self) {
         if *self.loading.borrow() {
             return;
         }
@@ -104,6 +98,31 @@ impl WebScenarioLoader {
             *result_slot.borrow_mut() = Some(load_picked_files().await);
             *loading_slot.borrow_mut() = false;
         });
+    }
+}
+
+impl ScenarioSource for WebScenarioLoader {
+    fn widget(&mut self, ui: &mut egui::Ui) -> Option<LoadResult> {
+        let label = if self.is_loading() {
+            "Loading…"
+        } else {
+            "Load scenario file(s)…"
+        };
+        if ui
+            .add_enabled(!self.is_loading(), egui::Button::new(label))
+            .clicked()
+        {
+            self.spawn_pick();
+        }
+        match self.result.borrow_mut().take()? {
+            // dialog cancelled: nothing landed, leave prior status as-is
+            Ok(loaded) if loaded.is_empty() => None,
+            Ok(loaded) => {
+                info!("loaded {} scenario(s) from the file picker", loaded.len());
+                Some(Ok(loaded))
+            }
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -133,31 +152,4 @@ async fn load_picked_files() -> LoadResult {
         }
     }
     Ok(scenarios)
-}
-
-/// Once a frame: if a file pick-and-load has landed, merge it into the
-/// scenario list and select the first newly loaded one (matching desktop's
-/// Load button), and record a status message for the UI to show.
-pub(crate) fn absorb_load(
-    mut loader: NonSendMut<WebScenarioLoader>,
-    mut scenes: ResMut<Scenarios>,
-    mut state: ResMut<UiState>,
-) {
-    let Some(result) = loader.result.borrow_mut().take() else {
-        return;
-    };
-    match result {
-        Ok(loaded) if loaded.is_empty() => {} // dialog cancelled: leave prior status as-is
-        Ok(loaded) => {
-            let n = loaded.len();
-            info!("loaded {n} scenario(s) from the file picker");
-            state.scenario = scenes.0.len();
-            scenes.0.extend(loaded);
-            loader.status = Some(Ok(format!(
-                "loaded {n} scenario{}",
-                if n == 1 { "" } else { "s" }
-            )));
-        }
-        Err(e) => loader.status = Some(Err(e)),
-    }
 }
