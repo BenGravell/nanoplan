@@ -402,11 +402,26 @@ generations are refinement steps toward it, not additional information.
 `rrt_star/mod.rs` — `RrtStarPlanner`
 
 Rapidly-exploring Random Tree Star: grows a tree of poses from the ego's
-current state toward random (station, lateral) samples in the road frame,
-connects each new node to the cheapest collision-free nearby parent, and
-rewires existing nodes when a cheaper path through the new node appears
-(the "star" — plain RRT would just keep the first parent found, which isn't
-asymptotically optimal). `MAX_ITERS = 300` samples per `plan()` call.
+current state toward (station, lateral) samples in the road frame, connects
+each new node to the cheapest collision-free nearby parent, and rewires
+existing nodes when a cheaper path through the new node appears (the "star"
+— plain RRT would just keep the first parent found, which isn't
+asymptotically optimal).
+
+**Despite the name, the sampling isn't actually random.** `plan()` samples
+`GRID_STATIONS × GRID_LATERALS` points from a fixed, road-geometry-informed
+grid — the same idea as the [Frenet lattice's](#frenet-lattice) station-
+layers-by-laterals grid — then an equal number more from a 2D Halton
+low-discrepancy sequence (`van_der_corput`, paired in bases 2 and 3) over
+the same domain, filling in what the grid's fixed points miss with
+well-distributed rather than clustered coverage. Both are pure functions of
+the ego state and scenario (`plan_is_a_pure_function_of_state` pins this
+down), so no `Rng` appears anywhere in this module — unlike
+[PI²-DDP](#pi2-ddp), which still samples pseudo-randomly for its rollouts.
+The grid runs first, in ascending-station order, building a connected
+backbone across the full planning horizon before the Halton pass's
+arbitrarily-ordered targets are tried, so they almost always land near an
+existing node instead of failing for lack of one.
 
 **The steering function is differential flatness, not a straight line or an
 arc.** A unicycle/bicycle's heading (`atan2(y', x')`) and curvature
@@ -420,12 +435,12 @@ curvature directly.
 
 **Steering-angle limiting, not post-hoc curvature rejection, is what makes
 the tree grow at all.** Early on, this module aimed each new edge straight
-at its random sample (or matched every node's heading to the lane); either
-way, two independently-drawn directions connected by a *short* Hermite
-tangent needs far more curvature than any real car has, and nearly every
-candidate steer failed the curvature check — measured by instrumenting
-`feasible`'s own rejections, under 10 of 300 samples per tick were passing,
-even on an empty road. `max_yaw_change(step_len)` inverts this: it caps how
+at its sample (or matched every node's heading to the lane); either way, two
+independently-chosen directions connected by a *short* Hermite tangent needs
+far more curvature than any real car has, and nearly every candidate steer
+failed the curvature check — measured by instrumenting `feasible`'s own
+rejections, under 10 of 300 samples per tick were passing, even on an empty
+road. `max_yaw_change(step_len)` inverts this: it caps how
 far a new edge's direction may turn away from its parent's *own* heading,
 scaled so the resulting curve's peak curvature (`≈ 48 * dyaw / step_len` for
 this tangent magnitude, found empirically) stays within `MAX_CURVATURE`.
@@ -445,12 +460,12 @@ eyeballing this module's own closed-loop test trace, not just its
 pass/fail).
 
 **Warm start, with hysteresis, is what makes obstacle avoidance consistent
-tick to tick.** `RrtStarPlanner` doesn't just keep an `Rng`
-([PI²-DDP](#pi2-ddp)'s pattern) — it remembers `prev_path`, last tick's
-winning polyline, and replays whatever part of it is still ahead of the ego
-and still collision-free against this tick's actors as a ready-made chain of
-nodes before any random sampling happens. Without this, a tree rebuilt from
-independent samples every 0.1 s tick can find a differently-shaped detour
+tick to tick.** `RrtStarPlanner` remembers `prev_path`, last tick's winning
+polyline, and replays whatever part of it is still ahead of the ego and
+still collision-free against this tick's actors as a ready-made chain of
+nodes before the grid/Halton sampling below runs. Without this, a tree
+rebuilt from independent samples every 0.1 s tick can find a
+differently-shaped detour
 each time; since the simulator only ever executes one control per plan, a
 closed-loop trajectory stitched from many such plans doesn't inherit any
 single one's safety margin — the exact failure the `swerves_around_stopped_obstacle`
@@ -461,12 +476,12 @@ than one `PROGRESS_TOLERANCE_M` bucket), so a good detour, once found, isn't
 abandoned for a marginally-cheaper alternative next tick.
 
 **Deterministic bypass seeding is what makes a good detour reliably
-*findable* in the first place.** Before the random-sampling loop runs, every
+*findable* in the first place.** Before the grid/Halton loop runs, every
 actor gets a fixed, unconditional ramp of candidate waypoints tried on both
 sides (station offsets `[-20, -10, -3, 3, 10, 20]` m around it, lateral
 offset ramping `0.25× → 0.6× → 1.0× → 1.0× → 0.6× → 0` of a safe bypass
-distance) via the same `try_extend` the random loop uses, seeded in
-increasing-station order so each waypoint chains onto the previous one on
+distance) via the same `try_extend` the general sampling loop uses, seeded
+in increasing-station order so each waypoint chains onto the previous one on
 the same side. Randomized "informed sampling" (try a safe offset next to a
 random actor with some probability) found a wide detour on some ticks and a
 narrower one on others — the same consistency problem warm start addresses,
@@ -495,7 +510,7 @@ single time, since station is compared before cost (which includes an
 obstacle-proximity term) ever gets a say.
 
 **Seams**: `route` (build the `Path`), `warm_start` (custom — replaying the
-previous winning path), `optimize` (the `MAX_ITERS`-sample tree-growing
+previous winning path), `optimize` (the grid-plus-Halton tree-growing
 loop; the deterministic bypass seeding and the final extract step aren't
 timed separately since they're comparatively cheap), `extract` (resample the
 winning path — itself a `scenarios::Path` built from the tree's polyline —
