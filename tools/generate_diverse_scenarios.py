@@ -41,6 +41,16 @@ DT = 0.1
 DURATION_S = 20.0
 N_TICKS = round(DURATION_S / DT)
 
+# Every curved-geometry generator's centerline must stay straight for at
+# least this long before it starts curving. The ego is placed at the fixed
+# origin (0, 0) — same convention scenarios/json/*.json uses, and every
+# actor placement below assumes — while every Path2D centerline starts at
+# x=-50 (road context *behind* the ego). A lead-in shorter than 50 m lets
+# the arc begin before x=0, so the ego (still pinned at the origin) lands
+# off the road entirely instead of on the straight run — the exact bug
+# behind a generated `traversing_roundabout` scenario starting off-road.
+LEAD_IN_M = 55.0
+
 
 # --- road geometry -----------------------------------------------------
 
@@ -170,6 +180,16 @@ def mk_scenario(name, ego, actors, centerline, target_speed, map_overrides=None)
 
 
 def ego_state(speed, y=0.0, yaw=0.0, x=0.0):
+    """Every actor/lead/crossing placement below is an absolute x
+    coordinate measured as "ahead of the ego", implicitly treating the ego
+    as sitting at the origin — same convention the hand-authored
+    scenarios/json/*.json files use (a centerline that starts at x=-50,
+    i.e. extends *behind* the ego for road context, with the ego itself at
+    x=0). Every `Path2D`-based centerline below must keep an initial
+    straight run of at least 50 m (matching Path2D's default start x=-50)
+    before any curving starts, so x=0 always falls on that straight run —
+    see the `LEAD_IN_M` comment on the curved generators for what happens
+    if it doesn't."""
     return {"x": x, "y": round(y, 2), "yaw": round(yaw, 4), "speed": round(speed, 2)}
 
 
@@ -212,7 +232,7 @@ def gen_starting_left_turn(rng):
     radius = rng.uniform(25.0, 55.0)
     sweep = rng.uniform(45.0, 100.0)
     speed = rng.uniform(4.0, 9.0)
-    centerline = Path2D().straight(rng.uniform(15.0, 35.0)).arc(radius, sweep, +1).straight(30.0).build()
+    centerline = Path2D().straight(LEAD_IN_M + rng.uniform(0.0, 20.0)).arc(radius, sweep, +1).straight(30.0).build()
     return mk_scenario("starting_left_turn", ego_state(speed), [], centerline, target_speed=speed)
 
 
@@ -220,7 +240,7 @@ def gen_starting_right_turn(rng):
     radius = rng.uniform(25.0, 55.0)
     sweep = rng.uniform(45.0, 100.0)
     speed = rng.uniform(4.0, 9.0)
-    centerline = Path2D().straight(rng.uniform(15.0, 35.0)).arc(radius, sweep, -1).straight(30.0).build()
+    centerline = Path2D().straight(LEAD_IN_M + rng.uniform(0.0, 20.0)).arc(radius, sweep, -1).straight(30.0).build()
     return mk_scenario("starting_right_turn", ego_state(speed), [], centerline, target_speed=speed)
 
 
@@ -229,7 +249,7 @@ def gen_high_lateral_acceleration(rng):
     sweep = rng.uniform(70.0, 120.0)
     direction = rng.choice([-1, 1])
     speed = rng.uniform(7.0, 12.0)
-    centerline = Path2D().straight(20.0).arc(radius, sweep, direction).straight(20.0).build()
+    centerline = Path2D().straight(LEAD_IN_M).arc(radius, sweep, direction).straight(20.0).build()
     return mk_scenario("high_lateral_acceleration", ego_state(speed), [], centerline, target_speed=speed)
 
 
@@ -239,7 +259,7 @@ def gen_s_curve_road(rng):
     speed = rng.uniform(6.0, 11.0)
     centerline = (
         Path2D()
-        .straight(20.0)
+        .straight(LEAD_IN_M)
         .arc(radius, sweep, +1)
         .arc(radius, sweep, -1)
         .straight(30.0)
@@ -253,7 +273,7 @@ def gen_roundabout_like_curve(rng):
     sweep = rng.uniform(160.0, 260.0)
     direction = rng.choice([-1, 1])
     speed = rng.uniform(4.0, 7.0)
-    centerline = Path2D().straight(20.0).arc(radius, sweep, direction).straight(20.0).build()
+    centerline = Path2D().straight(LEAD_IN_M).arc(radius, sweep, direction).straight(20.0).build()
     return mk_scenario("traversing_roundabout", ego_state(speed), [], centerline, target_speed=speed)
 
 
@@ -430,7 +450,13 @@ def gen_high_speed_highway_cruise(rng):
 
 def gen_low_speed_residential(rng):
     ego_speed = rng.uniform(2.5, 6.0)
-    centerline = Path2D().straight(20.0).arc(rng.uniform(18.0, 30.0), rng.uniform(30.0, 60.0), rng.choice([-1, 1])).straight(20.0).build()
+    centerline = (
+        Path2D()
+        .straight(LEAD_IN_M)
+        .arc(rng.uniform(18.0, 30.0), rng.uniform(30.0, 60.0), rng.choice([-1, 1]))
+        .straight(20.0)
+        .build()
+    )
     actors = []
     if rng.random() < 0.4:
         actors = [simple_actor(rng.uniform(20.0, 45.0), 0.0, 0.0, 0.0)]
