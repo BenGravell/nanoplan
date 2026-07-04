@@ -1,8 +1,13 @@
 //! RRT* (rapidly-exploring random tree, asymptotically-optimal variant):
-//! samples random (station, lateral) targets in the road frame and grows a
-//! tree of poses from the ego's current state, connecting each new node to
-//! its cheapest collision-free nearby parent and rewiring existing nodes
-//! when a cheaper path through the new node appears.
+//! samples (station, lateral) targets in the road frame and grows a tree of
+//! poses from the ego's current state, connecting each new node to its
+//! cheapest collision-free nearby parent and rewiring existing nodes when a
+//! cheaper path through the new node appears. Despite the name, nothing
+//! about the sampling is actually random: targets come from a deterministic
+//! road-geometry grid plus a low-discrepancy (Halton) sequence — see
+//! `GRID_BUDGET`/`QMC_BUDGET`'s doc comments and the sampling comment in
+//! `plan` — so `plan()` is a pure function of the ego state and scenario,
+//! not a seeded-RNG rollout.
 //!
 //! The step connecting any two poses — the "steering function" — is a
 //! cubic polynomial in each of `x` and `y`, chosen via differential
@@ -13,18 +18,47 @@
 //! kinematically smooth connection, without solving for heading or
 //! curvature directly.
 
-use crate::Rng;
 use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
 use crate::wrap_angle;
 
-const MAX_ITERS: usize = 150;
+// Sampling budget for the tree-growing loop in `plan`, split ~50/50
+// between a deterministic road-geometry grid and a low-discrepancy
+// quasi-Monte-Carlo sequence — see the module doc and the sampling comment
+// in `plan` for why. Both are fully deterministic given the ego state, so
+// two calls to `plan` from the same state grow the identical tree; no `Rng`
+// is needed anywhere in this planner (unlike PI²-DDP, which still samples
+// pseudo-randomly for its rollouts).
+// road-geometry-informed grid, the same idea as the Frenet lattice's
+// station-layers-by-laterals grid. An odd GRID_LATERALS keeps a station's
+// centerline (d = 0) sample exactly on the grid, and the grid's last
+// station lands exactly on the old goal-bias target (s0 + s_max, 0.0).
+const GRID_STATIONS: usize = 10;
+const GRID_LATERALS: usize = 9;
+const GRID_BUDGET: usize = GRID_STATIONS * GRID_LATERALS;
+// the rest of the budget: a 2D Halton sequence (see `van_der_corput`) over
+// the same (station, lateral) domain, filling in what the fixed grid
+// misses with well-distributed points — unlike pseudo-random sampling,
+// which can leave gaps and clusters at this sample count. Set equal to
+// GRID_BUDGET for the ~50/50 split.
+const QMC_BUDGET: usize = GRID_BUDGET;
 const STEP_MAX_M: f64 = 6.0;
+// Warm-starting re-fits a fresh `CubicSteer` at every `STEER_SAMPLES`
+// sub-point of the previous winning path, not just at tree-node boundaries
+// (see `plan`'s warm-start block). `CubicSteer`'s tangent magnitude is
+// `step_len / 3`, and curvature's denominator is that tangent magnitude
+// cubed — for a sub-meter `step_len` between two adjacent sub-points, tiny
+// positional noise in `p` (the executed trajectory rarely lands exactly on
+// the previously planned polyline) turns into a wildly amplified, often
+// spuriously huge curvature, breaking an otherwise perfectly good warm
+// start over nothing. Skipping sub-points closer than this to the current
+// parent — re-fitting only at strides comparable to a fresh `try_extend`
+// hop — avoids the numerically fragile regime entirely.
+const MIN_WARM_START_STEP_M: f64 = 1.5;
 const NEIGHBOR_RADIUS_M: f64 = 12.0;
 const LATERAL_BOUND_M: f64 = 4.5;
-const GOAL_BIAS: f64 = 0.1;
 // curvature a steer is rejected past
 const MAX_CURVATURE: f64 = 0.35;
 const STEER_SAMPLES: usize = 8;
@@ -37,6 +71,10 @@ const LATERAL_COST_WEIGHT: f64 = 0.5;
 const COLLISION_MARGIN_M: f64 = 3.0;
 // see the goal-selection comment in `plan` for why this exists
 const PROGRESS_TOLERANCE_M: f64 = 3.0;
+// how many progress buckets a fresh candidate must lead a warm-started one
+// by before goal-selection abandons continuity for it (see the goal-
+// selection comment in `plan`)
+const WARM_START_PROGRESS_MARGIN: f64 = 1.0;
 // a bit inside the drivable_area metric's own ROAD_HALF_WIDTH_M (5.5, see
 // src/metrics/drivable_area) so a bypass never scores a "successful"
 // avoidance by driving off the road instead
@@ -44,6 +82,24 @@ const DRIVABLE_HALF_WIDTH_M: f64 = 5.0;
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// The van der Corput radical-inverse sequence in `base`: reverse the
+/// base-`base` digits of `index` and put them after the radix point. The
+/// building block of a Halton sequence — pairing two of these in different
+/// (coprime) bases, one per dimension, gives a fully deterministic,
+/// index-only low-discrepancy point set in 2D with no RNG state at all.
+/// `index` should start at 1 — `index = 0` degenerates to `0.0` in every
+/// base, which would stack a sample from every dimension onto one corner.
+fn van_der_corput(mut index: usize, base: usize) -> f64 {
+    let mut result = 0.0;
+    let mut fraction = 1.0 / base as f64;
+    while index > 0 {
+        result += fraction * (index % base) as f64;
+        index /= base;
+        fraction /= base as f64;
+    }
+    result
 }
 
 /// Largest heading change worth attempting for a hop of length `step_len`,
@@ -385,20 +441,11 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
         .collect()
 }
 
+#[derive(Default)]
 pub struct RrtStarPlanner {
-    rng: Rng,
     /// Last tick's winning polyline, in the same fixed world frame the ego
     /// is — reused to warm-start this tick's tree (see `plan`'s doc note).
     prev_path: Vec<[f64; 2]>,
-}
-
-impl Default for RrtStarPlanner {
-    fn default() -> Self {
-        RrtStarPlanner {
-            rng: Rng(0xBF58476D1CE4E5B9),
-            prev_path: Vec::new(),
-        }
-    }
 }
 
 impl Planner for RrtStarPlanner {
@@ -440,6 +487,9 @@ impl Planner for RrtStarPlanner {
                     continue; // behind the chain so far: drop, don't break the rest
                 }
                 let step_len = dist(parent.pos, p);
+                if step_len < MIN_WARM_START_STEP_M {
+                    continue; // too short to re-fit a curve to reliably; see the constant's doc comment
+                }
                 let limit = max_yaw_change(step_len);
                 let chord_yaw = (p[1] - parent.pos[1]).atan2(p[0] - parent.pos[0]);
                 let dyaw = wrap_angle(chord_yaw - parent.yaw).clamp(-limit, limit);
@@ -505,16 +555,29 @@ impl Planner for RrtStarPlanner {
             }
         }
 
+        // Tree growth: a fixed road-geometry grid first, then a Halton
+        // low-discrepancy sequence over the same domain — see the constants'
+        // doc comments for why this split replaces plain pseudo-random
+        // sampling. The grid runs in ascending-station order (station-major,
+        // laterals inner) so each layer's samples extend from parents the
+        // previous, nearer layer already planted, the same layer-by-layer
+        // growth the deterministic bypass seeding above relies on; this
+        // builds a connected backbone across the full planning horizon
+        // before the Halton pass runs, so its arbitrarily-ordered targets
+        // (which don't respect station order) almost always land near an
+        // existing node instead of failing for lack of one.
         ctx.time("optimize", || {
-            for _ in 0..MAX_ITERS {
-                let (s, d) = if self.rng.uniform() < GOAL_BIAS {
-                    (s0 + s_max, 0.0)
-                } else {
-                    (
-                        self.rng.range(s0, s0 + s_max),
-                        self.rng.range(-LATERAL_BOUND_M, LATERAL_BOUND_M),
-                    )
-                };
+            for gi in 0..GRID_STATIONS {
+                let s = s0 + s_max * (gi + 1) as f64 / GRID_STATIONS as f64;
+                for gj in 0..GRID_LATERALS {
+                    let d = -LATERAL_BOUND_M
+                        + 2.0 * LATERAL_BOUND_M * gj as f64 / (GRID_LATERALS - 1) as f64;
+                    try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
+                }
+            }
+            for i in 1..=QMC_BUDGET {
+                let s = s0 + van_der_corput(i, 2) * s_max;
+                let d = -LATERAL_BOUND_M + van_der_corput(i, 3) * 2.0 * LATERAL_BOUND_M;
                 try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
             }
         });
@@ -558,7 +621,9 @@ impl Planner for RrtStarPlanner {
             .filter(|&i| nodes[i].warm_started)
             .max_by(|&a, &b| rank(a, b));
         let best_leaf = match (warm_best, overall_best) {
-            (Some(w), Some(o)) if stations[w] >= stations[o] - 1.0 => Some(w),
+            (Some(w), Some(o)) if stations[w] >= stations[o] - WARM_START_PROGRESS_MARGIN => {
+                Some(w)
+            }
             _ => overall_best,
         };
 
@@ -627,6 +692,28 @@ mod tests {
         let trace = test_run(&mut RrtStarPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.0, "offset {}", end.y);
+    }
+
+    /// The sampling is a fixed grid plus a Halton sequence, both pure
+    /// functions of the ego state and scenario — no `Rng` advances between
+    /// calls, unlike PI²-DDP. Two independent planners replanning from the
+    /// identical state must therefore produce the identical plan, not just
+    /// a reproducible-across-runs one.
+    #[test]
+    fn plan_is_a_pure_function_of_state() {
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
+        let actors = [obstacle];
+        let ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &actors);
+        let a = RrtStarPlanner::default().plan(ego, &ctx);
+        let b = RrtStarPlanner::default().plan(ego, &ctx);
+        assert_eq!(a, b);
     }
 
     #[test]
