@@ -133,7 +133,17 @@ def scripted_actor(x0, y0, yaw0, speed0, control_fn):
 def simple_actor(x, y, yaw, speed, accel=0.0, curvature=0.0):
     """A constant-control actor (straight line, or a steady turn/closing
     speed) — cheaper than a scripted trajectory when no clamping or
-    maneuver is needed."""
+    maneuver is needed.
+
+    `x` here is an absolute world coordinate (matching the ego, always at
+    the origin) — NOT the same number as a Frenet *station* along the
+    centerline, which for every `Path2D().straight(...)`-based generator in
+    this file starts 50 m behind the ego at x=-50. Placing a `crosswalk_s`
+    or `cross_streets` marker at a crossing actor's own `x` value without
+    subtracting `centerline[0][0]` first draws it 50 m short of where the
+    actor actually crosses — a bug found once already (see
+    `LEAD_IN_M`/`ego_state`'s docstring for the ego-position version of the
+    same mix-up) and worth not repeating."""
     actor = {"init": {"x": round(x, 2), "y": round(y, 2), "yaw": round(yaw, 4), "speed": round(speed, 2)}}
     if accel != 0.0 or curvature != 0.0:
         actor["control"] = {"accel": round(accel, 3), "curvature": round(curvature, 5)}
@@ -166,7 +176,7 @@ def lane_shift(curve_start, curve_duration, curvature, decel_start=None, decel=0
 
 
 def mk_scenario(name, ego, actors, centerline, target_speed, map_overrides=None):
-    m = {"road_half_width": 5.5, "divider_d": None, "crosswalk_s": []}
+    m = {"road_half_width": 5.5, "divider_d": None, "crosswalk_s": [], "cross_streets": []}
     if map_overrides:
         m.update(map_overrides)
     return {
@@ -290,7 +300,7 @@ def gen_pedestrian_crossing(rng):
         actors,
         centerline,
         target_speed=ego_speed,
-        map_overrides={"crosswalk_s": [round(crossing_x, 1)]},
+        map_overrides={"crosswalk_s": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 
@@ -304,7 +314,12 @@ def gen_crossing_traffic(rng):
     centerline = Path2D().straight(300).build()
     actors = [simple_actor(crossing_x, y0, yaw0, actor_speed)]
     return mk_scenario(
-        "traversing_intersection", ego_state(ego_speed), actors, centerline, target_speed=ego_speed
+        "traversing_intersection",
+        ego_state(ego_speed),
+        actors,
+        centerline,
+        target_speed=ego_speed,
+        map_overrides={"cross_streets": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 
@@ -315,7 +330,12 @@ def gen_crossing_traffic_high_speed(rng):
     centerline = Path2D().straight(320).build()
     actors = [simple_actor(crossing_x, -60.0, math.pi / 2, actor_speed)]
     return mk_scenario(
-        "high_speed_crossing_traffic", ego_state(ego_speed), actors, centerline, target_speed=ego_speed
+        "high_speed_crossing_traffic",
+        ego_state(ego_speed),
+        actors,
+        centerline,
+        target_speed=ego_speed,
+        map_overrides={"cross_streets": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 
@@ -356,14 +376,15 @@ def gen_bidirectional_intersection(rng):
     ego_speed = rng.uniform(6.0, 11.0)
     centerline = Path2D().straight(320).build()
     oncoming = simple_actor(rng.uniform(120.0, 200.0), 3.5, math.pi, rng.uniform(4.0, 9.0))
-    crossing = simple_actor(rng.uniform(50.0, 100.0), -60.0, math.pi / 2, rng.uniform(3.0, 8.0))
+    crossing_x = rng.uniform(50.0, 100.0)
+    crossing = simple_actor(crossing_x, -60.0, math.pi / 2, rng.uniform(3.0, 8.0))
     return mk_scenario(
         "on_intersection_bidirectional_traffic",
         ego_state(ego_speed),
         [oncoming, crossing],
         centerline,
         target_speed=ego_speed,
-        map_overrides={"divider_d": 0.0},
+        map_overrides={"divider_d": 0.0, "cross_streets": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 
@@ -372,14 +393,15 @@ def gen_near_multiple_vehicles(rng):
     centerline = Path2D().straight(350).build()
     lead = simple_actor(rng.uniform(30.0, 60.0), 0.0, 0.0, rng.uniform(3.0, 8.0))
     oncoming = simple_actor(rng.uniform(130.0, 210.0), 3.5, math.pi, rng.uniform(4.0, 9.0))
-    crossing = simple_actor(rng.uniform(70.0, 120.0), 60.0, -math.pi / 2, rng.uniform(3.0, 7.0))
+    crossing_x = rng.uniform(70.0, 120.0)
+    crossing = simple_actor(crossing_x, 60.0, -math.pi / 2, rng.uniform(3.0, 7.0))
     return mk_scenario(
         "near_multiple_vehicles",
         ego_state(ego_speed),
         [lead, oncoming, crossing],
         centerline,
         target_speed=ego_speed,
-        map_overrides={"divider_d": 0.0},
+        map_overrides={"divider_d": 0.0, "cross_streets": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 
@@ -481,7 +503,7 @@ def gen_school_zone(rng):
         actors,
         centerline,
         target_speed=ego_speed,
-        map_overrides={"road_half_width": 3.8, "crosswalk_s": [round(crossing_x, 1)]},
+        map_overrides={"road_half_width": 3.8, "crosswalk_s": [round(crossing_x - centerline[0][0], 1)]},
     )
 
 

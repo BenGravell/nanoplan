@@ -156,6 +156,12 @@ pub struct MapData {
     pub divider_d: Option<f64>,
     /// Stations (arc length along the centerline) of crosswalk bands.
     pub crosswalk_s: Vec<f64>,
+    /// Stations (arc length along the centerline) where a perpendicular
+    /// street crosses it — purely descriptive, drawn by the viewer so a
+    /// crossing/intersection actor has a visible road to be driving on
+    /// instead of appearing to cross empty space.
+    #[serde(default)]
+    pub cross_streets: Vec<f64>,
 }
 
 impl Default for MapData {
@@ -165,6 +171,7 @@ impl Default for MapData {
             road_half_width: 5.5,
             divider_d: None,
             crosswalk_s: vec![],
+            cross_streets: vec![],
         }
     }
 }

@@ -53,6 +53,10 @@ fn scenarios() -> Vec<Scenario> {
         crosswalk_s,
         ..Default::default()
     };
+    let map_crossing = |cross_streets| MapData {
+        cross_streets,
+        ..Default::default()
+    };
     let scenario = |name: &str, ego, actors, centerline, map| Scenario {
         name: name.into(),
         ego,
@@ -108,7 +112,7 @@ fn scenarios() -> Vec<Scenario> {
             }],
             straight_road(),
             // crossing traffic at x = 80 → station 130 on a road starting at -50
-            map(None, vec![130.0]),
+            map_crossing(vec![130.0]),
         ),
         scenario(
             "curving lead",
