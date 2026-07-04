@@ -22,7 +22,7 @@ pub mod progress;
 pub mod speed_limit;
 pub mod ttc;
 
-use crate::scenarios::Path;
+use crate::scenarios::{Path, Road};
 use crate::simulation::State;
 
 /// Circle approximation of a car footprint for collision/TTC checks.
@@ -86,14 +86,9 @@ fn composite(m: &[f64; N_METRICS]) -> f64 {
 
 /// Evaluate all metrics over a finished rollout. `actors[i]` must be sampled
 /// at the same ticks as `ego`.
-pub fn evaluate(
-    ego: &[State],
-    actors: &[Vec<State>],
-    centerline: &[[f64; 2]],
-    speed_limit: f64,
-    dt: f64,
-) -> Metrics {
-    let path = Path::new(centerline);
+pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
+    let (speed_limit, dt) = (road.target_speed, road.dt);
+    let path = Path::new(&road.centerline);
     let n = ego.len();
     if n == 0 {
         return Metrics::default();
@@ -153,6 +148,14 @@ mod tests {
     const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
     const DT: f64 = 0.1;
 
+    fn road() -> Road {
+        Road {
+            centerline: CENTERLINE.to_vec(),
+            target_speed: 10.0,
+            dt: DT,
+        }
+    }
+
     fn cruise(speed: f64, ticks: usize) -> Vec<State> {
         (0..=ticks)
             .map(|i| State {
@@ -165,7 +168,7 @@ mod tests {
 
     #[test]
     fn perfect_cruise_scores_one_every_tick() {
-        let m = evaluate(&cruise(10.0, 200), &[], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&cruise(10.0, 200), &[], &road());
         assert!(
             m.per_tick
                 .iter()
@@ -185,7 +188,7 @@ mod tests {
             };
             201
         ];
-        let m = evaluate(&ego, &[parked], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&ego, &[parked], &road());
         // tick 100 is exactly at the parked car
         let (scores, score) = m.at(100);
         assert_eq!(scores[0], 0.0);
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn overspeed_reduces_compliance_each_tick() {
-        let m = evaluate(&cruise(11.0, 200), &[], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&cruise(11.0, 200), &[], &road());
         let expected = 1.0 - 1.0 / speed_limit::MAX_OVERSPEED_MS;
         assert!(m.per_tick.iter().all(|t| (t[6] - expected).abs() < 1e-9));
         assert!((m.aggregate[6] - expected).abs() < 1e-9);
@@ -210,7 +213,7 @@ mod tests {
         for (i, s) in ego.iter_mut().enumerate().skip(100) {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
         }
-        let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&ego, &[], &road());
         assert_eq!(m.at(50).0[7], 1.0);
         assert_eq!(m.at(110).0[7], 0.0);
         // comfort is a smooth quantity: averaged, not zeroed by the event
@@ -221,7 +224,7 @@ mod tests {
     fn driving_backwards_is_noncompliant() {
         let mut ego = cruise(10.0, 200);
         ego.reverse();
-        let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&ego, &[], &road());
         // once the trailing window fills, direction is fully violated
         assert_eq!(m.at(50).0[2], 0.0);
         assert_eq!(m.aggregate[2], 0.0);
@@ -233,7 +236,7 @@ mod tests {
     fn leaving_the_road_once_zeroes_drivable_area() {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
-        let m = evaluate(&ego, &[], &CENTERLINE, 10.0, DT);
+        let m = evaluate(&ego, &[], &road());
         assert_eq!(m.at(50).0[1], 0.0);
         assert_eq!(m.at(51).0[1], 1.0);
         assert_eq!(m.aggregate[1], 0.0); // min aggregation: one bad tick

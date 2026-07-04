@@ -3,6 +3,7 @@
 
 use bevy::prelude::*;
 use nanoplan::planning::{Context, Diagnostics};
+use nanoplan::scenarios::Road;
 use nanoplan::{Control, Path, Scenario, State, step};
 
 use super::rollouts::RolloutCache;
@@ -16,16 +17,14 @@ const DIAG_POINT: Color = Color::srgb(0.95, 0.85, 0.2);
 const DIAG_TRAJECTORY: Color = Color::srgb(0.2, 0.85, 0.95);
 
 fn ctx<'a>(
-    sc: &'a Scenario,
+    road: &'a Road,
     actors: &'a [State],
     horizon: usize,
     diagnostics: Option<&'a Diagnostics>,
 ) -> Context<'a> {
     Context {
-        centerline: &sc.centerline,
+        road,
         actors,
-        target_speed: sc.target_speed,
-        dt: DT,
         horizon,
         latency: None,
         diagnostics,
@@ -168,7 +167,8 @@ pub(crate) fn draw(
     let want_diag = state.show_diag_points || state.show_diag_trajectories;
     let recorder = Diagnostics::default();
     let current: Vec<State> = rollout.actors.iter().map(|t| t[idx]).collect();
-    let plan_ctx = ctx(sc, &current, k, want_diag.then_some(&recorder));
+    let road = sc.road(DT);
+    let plan_ctx = ctx(&road, &current, k, want_diag.then_some(&recorder));
     let plan = state.planner.build().plan(ego, &plan_ctx);
     if want_diag {
         let diag = recorder.take();

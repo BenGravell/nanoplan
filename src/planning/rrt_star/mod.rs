@@ -258,7 +258,7 @@ fn feasible(
         };
         if ctx
             .time("cost", || {
-                cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+                cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
             })
             .is_infinite()
         {
@@ -301,7 +301,7 @@ fn edge_cost(
             ..Default::default()
         };
         total += ctx.time("cost", || {
-            cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+            cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
         });
     }
     total
@@ -451,11 +451,11 @@ pub struct RrtStarPlanner {
 impl Planner for RrtStarPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0) = ctx.time("route", || {
-            let path = Path::new(ctx.centerline);
+            let path = Path::new(&ctx.road.centerline);
             let (s0, _) = path.project([ego.x, ego.y]);
             (path, s0)
         });
-        let v = ego.speed.clamp(2.0, ctx.target_speed.max(2.0));
+        let v = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         let s_max = v * PLANNING_HORIZON_S;
 
         let mut nodes = vec![Node {
@@ -640,7 +640,7 @@ impl Planner for RrtStarPlanner {
             // batch runner over general synthetic scenarios, not from
             // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
-            let accel = (-ego.speed / ctx.dt).max(-4.0);
+            let accel = (-ego.speed / ctx.road.dt).max(-4.0);
             return vec![
                 Control {
                     accel,
@@ -666,11 +666,11 @@ impl Planner for RrtStarPlanner {
             let total_len = final_path.length();
             let pts: Vec<[f64; 2]> = (1..=ctx.horizon)
                 .map(|i| {
-                    let s = (v * ctx.dt * i as f64).min(total_len);
+                    let s = (v * ctx.road.dt * i as f64).min(total_len);
                     final_path.pose_at(s).0
                 })
                 .collect();
-            xy_to_controls(ego, &pts, ctx.dt)
+            xy_to_controls(ego, &pts, ctx.road.dt)
         });
         self.prev_path = winning_path;
         controls
@@ -710,7 +710,8 @@ mod tests {
             ..Default::default()
         };
         let actors = [obstacle];
-        let ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &actors);
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &actors);
         let a = RrtStarPlanner::default().plan(ego, &ctx);
         let b = RrtStarPlanner::default().plan(ego, &ctx);
         assert_eq!(a, b);
@@ -745,7 +746,8 @@ mod tests {
             ..Default::default()
         };
         let diag = Diagnostics::default();
-        let mut ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &[]);
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let mut ctx = crate::planning::test_ctx(&road, &[]);
         ctx.diagnostics = Some(&diag);
         RrtStarPlanner::default().plan(ego, &ctx);
         let data = diag.take();

@@ -138,10 +138,10 @@ impl Pi2DdpPlanner {
             let (target, _) = path.pose_at(s + lookahead);
             let heading_err = (target[1] - x.y).atan2(target[0] - x.x) - x.yaw;
             let curvature = 2.0 * heading_err.sin() / lookahead;
-            let accel = (0.5 * (ctx.target_speed - x.speed)).clamp(-2.0, 1.5);
+            let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
             let c = Control { accel, curvature };
             u.push([accel, curvature]);
-            x = step(x, c, ctx.dt);
+            x = step(x, c, ctx.road.dt);
         }
         let mut sigma_tau = [[0.0; 6]; 6];
         for (i, row) in sigma_tau.iter_mut().enumerate().take(4) {
@@ -166,11 +166,11 @@ impl Pi2DdpPlanner {
 
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(ctx.centerline));
+        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
-        let preview = ego.speed.max(2.0) * ctx.dt * HORIZON as f64;
+        let preview = ego.speed.max(2.0) * ctx.road.dt * HORIZON as f64;
         let sigma_kappa = (8.0 * LANE_HALF_M / (preview * preview)).clamp(0.005, 0.05);
         let sigma_init: M2 = [
             [SIGMA_ACCEL * SIGMA_ACCEL, 0.0],
@@ -204,11 +204,11 @@ impl Planner for Pi2DdpPlanner {
                 speed: x.speed,
                 curvature,
                 accel,
-                t: j as f64 * ctx.dt,
+                t: j as f64 * ctx.road.dt,
             };
             let c = 0.5 * d * d
                 + ctx.time("cost", || {
-                    cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+                    cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
                 });
             if c.is_infinite() {
                 cost::HARD_VIOLATION_PENALTY
@@ -231,7 +231,7 @@ impl Planner for Pi2DdpPlanner {
                         accel: uj[0],
                         curvature: uj[1],
                     },
-                    ctx.dt,
+                    ctx.road.dt,
                 );
                 xs.push(x);
             }
@@ -286,7 +286,7 @@ impl Planner for Pi2DdpPlanner {
                                 accel: u[0],
                                 curvature: u[1],
                             },
-                            ctx.dt,
+                            ctx.road.dt,
                         );
                         xs[k][j + 1] = x;
                     }
@@ -472,7 +472,7 @@ impl Planner for Pi2DdpPlanner {
                         accel: u[0],
                         curvature: u[1],
                     },
-                    ctx.dt,
+                    ctx.road.dt,
                 );
             }
             let (_, cost) = noise_free(&u_exec);
@@ -499,7 +499,7 @@ impl Planner for Pi2DdpPlanner {
                 curvature: u[1],
             })
             .collect();
-        pol.expected_next = step(ego, out[0], ctx.dt);
+        pol.expected_next = step(ego, out[0], ctx.road.dt);
         self.policy = Some(pol);
         out
     }
@@ -582,7 +582,8 @@ mod tests {
             ..Default::default()
         };
         let diag = Diagnostics::default();
-        let mut ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &[]);
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let mut ctx = crate::planning::test_ctx(&road, &[]);
         ctx.diagnostics = Some(&diag);
         Pi2DdpPlanner::default().plan(ego, &ctx);
         let data = diag.take();

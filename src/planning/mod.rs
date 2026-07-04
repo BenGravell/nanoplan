@@ -17,6 +17,7 @@ pub use pi2ddp::Pi2DdpPlanner;
 pub use rrt_star::RrtStarPlanner;
 pub use straight::StraightPlanner;
 
+use crate::scenarios::Road;
 use crate::simulation::{Control, State};
 
 /// How far ahead planners with a genuine receding-horizon cost model
@@ -27,14 +28,10 @@ pub const PLANNING_HORIZON_S: f64 = 10.0;
 
 /// Everything a planner sees besides the ego state.
 pub struct Context<'a> {
-    /// Lane centerline the ego should follow, as a polyline.
-    pub centerline: &'a [[f64; 2]],
+    /// The fixed setting of the run: centerline, target speed, tick length.
+    pub road: &'a Road,
     /// Current states of the other actors.
     pub actors: &'a [State],
-    /// Desired cruise speed.
-    pub target_speed: f64,
-    /// Tick length of the returned control trajectory.
-    pub dt: f64,
     /// Requested number of controls (planners may return fewer or more).
     pub horizon: usize,
     /// Latency recorder for this plan call, when diagnostics are collected.
@@ -114,12 +111,19 @@ impl PlannerKind {
 }
 
 #[cfg(test)]
-pub(crate) fn test_ctx<'a>(centerline: &'a [[f64; 2]], actors: &'a [State]) -> Context<'a> {
-    Context {
-        centerline,
-        actors,
+pub(crate) fn test_road(centerline: &[[f64; 2]]) -> Road {
+    Road {
+        centerline: centerline.to_vec(),
         target_speed: 10.0,
         dt: 0.1,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_ctx<'a>(road: &'a Road, actors: &'a [State]) -> Context<'a> {
+    Context {
+        road,
+        actors,
         horizon: 10,
         latency: None,
         diagnostics: None,
@@ -133,12 +137,12 @@ pub(crate) fn test_run(
     actors: &[State],
     ticks: usize,
 ) -> Vec<State> {
-    const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
+    let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
     let mut sim = crate::simulation::Simulator {
         state: ego,
-        dt: 0.1,
+        dt: road.dt,
     };
     (0..ticks)
-        .map(|_| sim.tick(planner, &test_ctx(&CENTERLINE, actors)))
+        .map(|_| sim.tick(planner, &test_ctx(&road, actors)))
         .collect()
 }

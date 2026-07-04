@@ -43,7 +43,7 @@ pub struct BezierIdmPlanner;
 impl Planner for BezierIdmPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0) = ctx.time("route", || {
-            let path = Path::new(ctx.centerline);
+            let path = Path::new(&ctx.road.centerline);
             let (s0, _) = path.project([ego.x, ego.y]);
             (path, s0)
         });
@@ -67,16 +67,16 @@ impl Planner for BezierIdmPlanner {
         ctx.time("extract", || {
             (0..ctx.horizon)
                 .map(|_| {
-                    let accel = idm_accel(v, ctx.target_speed, lead);
+                    let accel = idm_accel(v, ctx.road.target_speed, lead);
                     let u = Control {
                         accel,
                         curvature: bezier_curvature(&b, t),
                     };
-                    v = (v + accel * ctx.dt).max(0.0);
+                    v = (v + accel * ctx.road.dt).max(0.0);
                     let d1 = bezier_d1(&b, t);
-                    t = (t + v * ctx.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
+                    t = (t + v * ctx.road.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
                     if let Some((gap, lead_v)) = &mut lead {
-                        *gap = (*gap + (*lead_v - v) * ctx.dt).max(0.0);
+                        *gap = (*gap + (*lead_v - v) * ctx.road.dt).max(0.0);
                     }
                     u
                 })

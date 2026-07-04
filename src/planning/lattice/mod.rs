@@ -47,12 +47,12 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
 impl Planner for LatticePlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0, d0) = ctx.time("route", || {
-            let path = Path::new(ctx.centerline);
+            let path = Path::new(&ctx.road.centerline);
             let (s0, d0) = path.project([ego.x, ego.y]);
             (path, s0, d0)
         });
         // ponytail: constant-speed profile; couple IDM into the lattice when needed
-        let v = ego.speed.clamp(2.0, ctx.target_speed.max(2.0));
+        let v = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full
         // prediction horizon at the assumed cruise speed
         let stations_m: [f64; STATION_LAYERS] = std::array::from_fn(|i| {
@@ -96,7 +96,7 @@ impl Planner for LatticePlanner {
                     ..Default::default()
                 };
                 let point = ctx.time("cost", || {
-                    cost::point_cost(&sample, ctx.target_speed, ctx.actors)
+                    cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
                 });
                 if point.is_infinite() {
                     return f64::INFINITY;
@@ -172,9 +172,9 @@ impl Planner for LatticePlanner {
         // sample the winning path over time; d is cubic in t on each segment
         let s_max = *stations_m.last().unwrap();
         ctx.time("extract", || {
-            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((s_max / (v * ctx.dt)) as usize))
+            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((s_max / (v * ctx.road.dt)) as usize))
                 .map(|i| {
-                    let s_rel = (v * ctx.dt * i as f64).min(s_max);
+                    let s_rel = (v * ctx.road.dt * i as f64).min(s_max);
                     let seg = stations_m.iter().position(|&m| s_rel <= m).unwrap();
                     let (sa, da) = if seg == 0 {
                         (0.0, d0)
@@ -187,7 +187,7 @@ impl Planner for LatticePlanner {
                     path.frenet_to_xy(s0 + s_rel, d)
                 })
                 .collect();
-            xy_to_controls(ego, &pts, ctx.dt)
+            xy_to_controls(ego, &pts, ctx.road.dt)
         })
     }
 }
@@ -238,7 +238,8 @@ mod tests {
             ..Default::default()
         };
         let diag = Diagnostics::default();
-        let mut ctx = crate::planning::test_ctx(&[[-20.0, 0.0], [400.0, 0.0]], &[]);
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let mut ctx = crate::planning::test_ctx(&road, &[]);
         ctx.diagnostics = Some(&diag);
         LatticePlanner.plan(ego, &ctx);
         let data = diag.take();
