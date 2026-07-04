@@ -24,6 +24,8 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
 /// metric's own per-tick scores — so the aggregation interface stays
 /// uniform across metrics.
 pub fn aggregate(ctx: &TickCtx, _per_tick: &[f64]) -> f64 {
-    let ratios: Vec<f64> = (0..ctx.ego.len()).map(|i| progress::score(ctx, i)).collect();
+    let ratios: Vec<f64> = (0..ctx.ego.len())
+        .map(|i| progress::score(ctx, i))
+        .collect();
     of_ratio(agg::avg(ctx, &ratios))
 }

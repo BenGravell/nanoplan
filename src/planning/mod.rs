@@ -150,21 +150,6 @@ impl PlannerKind {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `spec()` indexes SPECS by discriminant; a row out of order would
-    /// silently hand every planner the wrong name/constructor/flags.
-    #[test]
-    fn specs_align_with_kinds() {
-        assert_eq!(PlannerKind::ALL.len(), SPECS.len());
-        for kind in PlannerKind::ALL {
-            assert_eq!(kind.spec().kind, kind);
-        }
-    }
-}
-
-#[cfg(test)]
 pub(crate) fn test_road(centerline: &[[f64; 2]]) -> Road {
     Road {
         centerline: centerline.to_vec(),
@@ -199,4 +184,19 @@ pub(crate) fn test_run(
     (0..ticks)
         .map(|_| sim.tick(planner, &test_ctx(&road, actors)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `spec()` indexes SPECS by discriminant; a row out of order would
+    /// silently hand every planner the wrong name/constructor/flags.
+    #[test]
+    fn specs_align_with_kinds() {
+        assert_eq!(PlannerKind::ALL.len(), SPECS.len());
+        for kind in PlannerKind::ALL {
+            assert_eq!(kind.spec().kind, kind);
+        }
+    }
 }
