@@ -4,10 +4,13 @@
 use crate::simulation::State;
 use crate::wrap_angle;
 
-// comfort thresholds (empirical expert bounds from nuPlan)
-const MIN_LON_ACCEL: f64 = -4.05;
-const MAX_LON_ACCEL: f64 = 2.40;
-const MAX_ABS_LAT_ACCEL: f64 = 4.89;
+// comfort thresholds (empirical expert bounds from nuPlan). The longitudinal
+// and lateral accel bounds are also shared with the planners' cost function
+// (`planning::cost`) so its comfort term penalizes exactly what this metric
+// scores as uncomfortable.
+pub(crate) const MIN_LON_ACCEL: f64 = -4.05;
+pub(crate) const MAX_LON_ACCEL: f64 = 2.40;
+pub(crate) const MAX_ABS_LAT_ACCEL: f64 = 4.89;
 const MAX_ABS_YAW_ACCEL: f64 = 1.93;
 const MAX_ABS_YAW_RATE: f64 = 0.95;
 const MAX_ABS_LON_JERK: f64 = 4.13;

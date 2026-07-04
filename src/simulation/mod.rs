@@ -183,8 +183,8 @@ mod tests {
         let sc = &crate::scenarios::synthetic_batch(1, 5)[0]; // a lead scenario
         let r = simulate(sc, PlannerKind::Lattice, 2.0, 0.1);
         let names: Vec<_> = r.latency.seams.iter().map(|s| s.name).collect();
-        // standardized seams plus the lattice's custom one
-        for expected in ["total", "route", "optimize", "extract", "edge_costs"] {
+        // standardized seams, including the shared cost function's "cost"
+        for expected in ["total", "route", "optimize", "extract", "cost"] {
             assert!(names.contains(&expected), "missing seam {expected}");
         }
         let total = r.latency.seams.iter().find(|s| s.name == "total").unwrap();
