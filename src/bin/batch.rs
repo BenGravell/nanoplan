@@ -8,7 +8,8 @@
 //! logs with tools/export_nuplan_scenarios.py. A per-planner mean-score
 //! summary goes to stderr.
 
-use nanoplan::{Metrics, PlannerKind, scenarios, simulate};
+use nanoplan::metrics::METRICS;
+use nanoplan::{PlannerKind, scenarios, simulate};
 
 const DURATION_S: f64 = 20.0;
 const DT: f64 = 0.1;
@@ -41,7 +42,7 @@ fn main() {
 
     println!(
         "scenario,planner,score,{}",
-        Metrics::LABELS.map(|l| l.replace(' ', "_")).join(",")
+        METRICS.map(|m| m.label.replace(' ', "_")).join(",")
     );
     let mut totals = vec![0.0; PlannerKind::ALL.len()];
     for sc in &scenarios {

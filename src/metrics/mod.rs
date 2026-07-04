@@ -10,8 +10,16 @@
 //! structure (multipliers times the 5/5/4/2 weighted average) to the
 //! aggregates, and per tick for the scrubber display. Thresholds follow
 //! scenarios/nuplan/metrics_description.md. Everything here is a pure
-//! function of simulation outputs (ego trace, actor traces, centerline,
-//! speed limit, dt) — planner internals are off limits.
+//! function of simulation outputs (ego trace, actor traces, and the
+//! [`Road`]) — planner internals are off limits.
+//!
+//! Everything a metric *is* — its display label, how it scores a tick, how
+//! its ticks aggregate to a scenario value, and its role in the composite —
+//! lives in one row of the [`METRICS`] spec table (the Strategy pattern,
+//! table-driven). A metric's position in the per-tick score arrays is the
+//! position of its row, nothing more: adding a metric means writing its
+//! module and adding one row here, and no consumer indexes scores by magic
+//! number.
 
 pub mod collisions;
 pub mod comfort;
@@ -30,7 +38,112 @@ use crate::simulation::State;
 // 2.5 m spacing and misses only bumper-to-bumper geometry
 pub(crate) const CAR_RADIUS_M: f64 = 1.25;
 
-pub const N_METRICS: usize = 8;
+/// Precomputed, per-rollout series every metric scores from. Built once by
+/// [`evaluate`]; a metric's score function reads the tick it's given and
+/// nothing else, so metrics stay pure functions of simulation outputs.
+pub struct TickCtx<'a> {
+    /// Ego state at every tick.
+    pub ego: &'a [State],
+    /// Every actor's state at every tick: `actors_at[tick][actor]`.
+    pub actors_at: &'a [Vec<State>],
+    /// Ego arc length along the route at every tick.
+    pub station: &'a [f64],
+    /// Ego signed lateral offset from the centerline at every tick.
+    pub lateral: &'a [f64],
+    /// Tickwise ego kinematics (accels, jerks, yaw rates).
+    pub kinematics: &'a comfort::Kinematics,
+    pub speed_limit: f64,
+    pub dt: f64,
+}
+
+/// A metric's role in the nuPlan composite score: hard gate or weighted term.
+pub enum CompositeRole {
+    /// Multiplies the composite directly — a 0 zeroes the whole score.
+    Multiplier,
+    /// Contributes to the weighted average with this weight.
+    Weighted(f64),
+}
+
+/// One metric, whole: everything [`evaluate`] and the score consumers (the
+/// viewer's metrics table, the batch CSV) need to know about it.
+pub struct MetricSpec {
+    pub label: &'static str,
+    /// Score of one tick, in [0, 1].
+    pub score: fn(&TickCtx, usize) -> f64,
+    /// Scenario value from this metric's per-tick score column ([`agg::min`]
+    /// for event-driven metrics, [`agg::avg`] for smooth quantities, or a
+    /// metric-specific rule like [`making_progress::aggregate`]).
+    pub aggregate: fn(&TickCtx, &[f64]) -> f64,
+    pub role: CompositeRole,
+}
+
+/// The metric registry: row order defines score-array order everywhere.
+pub const METRICS: [MetricSpec; 8] = [
+    MetricSpec {
+        label: "no at-fault collisions",
+        score: collisions::score,
+        aggregate: agg::min,
+        role: CompositeRole::Multiplier,
+    },
+    MetricSpec {
+        label: "drivable area",
+        score: drivable_area::score,
+        aggregate: agg::min,
+        role: CompositeRole::Multiplier,
+    },
+    MetricSpec {
+        label: "driving direction",
+        score: driving_direction::score,
+        aggregate: agg::min,
+        role: CompositeRole::Multiplier,
+    },
+    MetricSpec {
+        label: "making progress",
+        score: making_progress::score,
+        aggregate: making_progress::aggregate,
+        role: CompositeRole::Multiplier,
+    },
+    MetricSpec {
+        label: "TTC within bound",
+        score: ttc::score,
+        aggregate: agg::min,
+        role: CompositeRole::Weighted(5.0),
+    },
+    MetricSpec {
+        label: "progress ratio",
+        score: progress::score,
+        aggregate: agg::avg,
+        role: CompositeRole::Weighted(5.0),
+    },
+    MetricSpec {
+        label: "speed limit",
+        score: speed_limit::score,
+        aggregate: agg::avg,
+        role: CompositeRole::Weighted(4.0),
+    },
+    MetricSpec {
+        label: "comfort",
+        score: comfort::score,
+        aggregate: agg::avg,
+        role: CompositeRole::Weighted(2.0),
+    },
+];
+
+pub const N_METRICS: usize = METRICS.len();
+
+/// The two standard aggregation rules (see the module doc): worst case for
+/// event-driven metrics, average for smooth quantities.
+pub mod agg {
+    use super::TickCtx;
+
+    pub fn min(_: &TickCtx, per_tick: &[f64]) -> f64 {
+        per_tick.iter().copied().fold(1.0, f64::min)
+    }
+
+    pub fn avg(_: &TickCtx, per_tick: &[f64]) -> f64 {
+        per_tick.iter().sum::<f64>() / per_tick.len().max(1) as f64
+    }
+}
 
 /// Per-tick metric scores for a rollout, plus their scenario aggregates.
 #[derive(Debug, Clone, Default)]
@@ -46,17 +159,6 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub const LABELS: [&'static str; N_METRICS] = [
-        "no at-fault collisions",
-        "drivable area",
-        "driving direction",
-        "making progress",
-        "TTC within bound",
-        "progress ratio",
-        "speed limit",
-        "comfort",
-    ];
-
     /// Metric scores and composite score at a tick (clamped to the rollout).
     pub fn at(&self, tick: usize) -> ([f64; N_METRICS], f64) {
         let i = tick.min(self.per_tick.len().saturating_sub(1));
@@ -77,60 +179,56 @@ pub(crate) fn project(s: &State, t: f64) -> State {
     }
 }
 
-/// The nuPlan composite: multipliers times the 5/5/4/2 weighted average of
-/// (TTC, progress, speed limit, comfort).
-fn composite(m: &[f64; N_METRICS]) -> f64 {
-    let weighted = (5.0 * m[4] + 5.0 * m[5] + 4.0 * m[6] + 2.0 * m[7]) / 16.0;
-    m[0] * m[1] * m[2] * m[3] * weighted
+/// The nuPlan composite: the product of every [`CompositeRole::Multiplier`]
+/// metric times the weighted average of the [`CompositeRole::Weighted`]
+/// ones, both read straight from the [`METRICS`] table.
+fn composite(scores: &[f64; N_METRICS]) -> f64 {
+    let (mut product, mut weighted, mut total_weight) = (1.0, 0.0, 0.0);
+    for (spec, s) in METRICS.iter().zip(scores) {
+        match spec.role {
+            CompositeRole::Multiplier => product *= s,
+            CompositeRole::Weighted(w) => {
+                weighted += w * s;
+                total_weight += w;
+            }
+        }
+    }
+    product * weighted / total_weight
 }
 
 /// Evaluate all metrics over a finished rollout. `actors[i]` must be sampled
 /// at the same ticks as `ego`.
 pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
-    let (speed_limit, dt) = (road.target_speed, road.dt);
-    let path = Path::new(&road.centerline);
     let n = ego.len();
     if n == 0 {
         return Metrics::default();
     }
+    let path = Path::new(&road.centerline);
     let frenet: Vec<(f64, f64)> = ego.iter().map(|s| path.project([s.x, s.y])).collect();
     let station: Vec<f64> = frenet.iter().map(|f| f.0).collect();
-    let kinematics = comfort::Kinematics::new(ego, dt);
+    let lateral: Vec<f64> = frenet.iter().map(|f| f.1).collect();
+    let actors_at: Vec<Vec<State>> = (0..n)
+        .map(|i| actors.iter().map(|a| a[i]).collect())
+        .collect();
+    let kinematics = comfort::Kinematics::new(ego, road.dt);
+    let ctx = TickCtx {
+        ego,
+        actors_at: &actors_at,
+        station: &station,
+        lateral: &lateral,
+        kinematics: &kinematics,
+        speed_limit: road.target_speed,
+        dt: road.dt,
+    };
 
-    let mut per_tick: Vec<[f64; N_METRICS]> = Vec::with_capacity(n);
-    let mut score_per_tick = Vec::with_capacity(n);
-    for i in 0..n {
-        let actors_now: Vec<State> = actors.iter().map(|a| a[i]).collect();
-        let progress = progress::score(&station, i, dt, speed_limit);
-        let scores = [
-            collisions::score(&ego[i], &actors_now),
-            drivable_area::score(frenet[i].1),
-            driving_direction::score(&station, i, dt),
-            making_progress::score(progress),
-            ttc::score(&ego[i], &actors_now),
-            progress,
-            speed_limit::score(ego[i].speed, speed_limit),
-            kinematics.score(i),
-        ];
-        score_per_tick.push(composite(&scores));
-        per_tick.push(scores);
-    }
-
-    // per-metric aggregation: worst case for event-driven metrics, average
-    // for smooth quantities; making-progress thresholds aggregated progress
-    let min_of = |m: usize| per_tick.iter().map(|t| t[m]).fold(1.0, f64::min);
-    let avg_of = |m: usize| per_tick.iter().map(|t| t[m]).sum::<f64>() / n as f64;
-    let progress = avg_of(5);
-    let aggregate = [
-        min_of(0), // collisions
-        min_of(1), // drivable area
-        min_of(2), // driving direction
-        making_progress::score(progress),
-        min_of(4), // TTC
-        progress,
-        avg_of(6), // speed limit
-        avg_of(7), // comfort
-    ];
+    let per_tick: Vec<[f64; N_METRICS]> = (0..n)
+        .map(|i| std::array::from_fn(|m| (METRICS[m].score)(&ctx, i)))
+        .collect();
+    let score_per_tick: Vec<f64> = per_tick.iter().map(composite).collect();
+    let aggregate: [f64; N_METRICS] = std::array::from_fn(|m| {
+        let column: Vec<f64> = per_tick.iter().map(|t| t[m]).collect();
+        (METRICS[m].aggregate)(&ctx, &column)
+    });
     let score = composite(&aggregate);
 
     Metrics {

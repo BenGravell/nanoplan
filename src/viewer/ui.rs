@@ -3,7 +3,8 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use nanoplan::{IncrementalSim, Metrics, PlannerKind};
+use nanoplan::metrics::METRICS;
+use nanoplan::{IncrementalSim, PlannerKind};
 
 use super::rollouts::{ActiveJob, RolloutCache};
 use super::{DT, DURATION_S, PREVIEW_MAX_S, Scenarios, UiState};
@@ -130,12 +131,12 @@ pub(crate) fn ui(
                     ui.label("@t");
                     ui.label("agg");
                     ui.end_row();
-                    for ((label, tick), avg) in Metrics::LABELS
+                    for ((spec, tick), avg) in METRICS
                         .iter()
                         .zip(tick_scores)
                         .zip(rollout.metrics.aggregate)
                     {
-                        ui.label(*label);
+                        ui.label(spec.label);
                         ui.label(format!("{tick:.2}"));
                         ui.label(format!("{avg:.2}"));
                         ui.end_row();
