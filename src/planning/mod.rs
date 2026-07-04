@@ -60,7 +60,10 @@ pub trait Planner {
 }
 
 /// Configuration: which planner to run. Lets the app and the batch runner
-/// compare planners on the same scenario.
+/// compare planners on the same scenario. Everything else about a planner —
+/// display name, constructor, capabilities — lives in its [`PlannerSpec`]
+/// row, so adding a planner means one enum variant plus one complete row
+/// in [`SPECS`], not edits to scattered `match`es.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlannerKind {
     Straight,
@@ -69,6 +72,54 @@ pub enum PlannerKind {
     Pi2Ddp,
     RrtStar,
 }
+
+/// One planner, whole: the registry metadata behind a [`PlannerKind`]
+/// (Factory Method as a table: the `build` slot constructs the strategy).
+pub struct PlannerSpec {
+    /// Which kind this row describes — must match its position in [`SPECS`]
+    /// (enforced by the `specs_align_with_kinds` test).
+    pub kind: PlannerKind,
+    pub name: &'static str,
+    pub build: fn() -> Box<dyn Planner>,
+    /// Whether this planner records anything into a [`Diagnostics`]
+    /// recorder. Planners without receding-horizon search geometry to show
+    /// never call `ctx.diagnostics`.
+    pub has_diagnostics: bool,
+}
+
+/// The planner registry, indexed by `PlannerKind as usize`.
+const SPECS: [PlannerSpec; 5] = [
+    PlannerSpec {
+        kind: PlannerKind::Straight,
+        name: "straight (strawman)",
+        build: || Box::new(StraightPlanner),
+        has_diagnostics: false,
+    },
+    PlannerSpec {
+        kind: PlannerKind::BezierIdm,
+        name: "bezier + IDM",
+        build: || Box::new(BezierIdmPlanner),
+        has_diagnostics: false,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Lattice,
+        name: "frenet lattice",
+        build: || Box::new(LatticePlanner),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Pi2Ddp,
+        name: "PI2-DDP",
+        build: || Box::new(Pi2DdpPlanner::default()),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::RrtStar,
+        name: "RRT*",
+        build: || Box::new(RrtStarPlanner::default()),
+        has_diagnostics: true,
+    },
+];
 
 impl PlannerKind {
     pub const ALL: [PlannerKind; 5] = [
@@ -79,34 +130,37 @@ impl PlannerKind {
         PlannerKind::RrtStar,
     ];
 
+    /// This planner's registry row.
+    pub fn spec(self) -> &'static PlannerSpec {
+        &SPECS[self as usize]
+    }
+
     pub fn name(self) -> &'static str {
-        match self {
-            PlannerKind::Straight => "straight (strawman)",
-            PlannerKind::BezierIdm => "bezier + IDM",
-            PlannerKind::Lattice => "frenet lattice",
-            PlannerKind::Pi2Ddp => "PI2-DDP",
-            PlannerKind::RrtStar => "RRT*",
-        }
+        self.spec().name
     }
 
     pub fn build(self) -> Box<dyn Planner> {
-        match self {
-            PlannerKind::Straight => Box::new(StraightPlanner),
-            PlannerKind::BezierIdm => Box::new(BezierIdmPlanner),
-            PlannerKind::Lattice => Box::new(LatticePlanner),
-            PlannerKind::Pi2Ddp => Box::new(Pi2DdpPlanner::default()),
-            PlannerKind::RrtStar => Box::new(RrtStarPlanner::default()),
-        }
+        (self.spec().build)()
     }
 
-    /// Whether this planner records anything into a [`Diagnostics`]
-    /// recorder. `Straight` and `BezierIdm` have no receding-horizon search
-    /// geometry to show — they never call `ctx.diagnostics`.
+    /// See [`PlannerSpec::has_diagnostics`].
     pub fn has_diagnostics(self) -> bool {
-        matches!(
-            self,
-            PlannerKind::Lattice | PlannerKind::Pi2Ddp | PlannerKind::RrtStar
-        )
+        self.spec().has_diagnostics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `spec()` indexes SPECS by discriminant; a row out of order would
+    /// silently hand every planner the wrong name/constructor/flags.
+    #[test]
+    fn specs_align_with_kinds() {
+        assert_eq!(PlannerKind::ALL.len(), SPECS.len());
+        for kind in PlannerKind::ALL {
+            assert_eq!(kind.spec().kind, kind);
+        }
     }
 }
 
