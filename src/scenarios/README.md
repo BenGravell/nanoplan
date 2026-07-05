@@ -167,6 +167,7 @@ impl Path {
     pub fn length(&self) -> f64;
     pub fn pose_at(&self, s: f64) -> ([f64; 2], f64);      // position + heading at arc length s
     pub fn project(&self, p: [f64; 2]) -> (f64, f64);      // xy -> (arc length, signed lateral offset)
+    pub fn project_near(&self, p: [f64; 2], s_hint: f64, window_m: f64) -> (f64, f64); // windowed project
     pub fn frenet_to_xy(&self, s: f64, d: f64) -> [f64; 2]; // inverse of project
 }
 ```
@@ -185,6 +186,16 @@ follow curved roads.
 (found via the cross product of the segment direction and the offset
 vector). `pose_at` and `project` both clamp to the path's extent rather than
 extrapolating or panicking past its ends.
+
+`project_near` is `project` restricted to the centerline segments within
+`window_m` arc length of a caller-supplied `s_hint`, so it scans a handful of
+segments instead of all of them. It's exact whenever the nearest segment is
+inside the window (the caller sizes the window generously). RRT* uses it in
+its hot loop — it projects every sampled point of every candidate edge and
+already knows each segment's rough station — where the full `O(n)` scan was
+the dominant cost once its spatial index removed the linear neighbor scans
+(see [`rrt_star`](../planning/README.md#rrt)). A
+`project_near_matches_full_projection_within_window` test pins the exactness.
 
 ## Actor motion
 

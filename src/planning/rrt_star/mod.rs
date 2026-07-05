@@ -17,6 +17,16 @@
 //! (via derivative *direction*) at both endpoints is enough to guarantee a
 //! kinematically smooth connection, without solving for heading or
 //! curvature directly.
+//!
+//! The three neighbor queries every new node runs — nearest node behind it,
+//! candidate parents, rewire targets — go through an [`rstar`] R*-tree
+//! spatial index grown alongside the node list, so each is `O(log n)` rather
+//! than a linear scan, and only the `K_NEIGHBORS` nearest vertices are
+//! considered (a *k*-nearest RRT*). See the `K_NEIGHBORS` doc comment and
+//! the performance note in this module's README section.
+
+use rstar::RTree;
+use rstar::primitives::GeomWithData;
 
 use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
@@ -24,6 +34,12 @@ use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
 use crate::wrap_angle;
+
+/// A tree node's position tagged with its index in `nodes`, stored in the
+/// [`RTree`] spatial index so nearest-neighbour and near-vertex queries run
+/// in `O(log n)` instead of scanning every node.
+type SpatialNode = GeomWithData<[f64; 2], usize>;
+type Spatial = RTree<SpatialNode>;
 
 // Sampling budget for the tree-growing loop in `plan`, split ~50/50
 // between a deterministic road-geometry grid and a low-discrepancy
@@ -61,10 +77,32 @@ const STEP_MAX_M: f64 = 6.0;
 // hop — avoids the numerically fragile regime entirely.
 const MIN_WARM_START_STEP_M: f64 = 1.5;
 const NEIGHBOR_RADIUS_M: f64 = 12.0;
+// Cap on how many near vertices (the closest ones) are considered as
+// candidate parents, and separately as rewire targets, for each new node —
+// i.e. the "k" of a k-nearest-neighbour RRT* rather than an every-node-in-
+// radius RRT*. Both are asymptotically optimal variants; the k-nearest form
+// is what keeps the cost bounded as the tree gets dense (without it, the
+// count of vertices inside `NEIGHBOR_RADIUS_M` — and thus the steer +
+// feasibility + edge-cost work per new node — grows with the tree, the
+// O(n²) that dominated this planner's latency). The closest vertices are
+// also the ones that matter: a near parent gives a short, cheap edge, and a
+// far one almost never wins, so bounding to the nearest `k` barely changes
+// the tree while cutting the work sharply. The spatial index makes pulling
+// exactly the `k` nearest cheap.
+const K_NEIGHBORS: usize = 24;
 const LATERAL_BOUND_M: f64 = 4.5;
 // curvature a steer is rejected past
 const MAX_CURVATURE: f64 = 0.35;
 const STEER_SAMPLES: usize = 8;
+// Arc-length half-window for the Frenet projection of a steer segment's
+// sampled points (`Path::project_near`). A segment is at most `STEP_MAX_M`
+// of travel, roughly along the road, so a point's true station is within a
+// few metres of the linear estimate from its endpoints' stations; this
+// window is generous enough to always contain the nearest centerline
+// segment while scanning a handful of them instead of the whole centerline
+// (projection was the dominant cost once the spatial index removed the
+// linear neighbour scans).
+const PROJECT_WINDOW_M: f64 = 20.0;
 const LATERAL_COST_WEIGHT: f64 = 0.5;
 // planner-specific safety margin, a bit more than the shared cost
 // function's hard-collision threshold (`cost::COLLISION_DIAMETER_M` = 2.5 m)
@@ -190,27 +228,45 @@ struct Node {
     warm_started: bool,
 }
 
-/// Whether every sampled point on `segment` clears every actor's
-/// constant-velocity-predicted position (via the shared cost function's
-/// hard-collision check, plus this planner's own `COLLISION_MARGIN_M`
-/// headroom), stays on the drivable road, and keeps the curve's curvature
-/// within what's actually drivable. `s0`/`v` convert a segment point's
-/// station into a predicted time the same way the Frenet lattice does.
-fn feasible(
+/// Feasibility check *and* edge cost in a single pass over the steer
+/// segment, returning `Some(edge_cost)` for a drivable edge and `None` for
+/// an infeasible one. Every sampled point is projected once
+/// (`Path::project_near`) and priced once — previously a separate `feasible`
+/// pass and `edge_cost` pass each projected and called `point_cost` on the
+/// same points, doubling the hot-loop work; merging them halves it with no
+/// change to which edges are feasible or what they cost.
+///
+/// Feasible means every point clears every actor's constant-velocity-
+/// predicted position (with this planner's own `COLLISION_MARGIN_M` headroom
+/// on top of the shared cost's hard-collision check), stays on the drivable
+/// road, and keeps the curve's curvature within what's actually drivable.
+/// The edge cost is arc length (RRT*'s cost-to-come, what the "star"
+/// rewiring minimizes) plus a lateral-offset pull toward the lane center,
+/// plus the shared per-point cost (timed under the `cost` seam). Curvature
+/// comes from the steering curve's own closed-form derivative — a geometric
+/// fact about this already-fixed candidate, not a search gradient. `s0`/`v`
+/// convert a point's station into a predicted time as the Frenet lattice
+/// does; `sa`/`sb` are the segment endpoints' stations, hinting the
+/// windowed projection.
+fn steer_cost(
     curve: &CubicSteer,
     segment: &[[f64; 2]],
     path: &Path,
     s0: f64,
     v: f64,
     ctx: &Context,
-) -> bool {
+    // stations of the segment's two endpoints, hinting the windowed projection
+    [sa, sb]: [f64; 2],
+) -> Option<f64> {
+    let mut total = 0.0;
+    let mut prev: Option<[f64; 2]> = None;
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
         if curvature.abs() > MAX_CURVATURE {
-            return false;
+            return None;
         }
-        let (s, d) = path.project(p);
+        let (s, d) = path.project_near(p, sa + (sb - sa) * u, PROJECT_WINDOW_M);
         // Endpoints alone aren't enough: a Hermite curve whose tangent
         // directions don't line up well with its chord can bulge past
         // both endpoints' lateral offset before coming back — clamping
@@ -224,13 +280,13 @@ fn feasible(
         // should never count as "successful" avoidance by driving right up
         // against the true edge.
         if d.abs() > DRIVABLE_HALF_WIDTH_M {
-            return false;
+            return None;
         }
         let t = (s - s0) / v;
         for a in ctx.actors {
             let predicted = crate::metrics::project(a, t);
             if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
-                return false;
+                return None;
             }
         }
         let sample = Sample {
@@ -241,55 +297,19 @@ fn feasible(
             t,
             ..Default::default()
         };
-        if ctx
-            .time("cost", || {
-                cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
-            })
-            .is_infinite()
-        {
-            return false;
-        }
-    }
-    true
-}
-
-/// Cost of one edge: arc length (via the sampled polyline, RRT*'s own
-/// cost-to-come — the "star" rewiring is built around minimizing exactly
-/// this), a lateral-offset penalty pulling the tree toward the lane center
-/// (both structural to how this search shapes its tree), plus the shared
-/// cost of each sampled point, timed under the "cost" seam so it's
-/// comparable across planners. Curvature comes from the steering curve's
-/// own closed-form derivative (`CubicSteer::curvature`) — a geometric fact
-/// about this already-fixed candidate, not a search gradient.
-fn edge_cost(
-    segment: &[[f64; 2]],
-    curve: &CubicSteer,
-    path: &Path,
-    s0: f64,
-    v: f64,
-    ctx: &Context,
-) -> f64 {
-    let mut total = 0.0;
-    for w in segment.windows(2) {
-        total += dist(w[0], w[1]);
-    }
-    for (i, &p) in segment.iter().enumerate() {
-        let u = i as f64 / (segment.len() - 1) as f64;
-        let (s, d) = path.project(p);
-        total += LATERAL_COST_WEIGHT * d * d / segment.len() as f64;
-        let sample = Sample {
-            xy: p,
-            lateral: d,
-            speed: v,
-            curvature: curve.curvature(u),
-            t: (s - s0) / v,
-            ..Default::default()
-        };
-        total += ctx.time("cost", || {
+        let point = ctx.time("cost", || {
             cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
         });
+        if point.is_infinite() {
+            return None;
+        }
+        total += point + LATERAL_COST_WEIGHT * d * d / segment.len() as f64;
+        if let Some(q) = prev {
+            total += dist(q, p); // arc length
+        }
+        prev = Some(p);
     }
-    total
+    Some(total)
 }
 
 /// Try to grow the tree one step toward `target`: find the nearest node
@@ -303,6 +323,7 @@ fn edge_cost(
 /// same way. Returns whether a node was actually added.
 fn try_extend(
     nodes: &mut Vec<Node>,
+    tree: &mut Spatial,
     path: &Path,
     s0: f64,
     v: f64,
@@ -310,9 +331,13 @@ fn try_extend(
     target: [f64; 2],
 ) -> bool {
     let target_s = path.project(target).0;
-    let Some(nearest_idx) = (0..nodes.len())
-        .filter(|&i| nodes[i].station < target_s)
-        .min_by(|&a, &b| dist(nodes[a].pos, target).total_cmp(&dist(nodes[b].pos, target)))
+    // nearest existing node strictly behind the target's station: walk the
+    // spatial index outward from the target (nearest first) and take the
+    // first behind it — exact, and typically only a couple of steps.
+    let Some(nearest_idx) = tree
+        .nearest_neighbor_iter(&target)
+        .map(|n| n.data)
+        .find(|&i| nodes[i].station < target_s)
     else {
         return false;
     };
@@ -332,24 +357,29 @@ fn try_extend(
         return false; // steering laterally lost all forward progress
     }
 
-    // candidate parents: nodes behind new_pos's station, close enough to
-    // new_pos to be worth considering
-    let parent_candidates: Vec<usize> = (0..nodes.len())
-        .filter(|&i| {
-            nodes[i].station < new_s
-                && (i == nearest_idx || dist(nodes[i].pos, new_pos) < NEIGHBOR_RADIUS_M)
-        })
+    // candidate parents: the `K_NEIGHBORS` nearest vertices to new_pos that
+    // sit behind it in station (within NEIGHBOR_RADIUS_M), from the spatial
+    // index. `nearest_idx` is always among them (it's `step_len ≤ STEP_MAX_M`
+    // away, well inside the radius), but include it explicitly so the
+    // straight steer-from edge is never dropped when the cap bites.
+    let radius2 = NEIGHBOR_RADIUS_M * NEIGHBOR_RADIUS_M;
+    let mut parent_candidates: Vec<usize> = tree
+        .nearest_neighbor_iter_with_distance_2(&new_pos)
+        .take_while(|(_, d2)| *d2 <= radius2)
+        .filter_map(|(n, _)| (nodes[n.data].station < new_s).then_some(n.data))
+        .take(K_NEIGHBORS)
         .collect();
+    if !parent_candidates.contains(&nearest_idx) {
+        parent_candidates.push(nearest_idx);
+    }
 
     let best = parent_candidates
         .iter()
         .filter_map(|&j| {
             let curve = CubicSteer::new(nodes[j].pos, nodes[j].yaw, new_pos, new_yaw);
             let segment = curve.sample(STEER_SAMPLES);
-            feasible(&curve, &segment, path, s0, v, ctx).then(|| {
-                let cost = nodes[j].cost + edge_cost(&segment, &curve, path, s0, v, ctx);
-                (j, cost, segment)
-            })
+            steer_cost(&curve, &segment, path, s0, v, ctx, [nodes[j].station, new_s])
+                .map(|ec| (j, nodes[j].cost + ec, segment))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let Some((parent_idx, cost, segment)) = best else {
@@ -366,22 +396,25 @@ fn try_extend(
         segment,
         warm_started: false,
     });
+    tree.insert(SpatialNode::new(new_pos, new_idx));
 
-    // rewire: reconnect nodes strictly ahead of new_pos through it when
-    // cheaper (ahead in station, so the reconnection stays a forward edge)
-    let rewire_candidates: Vec<usize> =
-        (0..nodes.len() - 1) // exclude new_idx itself
-            .filter(|&j| {
-                nodes[j].station > new_s && dist(nodes[j].pos, new_pos) < NEIGHBOR_RADIUS_M
-            })
-            .collect();
+    // rewire: reconnect the `K_NEIGHBORS` nearest vertices strictly ahead of
+    // new_pos through it when cheaper (ahead in station, so the reconnection
+    // stays a forward edge; the new node itself has station == new_s, so the
+    // `> new_s` filter excludes it even though it's now in the index).
+    let rewire_candidates: Vec<usize> = tree
+        .nearest_neighbor_iter_with_distance_2(&new_pos)
+        .take_while(|(_, d2)| *d2 <= radius2)
+        .filter_map(|(n, _)| (nodes[n.data].station > new_s).then_some(n.data))
+        .take(K_NEIGHBORS)
+        .collect();
     for j in rewire_candidates {
         let curve = CubicSteer::new(new_pos, new_yaw, nodes[j].pos, nodes[j].yaw);
         let segment = curve.sample(STEER_SAMPLES);
-        if !feasible(&curve, &segment, path, s0, v, ctx) {
+        let Some(ec) = steer_cost(&curve, &segment, path, s0, v, ctx, [new_s, nodes[j].station]) else {
             continue;
-        }
-        let rewired_cost = cost + edge_cost(&segment, &curve, path, s0, v, ctx);
+        };
+        let rewired_cost = cost + ec;
         if rewired_cost < nodes[j].cost {
             nodes[j].cost = rewired_cost;
             nodes[j].parent = Some(new_idx);
@@ -452,6 +485,10 @@ impl Planner for RrtStarPlanner {
             segment: vec![],
             warm_started: false,
         }];
+        // Spatial index over node positions, grown alongside `nodes` (root
+        // first). Every place a node is pushed also inserts it here.
+        let mut tree: Spatial = Spatial::new();
+        tree.insert(SpatialNode::new([ego.x, ego.y], 0));
 
         // Warm start: replay whatever part of last tick's winning path is
         // still ahead of the ego and still collision-free against this
@@ -481,10 +518,12 @@ impl Planner for RrtStarPlanner {
                 let yaw = wrap_angle(parent.yaw + dyaw);
                 let curve = CubicSteer::new(parent.pos, parent.yaw, p, yaw);
                 let segment = curve.sample(STEER_SAMPLES);
-                if !feasible(&curve, &segment, &path, s0, v, ctx) {
+                let Some(ec) =
+                    steer_cost(&curve, &segment, &path, s0, v, ctx, [parent.station, station])
+                else {
                     break; // stale from here on; random sampling takes over
-                }
-                let cost = parent.cost + edge_cost(&segment, &curve, &path, s0, v, ctx);
+                };
+                let cost = parent.cost + ec;
                 let idx = nodes.len();
                 nodes.push(Node {
                     pos: p,
@@ -495,6 +534,7 @@ impl Planner for RrtStarPlanner {
                     segment,
                     warm_started: true,
                 });
+                tree.insert(SpatialNode::new(p, idx));
                 parent_idx = idx;
             }
         });
@@ -535,7 +575,7 @@ impl Planner for RrtStarPlanner {
                     (20.0, 0.0),
                 ] {
                     let target = path.frenet_to_xy(a_s + station_offset, lateral);
-                    try_extend(&mut nodes, &path, s0, v, ctx, target);
+                    try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, target);
                 }
             }
         }
@@ -562,7 +602,7 @@ impl Planner for RrtStarPlanner {
                 GRID_LATERALS,
                 QMC_BUDGET,
             ) {
-                try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
+                try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, path.frenet_to_xy(s, d));
             }
         });
 
