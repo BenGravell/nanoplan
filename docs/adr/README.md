@@ -20,16 +20,20 @@ that supersedes the old one rather than editing history.
 | [0002](0002-metric-strategy-table.md) | Replace metric magic indices with a `METRICS` spec table | Strategy (table-driven) | Accepted |
 | [0003](0003-planner-spec-registry.md) | Collapse `PlannerKind`'s parallel `match`es into one `PlannerSpec` table | Factory Method (table-driven) | Accepted |
 | [0004](0004-scenario-source-strategy.md) | Unify the desktop/web scenario loaders behind a `ScenarioSource` trait | Strategy / Adapter | Accepted |
+| [0005](0005-shared-qmc-sampling-interface.md) | Share RRT*'s road-frame QMC sampling with the judo optimizers behind one `QuasiMonteCarlo` trait | Strategy / dependency inversion | Accepted |
 
-## Why these four
+## Why these five
 
-All four came out of a single design-patterns pass over the codebase
+The first four came out of a single design-patterns pass over the codebase
 ([refactoring.guru](https://refactoring.guru/design-patterns) as the
 reference catalog). The common thread: behavior that *belonged to* an
 abstraction was scattered across parallel arrays, synchronized `match`
 arms, or duplicated `cfg` blocks, so the compiler couldn't catch a
 desynchronized edit. Each ADR names the specific silent-failure mode the
-pattern closes.
+pattern closes. The fifth (0005) came out of porting judo's sampling
+optimizers: the same silent-failure lens applied to sampling code that
+would otherwise be copy-pasted between RRT* and the new planners, closed by
+making the shared QMC sequence a compile-time interface both name.
 
 Patterns deliberately **not** adopted (and why) are recorded at the bottom
 of the relevant ADR, so the same tempting-but-wrong ideas don't get

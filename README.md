@@ -2,7 +2,7 @@
 
 Ultra minimalist motion planner for car-like vehicles, written in Rust.
 
-Five planners share one kinematic model, one closed-loop simulator, and one
+Eight planners share one kinematic model, one closed-loop simulator, and one
 set of nuPlan-derived quality metrics, so they can be scrubbed side by side
 in an interactive [Bevy](https://bevy.org) viewer or swept over hundreds of
 scenarios from the command line.
@@ -39,7 +39,7 @@ planning, simulation, or scoring logic itself.
 
 | Component | README | What it owns |
 |---|---|---|
-| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, and the five planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP, RRT* |
+| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, the shared QMC sampler, and the eight planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP, RRT*, and the judo-derived predictive sampling, CEM, and MPPI |
 | Simulation | [src/simulation/README.md](src/simulation/README.md) | `State`/`Control`, the kinematic bicycle-free step, `Simulator`, and `simulate()`/`Rollout` |
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
@@ -66,11 +66,19 @@ A few more directories hold data rather than code:
 | Frenet lattice | EM/Apollo-style: sample a station×lateral grid, DP over layers | [src/planning/README.md#frenet-lattice](src/planning/README.md#frenet-lattice) |
 | PI²-DDP | Sampling-based DDP (Lefebvre & Crevecoeur), road-informed exploration | [src/planning/README.md#pi2-ddp](src/planning/README.md#pi2-ddp) |
 | RRT* | Rapidly-exploring random tree with rewiring; steers between poses with a cubic polynomial via differential flatness | [src/planning/README.md#rrt](src/planning/README.md#rrt) |
+| Predictive sampling (judo) | Fixed-sigma sampling around a nominal, take the best rollout | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
+| CEM (judo) | Cross-entropy method: refit an adaptive per-node Gaussian to the elite rollouts | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
+| MPPI (judo) | Model Predictive Path Integral: Boltzmann reward-weighted average of the rollouts | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
 
 ## Provenance
 
 - **PI²-DDP**: Lefebvre & Crevecoeur, "Path Integral Policy Improvement with
   Differential Dynamic Programming."
+- **Predictive sampling / CEM / MPPI**: ported from
+  [judo](https://github.com/rai-opensource/judo) (Robotics and AI Institute),
+  keeping its `Optimizer` sample/update interface and adapting the rollout to
+  nanoplan's shared cost, road-model base policy, and QMC sampler — see
+  [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo).
 - **Frenet lattice**: the EM-planner family (Apollo, and the lattice planners
   surveyed in the sampling-based-DDP literature).
 - **RRT***: Karaman & Frazzoli, "Sampling-based Algorithms for Optimal Motion

@@ -7,6 +7,8 @@ pub mod latency;
 pub mod lattice;
 pub mod pi2ddp;
 pub mod rrt_star;
+pub(crate) mod sampling;
+pub mod sampling_mpc;
 pub mod straight;
 
 pub use bezier_idm::BezierIdmPlanner;
@@ -15,6 +17,7 @@ pub use latency::{Latency, LatencyStats, SeamStats};
 pub use lattice::LatticePlanner;
 pub use pi2ddp::Pi2DdpPlanner;
 pub use rrt_star::RrtStarPlanner;
+pub use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub use straight::StraightPlanner;
 
 use crate::scenarios::Road;
@@ -71,6 +74,9 @@ pub enum PlannerKind {
     Lattice,
     Pi2Ddp,
     RrtStar,
+    PredictiveSampling,
+    Cem,
+    Mppi,
 }
 
 /// One planner, whole: the registry metadata behind a [`PlannerKind`]
@@ -88,7 +94,7 @@ pub struct PlannerSpec {
 }
 
 /// The planner registry, indexed by `PlannerKind as usize`.
-const SPECS: [PlannerSpec; 5] = [
+const SPECS: [PlannerSpec; 8] = [
     PlannerSpec {
         kind: PlannerKind::Straight,
         name: "straight (strawman)",
@@ -119,15 +125,36 @@ const SPECS: [PlannerSpec; 5] = [
         build: || Box::new(RrtStarPlanner::default()),
         has_diagnostics: true,
     },
+    PlannerSpec {
+        kind: PlannerKind::PredictiveSampling,
+        name: SamplingPlanner::<PredictiveSampling>::NAME,
+        build: || Box::new(SamplingPlanner::<PredictiveSampling>::default()),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Cem,
+        name: SamplingPlanner::<Cem>::NAME,
+        build: || Box::new(SamplingPlanner::<Cem>::default()),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Mppi,
+        name: SamplingPlanner::<Mppi>::NAME,
+        build: || Box::new(SamplingPlanner::<Mppi>::default()),
+        has_diagnostics: true,
+    },
 ];
 
 impl PlannerKind {
-    pub const ALL: [PlannerKind; 5] = [
+    pub const ALL: [PlannerKind; 8] = [
         PlannerKind::Straight,
         PlannerKind::BezierIdm,
         PlannerKind::Lattice,
         PlannerKind::Pi2Ddp,
         PlannerKind::RrtStar,
+        PlannerKind::PredictiveSampling,
+        PlannerKind::Cem,
+        PlannerKind::Mppi,
     ];
 
     /// This planner's registry row.

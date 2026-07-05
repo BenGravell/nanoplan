@@ -6,14 +6,16 @@ subdirectory per planner implementation.
 
 ```
 planning/
-├── mod.rs        Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
-├── latency.rs    Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
-├── cost.rs       shared trajectory-cost function — see "The shared cost function" below
-├── straight/     strawman: zero control, always
-├── bezier_idm/   cubic Bezier back to the centerline + IDM speed
-├── lattice/      Frenet lattice, sampled grid + dynamic programming
-├── pi2ddp/       sampling-based DDP (PI²-DDP)
-└── rrt_star/     RRT*, cubic-polynomial (differential-flatness) steering
+├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
+├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
+├── cost.rs        shared trajectory-cost function — see "The shared cost function" below
+├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
+├── straight/      strawman: zero control, always
+├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
+├── lattice/       Frenet lattice, sampled grid + dynamic programming
+├── pi2ddp/        sampling-based DDP (PI²-DDP)
+├── rrt_star/      RRT*, cubic-polynomial (differential-flatness) steering
+└── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
 ```
 
 ## The `Planner` trait
@@ -179,17 +181,18 @@ single-call unit tests, because a single `plan()` call proves much less than
 
 ## The shared cost function
 
-The three search-based planners — the Frenet lattice, PI²-DDP, and RRT* —
-all find a trajectory by sampling candidates and comparing a scalar cost;
+The search-based planners — the Frenet lattice, PI²-DDP, RRT*, and the three
+judo-derived sampling-MPC planners (predictive sampling, CEM, MPPI) — all
+find a trajectory by sampling candidates and comparing a scalar cost;
 `bezier_idm` and `straight` don't (see their own sections below for why
 they're out of scope here). Before this module existed, each planner priced
 a candidate with its own inline formula, hand-tuned independently, with its
 own actor-prediction code, its own collision radius, and its own idea of
-"off the road" — three different, undocumented definitions of "good."
+"off the road" — several different, undocumented definitions of "good."
 
 `cost.rs` factors the metrics-motivated part of that formula into one
-function, `point_cost(sample, target_speed, actors)`, called by all three
-planners under the same seam name, `"cost"` (see "Latency diagnostics"
+function, `point_cost(sample, target_speed, actors)`, called by every one of
+them under the same seam name, `"cost"` (see "Latency diagnostics"
 above). It's deliberately grounded in the same quantities
 [`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
 than inventing new ones:
@@ -254,6 +257,140 @@ not what counts as a good outcome, and that no metric measures:
   them, but PI²-DDP's continuous search has no hard accept/reject step at
   all — these soft terms are its *only* safety margin, so they're weighted
   to bite hard rather than softly.
+
+## Shared QMC sampling
+
+`sampling.rs` is the single owner of the quasi-Monte-Carlo low-discrepancy
+sampling every sampling planner draws from — the deterministic alternative
+to a pseudo-random `Rng` that RRT* already relied on, now shared with the
+judo-derived planners. Two things live here:
+
+- **The QMC sequence, behind one trait.** `van_der_corput` (radical inverse
+  in a prime base) is the building block; the `QuasiMonteCarlo` trait, with
+  its single implementor `Halton`, is the *interface* every planner names.
+  There is exactly one implementor, so "the whole codebase samples from one
+  QMC construction" is a fact the compiler checks — a planner wanting a
+  different sequence would have to name a different type, a compile error at
+  the call site, not a silent drift between two hand-maintained
+  radical-inverse loops.
+- **The hybrid road-frame sampler.** `road_frame_samples::<Q>` lays down a
+  fixed road-geometry grid over the `(station, lateral)` Frenet box (in
+  ascending-station order) and then a Halton QMC pass filling its gaps — the
+  hybrid RRT* grows its tree from, now generic over the same
+  `Q: QuasiMonteCarlo` so the road model and the QMC fill are shared, not
+  copied.
+
+**Parity is enforced at the interface, not by convention.** RRT* calls
+`road_frame_samples::<Halton>` for its Frenet targets; the judo optimizers
+call `qmc_normals::<Halton>` (Halton coordinates pushed through an
+inverse-normal-CDF, `inv_normal_cdf`) for their Gaussian control-knot noise.
+Both go through the same `QuasiMonteCarlo` trait, so the parity is
+*structural* (a type-level share, checked at compile time). On top of that,
+RRT*'s `rrt_targets_match_shared_sampler` test pins the *numeric* parity —
+that lifting its old inline loop into the shared function changed no sample.
+Because the sequence is a pure function of the sample index, every planner
+that samples through this module is a pure function of the ego state and
+scenario (`plan_is_a_pure_function_of_state`), the property that lets a
+closed-loop rollout inherit any single plan's safety margin — PI²-DDP, which
+keeps a real `Rng` for its rollouts, is now the lone exception.
+
+## Sampling MPC (judo)
+
+`sampling_mpc/` — `SamplingPlanner<PredictiveSampling>`,
+`SamplingPlanner<Cem>`, `SamplingPlanner<Mppi>`
+
+A port of the three sampling-based optimizers from
+[**judo**](https://github.com/rai-opensource/judo)
+(`judo/optimizers/{ps,cem,mppi}.py`), kept structurally faithful to judo's
+own abstraction and then fitted into the nanoplan framework. The layout
+mirrors judo's:
+
+```
+sampling_mpc/
+├── mod.rs   Optimizer trait + OptimizerConfig (judo base.py), SamplingPlanner<O> driver
+├── ps.rs    predictive sampling (judo ps.py)
+├── cem.rs   cross-entropy method (judo cem.py)
+└── mppi.rs  MPPI (judo mppi.py)
+```
+
+**The judo interface, verbatim.** An `Optimizer` is exactly judo's two-method
+strategy over control *knots* — `num_nodes` control points of dimension
+`nu = 2` (`[accel, curvature]`):
+
+```rust
+fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize) -> Vec<Vec<Knot>>;
+fn update_nominal_knots(&mut self, sampled: &[Vec<Knot>], rewards: &[f64]) -> Vec<Knot>;
+```
+
+The three optimizers are *only* these two methods, matching judo line for
+line:
+
+- **Predictive sampling** (`ps.rs`): `sample` = nominal plus fixed-sigma
+  noise (first rollout the un-noised nominal); `update` = the single
+  best-scoring sample (`argmax` reward).
+- **CEM** (`cem.rs`): `sample` = nominal plus an *adaptive per-node* sigma;
+  `update` = the elite (top-`num_elites`) mean, with sigma refit to the
+  elite std (clipped to `[sigma_min, sigma_max]`), so the distribution
+  contracts around whatever keeps scoring well.
+- **MPPI** (`mppi.rs`): `sample` like predictive sampling; `update` = a
+  Boltzmann reward-weighted average of *all* rollouts,
+  `exp(-(cost - min)/temperature)` normalized. The temperature is
+  interpreted relative to the rollout cost *spread* (the same min/max
+  normalization PI²-DDP applies to its eq.-12 weighting), so it stays a
+  scale-free knob rather than tied to a scenario's absolute cost magnitude.
+
+**Everything else is `SamplingPlanner<O>`, the judo→nanoplan adapter.** judo
+keeps rollout and reward outside the optimizer; here the generic driver
+supplies them the nanoplan way, so each optimizer stays a pure strategy:
+
+- **Knots are deviations from a road-model base policy.** The key
+  adaptation. judo's knots *are* the raw controls, applied open-loop over
+  the horizon — fine for its short-horizon, feedback-stabilized tasks, but a
+  car's lateral dynamics integrate curvature twice, so raw open-loop knots
+  diverge metres off-road over a 10 s horizon and every candidate scores as
+  garbage (the symptom that drove this design: a nominal rollout ending
+  ~20 m off-lane). Instead each interpolated knot is a *deviation* added to a
+  **critically-damped PD lane-keeping + speed-hold base policy** evaluated on
+  the current rollout state — genuine feedback, so every rollout stays on the
+  road and the QMC explores real maneuvers (an obstacle swerve) instead of
+  drift. This mirrors PI²-DDP rolling out with its feedback gains rather than
+  raw nominal controls, and *is* the "hybrid road model" half of the
+  sampling. The nominal starts at zero deviation (the judo-typical zero
+  nominal, here meaning "just the base policy").
+- **Knots → controls → rollout.** The `num_nodes` deviation knots are spread
+  over the `PLANNING_HORIZON_S` horizon and linearly interpolated
+  (`control_at`), added to the base policy, clamped to physical actuation
+  limits, and rolled out through the shared kinematic `step`.
+- **The shared cost function.** Each rolled-out state is priced by
+  [`cost::point_cost`](#the-shared-cost-function), with a hard violation made
+  finite (`cost::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward
+  aggregation can't divide by an infinity — exactly PI²-DDP's reasoning. On
+  top sit three planner-specific terms, each echoing one PI²-DDP keeps: an
+  undiscounted speed-tracking term (the shared cost prices overspeed only
+  lightly, which lets MPPI's reward-weighted *average* drift the speed below
+  target), a control-effort penalty on the deviation (PI²-DDP's
+  "linear-solvability" `½uᵀR⁻¹u`, pulling the deviation back toward the base
+  policy unless the cost pays for departing), and a centerline pull.
+- **The shared QMC sampler.** The knot noise is drawn from
+  [`sampling::qmc_normals`](#shared-qmc-sampling), the *same* low-discrepancy
+  sequence RRT* samples targets from — so these planners are deterministic
+  pure functions of the ego state (`*_is_a_pure_function_of_state`), unlike
+  judo's pseudo-random `np.random.randn`.
+- **Warm start.** The winning deviations are carried to the next tick when
+  the ego followed the plan, so each 0.1 s replan refines the last.
+
+Each `plan()` runs `iterations` (default 4, echoing PI²-DDP's `GENERATIONS`)
+sample→rollout→update passes — a nanoplan adaptation of judo's controller
+loop, which runs one optimizer step per control cycle.
+
+**Seams**: `route` (build the `Path`), `warm_start` (reuse or road-informed
+re-init), `optimize` (the sample/rollout/update iterations) with `cost` (the
+shared cost function, once per rolled-out state) nested inside, `extract`
+(sample the winning nominal into `Vec<Control>`).
+
+**Diagnostics**: the final iteration's `num_rollouts` sampled state
+sequences, each recorded both as a `trajectory` and flattened into `points`,
+mirroring PI²-DDP.
 
 ---
 
