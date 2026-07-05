@@ -1,20 +1,38 @@
 # `viewer`
 
 The interactive viewer binary: an egui control panel over a Bevy 2D scene
-that scrubs through a simulated scenario and previews the planner's future
-plan. `src/main.rs` is a two-line entry point (`mod viewer; fn main() {
+with two modes — **scenarios** (scrub through a simulated scenario and
+preview the planner's future plan) and **open world** (a realtime
+interactive sandbox over [`nanoplan::world`](../world/README.md)).
+`src/main.rs` is a two-line entry point (`mod viewer; fn main() {
 viewer::run(); }`) — everything else lives here.
 
 ```
 viewer/
-├── mod.rs        run(), shared resources (Scenarios, UiState) and constants
+├── mod.rs        run(), Mode, shared resources (Scenarios, UiState) and constants
 ├── scenarios.rs  where scenarios come from: built-ins, bundled JSON, CLI args
 ├── rollouts.rs   RolloutCache and the chunked async simulation job
 ├── loader.rs     ScenarioSource trait + Loader resource; desktop path-loading source
-├── ui.rs         the egui control panel system
-├── draw.rs       gizmo rendering: map, cars, future-preview overlay
+├── ui.rs         the egui control panel system (mode tabs, scrub + live panels)
+├── draw.rs       gizmo rendering: map, cars, future-preview overlay (scrub mode)
+├── live.rs       open-world mode: realtime pacing, click-to-goal input, map/traffic drawing
 └── web.rs        wasm only — fetches the startup bundle; web file-picker ScenarioSource
 ```
+
+## Open world mode
+
+All open-world logic — street map generation, routing, traffic, the
+realtime `LiveWorld::tick` loop — lives in
+[`nanoplan::world`](../world/README.md), not here. `live.rs` is only the
+Bevy plumbing: a fixed-timestep accumulator that ticks the world at `DT`
+(capped at `MAX_TICKS_PER_FRAME` per frame, so a slower-than-realtime
+planner lags gracefully instead of freezing the UI), mouse handling (left
+click → `set_goal`, guarded by `UiState::pointer_over_ui` so clicks on the
+egui panel don't place goals; scroll → zoom), and gizmo drawing of the
+street network, route, goal, live plan, and cars. `Live` is a `NonSend`
+resource for the same reason `ActiveJob` is: `LiveWorld` holds a
+`Box<dyn Planner>`. Both modes' systems run every frame and early-return
+on the inactive mode's state (`UiState::mode`).
 
 ## Why simulation is chunked
 

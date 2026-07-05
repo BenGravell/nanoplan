@@ -9,7 +9,15 @@ cargo run
 ```
 
 opens an interactive window with a control panel in the top-left corner and
-a top-down view of the scenario.
+a top-down view of the scenario. The panel's two tabs switch between the
+viewer's modes:
+
+- **scenarios** — scrub through precomputed 20-second rollouts of the
+  bundled/loaded scenarios (everything below in [Controls](#controls));
+- **open world** — a realtime interactive sandbox: click anywhere on a
+  procedurally generated street map and the ego routes there, replanning
+  every tick while IDM traffic wanders around it (see
+  [Open world mode](#open-world-mode)).
 
 ### Controls
 
@@ -48,6 +56,36 @@ for what a seam is). `mean [ms]` and `max [ms]` are computed across every
 `total` is present for every planner; the rest vary — the strawman planner
 has only `total`, PI²-DDP shows `route`, `warm_start`, `rollouts`, and
 `policy_update`.
+
+### Open world mode
+
+The **open world** tab runs the planner and simulator continuously in
+realtime (judo/treetop style) instead of scrubbing a precomputed rollout:
+every 100 ms tick, the traffic actors step, the selected planner replans
+from the live ego state, and the first planned control is applied. The pink
+line is the plan *that was just executed* — watch it re-shape as traffic
+moves.
+
+- **Click** anywhere on the map to place the goal (green rings). The route
+  (dim green line) snaps to the street network, prefers not to U-turn, and
+  can be re-placed at any time, including mid-drive. The ego tapers its
+  speed to arrive stopped; with no goal it brakes and waits (faint ring).
+- **Scroll** to zoom.
+- **planner** switches the live planner mid-drive (fresh instance). It
+  defaults to Bezier + IDM; the sampling MPC planners (predictive sampling
+  / CEM / MPPI) are the most fun to watch replan. A planner slower than
+  realtime (PI²-DDP) doesn't freeze the UI — the world just advances slower
+  than wall clock (see **plan latency** in the readout).
+- **cruise speed** sets the route's target speed, live.
+- **pause** freezes the world; **new map** regenerates the street network
+  with a fresh seed; **clear goal** drops the current goal.
+
+The map is a jittered grid of two-way streets with some blocks merged,
+deterministic per seed. The gray cars are basic smart actors: they wander
+the network in their own right-hand lane, hold speed with the same IDM the
+Bezier planner uses, queue behind slower traffic (including the ego), and
+brake for anything crossing their bumper. See
+[src/world/README.md](../src/world/README.md) for how it all works.
 
 ### Scenario sources
 
