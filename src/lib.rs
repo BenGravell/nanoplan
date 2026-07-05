@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod planning;
 pub mod scenarios;
 pub mod simulation;
+pub mod tuning;
 
 pub use metrics::Metrics;
 pub use planning::{

@@ -9,6 +9,15 @@
 //! metrics about what "good" means would be optimizing for the wrong
 //! thing.
 //!
+//! The cost splits into two parts with different standing. Hard rules —
+//! collision and leaving the drivable area — are infinitely bad by fiat
+//! ([`features`] returns `None`, [`point_cost`] returns `f64::INFINITY`);
+//! no data ever adjusts them. Everything else is a linear combination
+//! [`WEIGHTS`]` · `[`features`], and the weights are learnable: the
+//! [`crate::tuning`] module re-fits them to expert nuPlan trajectories with
+//! maximum-entropy IRL, on the assumption that the human demonstrations were
+//! drawn from a well-tuned cost of exactly this form.
+//!
 //! Every planner in this codebase finds trajectories by sampling candidates
 //! and comparing their scalar cost, never by differentiating cost or
 //! dynamics — a deliberate design choice. This module's interface enforces
@@ -72,29 +81,54 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
     }
 }
 
-/// Cost of one sample against the road and every actor's predicted
-/// position at `sample.t` (constant velocity and heading — `metrics::project`,
-/// the same model `metrics::ttc` uses). Returns `f64::INFINITY` for a hard
-/// violation — collision, or off the drivable area — that a planner should
-/// reject outright rather than merely disfavor; see [`HARD_VIOLATION_PENALTY`]
-/// for callers that need a finite number instead.
-pub(crate) fn point_cost(sample: &Sample, target_speed: f64, actors: &[State]) -> f64 {
+/// Number of soft cost features; the length of [`WEIGHTS`], [`FEATURE_NAMES`],
+/// and the array [`features`] returns.
+pub(crate) const N_FEATURES: usize = 6;
+
+/// Display names of the soft features, index-aligned with [`WEIGHTS`].
+pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
+    "actor_proximity",
+    "road_edge",
+    "overspeed",
+    "heading_err",
+    "lon_accel_over",
+    "lat_accel_over",
+];
+
+/// Weights of the soft features: `point_cost = WEIGHTS · features`. Hand-set
+/// originally; `cargo run --release --bin tune` re-fits them to expert nuPlan
+/// trajectories with maximum-entropy IRL (see [`crate::tuning`]) and prints a
+/// replacement for this line. The hard collision/off-road rejection is *not*
+/// in here — it is a fixed rule of [`features`], never a learned weight.
+pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0];
+
+/// Soft feature vector of one sample, or `None` for a hard violation —
+/// collision with an actor's predicted position, or off the drivable area —
+/// which is infinitely bad by fiat, not by any weight. Actor prediction is
+/// constant velocity and heading (`metrics::project`, the same model
+/// `metrics::ttc` uses). Each feature is already squared/hinged so the cost
+/// is *linear* in [`WEIGHTS`] — the form the IRL tuner learns.
+pub(crate) fn features(
+    sample: &Sample,
+    target_speed: f64,
+    actors: &[State],
+) -> Option<[f64; N_FEATURES]> {
     if sample.lateral.abs() > drivable_area::ROAD_HALF_WIDTH_M {
-        return f64::INFINITY;
+        return None;
     }
     let mut proximity = 0.0;
     for a in actors {
         let predicted = crate::metrics::project(a, sample.t);
         let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
         if gap < COLLISION_DIAMETER_M {
-            return f64::INFINITY;
+            return None;
         }
         // smooth inverse-square repulsion inside the safe zone, so a search
         // that samples near an actor without touching it still prefers
         // more clearance. Weighted heavily for the same reason as the
         // road-edge hinge below: the lattice and RRT* both hard-reject a
-        // colliding candidate outright (via the `f64::INFINITY` above) and
-        // never select one, so this soft term barely matters to them — but
+        // colliding candidate outright (via the `None` above) and never
+        // select one, so this soft term barely matters to them — but
         // PI²-DDP's continuous, sampling-based search has no such hard
         // accept/reject step, so a weak gradient here is its only actor-
         // avoidance margin.
@@ -130,12 +164,27 @@ pub(crate) fn point_cost(sample: &Sample, target_speed: f64, actors: &[State]) -
     let lat_over =
         (lat_accel.abs() - comfort::MAX_ABS_LAT_ACCEL).max(0.0) / comfort::MAX_ABS_LAT_ACCEL;
 
-    200.0 * proximity
-        + 200.0 * edge * edge
-        + overspeed * overspeed
-        + 2.0 * sample.heading_err * sample.heading_err
-        + lon_over * lon_over
-        + lat_over * lat_over
+    Some([
+        proximity,
+        edge * edge,
+        overspeed * overspeed,
+        sample.heading_err * sample.heading_err,
+        lon_over * lon_over,
+        lat_over * lat_over,
+    ])
+}
+
+/// Cost of one sample against the road and every actor's predicted position
+/// at `sample.t`: [`WEIGHTS`] dotted with [`features`]. Returns
+/// `f64::INFINITY` for a hard violation — collision, or off the drivable
+/// area — that a planner should reject outright rather than merely disfavor;
+/// see [`HARD_VIOLATION_PENALTY`] for callers that need a finite number
+/// instead.
+pub(crate) fn point_cost(sample: &Sample, target_speed: f64, actors: &[State]) -> f64 {
+    match features(sample, target_speed, actors) {
+        None => f64::INFINITY,
+        Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +222,29 @@ mod tests {
         let c = point_cost(&s, 10.0, &[]);
         assert!(c.is_finite());
         assert!(c < 1.0, "cost {c}");
+    }
+
+    #[test]
+    fn point_cost_is_weights_dot_features() {
+        // pins the linear form the IRL tuner relies on: every finite cost is
+        // exactly WEIGHTS · features, with every soft term engaged
+        let s = Sample {
+            xy: [0.0, 0.0],
+            lateral: 4.5, // inside the road, past the edge hinge
+            heading_err: 0.3,
+            speed: 14.0,    // over a 10 m/s target
+            curvature: 0.1, // lat accel 19.6, past the comfort bound
+            accel: 4.0,     // past MAX_LON_ACCEL
+            t: 1.0,
+        };
+        let actor = State {
+            x: 5.0,
+            ..Default::default()
+        };
+        let f = features(&s, 10.0, &[actor]).unwrap();
+        assert!(f.iter().all(|&x| x > 0.0), "features {f:?}");
+        let dot: f64 = WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum();
+        assert_eq!(point_cost(&s, 10.0, &[actor]), dot);
     }
 
     #[test]

@@ -26,7 +26,8 @@ src/
 ├── planning/     Planner trait + Context + one directory per planner
 ├── simulation/   kinematic model, closed-loop Simulator, simulate()/Rollout
 ├── metrics/      nuPlan closed-loop quality metrics, one directory per metric
-└── scenarios/    Scenario/Actor/Path types, JSON loading, synthetic generation
+├── scenarios/    Scenario/Actor/Path types, JSON loading, synthetic generation
+└── tuning/       MaxEnt IRL cost-weight autotuner over expert nuPlan trajectories
 ```
 
 Every planner implements the same `Planner` trait and reads the same
@@ -43,6 +44,7 @@ planning, simulation, or scoring logic itself.
 | Simulation | [src/simulation/README.md](src/simulation/README.md) | `State`/`Control`, the kinematic bicycle-free step, `Simulator`, and `simulate()`/`Rollout` |
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
+| Tuning | [src/tuning/README.md](src/tuning/README.md) | Maximum-entropy IRL autotuning of the shared cost function's soft weights from expert human trajectories (the `tune` binary); collision and off-road stay infinite cost by fiat |
 
 A few more directories hold data rather than code:
 
@@ -87,6 +89,11 @@ A few more directories hold data rather than code:
   differential flatness of the unicycle/bicycle model's flat outputs
   `(x, y)`, a standard technique in nonholonomic motion planning.
 - **IDM**: the Intelligent Driver Model, standard car-following model.
+- **DriveIRL**: Phan-Minh et al., "Driving in Real Life with Inverse
+  Reinforcement Learning" ([arXiv:2206.03004](https://arxiv.org/abs/2206.03004))
+  — the maximum-entropy IRL recipe (lattice candidates, safety filter, linear
+  reward over trajectory features) behind the cost-weight autotuner in
+  `src/tuning/`.
 - **nuPlan**: scenario schema, vehicle parameters, and closed-loop metric
   definitions vendored from [nuplan-devkit](https://github.com/motional/nuplan-devkit)
   (Apache-2.0) — see [`scenarios/nuplan/README.md`](scenarios/nuplan/README.md).

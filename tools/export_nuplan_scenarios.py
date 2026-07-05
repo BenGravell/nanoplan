@@ -13,6 +13,9 @@ runner and viewer can load:
     trajectory over the horizon (replayed in simulation; nanoplan
     extrapolates constant velocity past the log's end)
   - target_speed: the expert's 85th-percentile speed over the horizon
+  - expert: the expert (human) ego trajectory over the horizon, downsampled
+    to the 10 Hz simulation rate — the demonstration data the cost-weight
+    autotuner (cargo run --release --bin tune) learns from
 
 Usage:
   python3 tools/export_nuplan_scenarios.py LOG.db OUT_DIR \
@@ -55,7 +58,8 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
             break
         t0, t1 = tag["t0"], tag["t0"] + int(horizon_s * 1e6)
         ego_rows = db.execute(
-            """SELECT ep.x, ep.y, ep.qw, ep.qx, ep.qy, ep.qz, ep.vx, ep.vy
+            """SELECT lp.timestamp AS ts, ep.x, ep.y, ep.qw, ep.qx, ep.qy, ep.qz,
+                      ep.vx, ep.vy
                FROM lidar_pc lp JOIN ego_pose ep ON lp.ego_pose_token = ep.token
                WHERE lp.timestamp BETWEEN ? AND ? ORDER BY lp.timestamp""",
             (t0, t1),
@@ -83,6 +87,23 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
             "yaw": quaternion_yaw(first["qw"], first["qx"], first["qy"], first["qz"]),
             "speed": math.hypot(first["vx"], first["vy"]),
         }
+
+        # the expert (human) ego trajectory itself, downsampled to 10 Hz like
+        # the actor trajectories: the demonstration the IRL tuner learns from
+        expert = []
+        for r in ego_rows:
+            t = (r["ts"] - t0) / 1e6
+            if expert and t - expert[-1]["t"] < 0.099:
+                continue
+            expert.append(
+                {
+                    "t": round(t, 3),
+                    "x": round(r["x"] - ox, 3),
+                    "y": round(r["y"] - oy, 3),
+                    "yaw": round(quaternion_yaw(r["qw"], r["qx"], r["qy"], r["qz"]), 4),
+                    "speed": round(math.hypot(r["vx"], r["vy"]), 3),
+                }
+            )
 
         # vehicles present at the anchor frame, with their logged trajectories
         track_tokens = db.execute(
@@ -133,6 +154,7 @@ def export(db_path, out_dir, horizon_s, max_scenarios, types):
             "actors": actors,
             "centerline": centerline,
             "target_speed": round(target_speed, 2),
+            "expert": expert,
         }
         path = out / f"{scenario['name']}.json"
         path.write_text(json.dumps(scenario, indent=1))

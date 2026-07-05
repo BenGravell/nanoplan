@@ -30,6 +30,7 @@ pub struct Scenario {
     pub centerline: Vec<[f64; 2]>,
     pub target_speed: f64,        // defaults to 10.0
     pub map: MapData,             // defaults to MapData::default()
+    pub expert: Vec<Waypoint>,    // defaults to empty
 }
 ```
 
@@ -76,6 +77,7 @@ map data (this is a trimmed version of [`scenarios/json/braking_lead.json`](../.
 | `centerline` | `Vec<[f64; 2]>` | required | Polyline of `[x, y]` points describing the lane the ego should follow. At least 2 points. Order matters — arc length increases along it. |
 | `target_speed` | `f64` | `10.0` | Desired cruise speed (m/s), used by planners' speed control and by the [`progress`](../metrics/README.md) and [`speed_limit`](../metrics/README.md) metrics as the reference speed limit. |
 | `map` | `MapData` | see below | Cosmetic/road-geometry data — see [MapData](#mapdata). |
+| `expert` | `Vec<Waypoint>` | `[]` | The expert (human) ego trajectory logged over the same horizon, when the scenario comes from a real log. Not used in simulation — the ego is planned, not replayed — but it is the demonstration data the cost-weight autotuner learns from (see [src/tuning/README.md](../tuning/README.md)). |
 
 ### `Actor`
 
@@ -309,6 +311,7 @@ converts nuPlan log rows into this JSON format. What maps to what, and why:
 | `ego` | The ego pose/velocity at the tagged scenario's anchor frame | Direct mapping; yaw comes from the ego pose quaternion. |
 | `actors[].init` / `.trajectory` | Every `vehicle`-category tracked box present at the anchor frame, followed across the horizon | Real logged trajectories, not scripted — this is the whole point of replay (see [above](#trajectory-replay)). Downsampled to the simulation's 10 Hz tick rate. |
 | `target_speed` | 85th percentile of the expert's speed over the horizon | A single scalar target; nuPlan's actual speed limit isn't in the log database either, so the expert's own typical cruising speed stands in. |
+| `expert` | The expert ego trajectory over the horizon, downsampled to the 10 Hz simulation rate | The human demonstration itself, kept alongside the derived `centerline`/`target_speed` so the cost-weight autotuner ([src/tuning/README.md](../tuning/README.md)) can learn from what the expert actually did, not just the route they took. |
 | coordinates (`ego`, `centerline`, actor positions) | Translated to a local origin at the ego's anchor pose | nuPlan logs use global map coordinates (hundreds of kilometers from an arbitrary map origin); leaving them un-translated would put every position outside `f32` precision the moment it hits the viewer's Bevy transforms, causing visible jitter. |
 
 The exporter is written strictly against the vendored schema doc and has

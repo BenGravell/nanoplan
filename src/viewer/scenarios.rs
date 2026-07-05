@@ -64,6 +64,7 @@ fn scenarios() -> Vec<Scenario> {
         centerline,
         target_speed: 10.0,
         map,
+        expert: vec![],
     };
     vec![
         scenario(
