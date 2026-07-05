@@ -6,7 +6,8 @@ use crate::scenarios::Path;
 use crate::simulation::{Control, State};
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
-fn idm_accel(v: f64, target: f64, lead: Option<(f64, f64)>) -> f64 {
+/// Also drives the open-world traffic actors ([`crate::world`]).
+pub(crate) fn idm_accel(v: f64, target: f64, lead: Option<(f64, f64)>) -> f64 {
     const HEADWAY_S: f64 = 1.5;
     const MAX_ACCEL: f64 = 1.5;
     const COMFORT_DECEL: f64 = 2.0;

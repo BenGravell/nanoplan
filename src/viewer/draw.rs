@@ -7,12 +7,12 @@ use nanoplan::scenarios::Road;
 use nanoplan::{Control, Path, Scenario, State, step};
 
 use super::rollouts::RolloutCache;
-use super::{DT, Scenarios, UiState};
+use super::{DT, Mode, Scenarios, UiState};
 
-const PX_PER_M: f32 = 6.0;
+pub(crate) const PX_PER_M: f32 = 6.0;
 /// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
 const CAR_SIZE_M: Vec2 = Vec2::new(5.176, 2.297);
-const ACCENT: Color = Color::srgb(1.0, 0.25, 0.85);
+pub(crate) const ACCENT: Color = Color::srgb(1.0, 0.25, 0.85);
 const DIAG_POINT: Color = Color::srgb(0.95, 0.85, 0.2);
 const DIAG_TRAJECTORY: Color = Color::srgb(0.2, 0.85, 0.95);
 
@@ -41,11 +41,11 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
         .collect()
 }
 
-fn px(s: &State) -> Vec2 {
+pub(crate) fn px(s: &State) -> Vec2 {
     Vec2::new(s.x as f32, s.y as f32) * PX_PER_M
 }
 
-fn ppx(p: [f64; 2]) -> Vec2 {
+pub(crate) fn ppx(p: [f64; 2]) -> Vec2 {
     Vec2::new(p[0] as f32, p[1] as f32) * PX_PER_M
 }
 
@@ -125,7 +125,7 @@ fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
     gizmos.circle_2d(goal, 0.5 * PX_PER_M, green);
 }
 
-fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
+pub(crate) fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
     let iso = Isometry2d::new(px(s), Rot2::radians(s.yaw as f32));
     gizmos.rect_2d(iso, CAR_SIZE_M * PX_PER_M, color);
     // heading tick from center to front bumper
@@ -140,6 +140,11 @@ pub(crate) fn draw(
     cache: Res<RolloutCache>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
 ) {
+    if state.mode != Mode::Scrub {
+        return;
+    }
+    // undo any open-world zoom; scrub mode draws at fixed scale
+    camera.scale = Vec3::ONE;
     let sc = &scenes.0[state.scenario];
     draw_map(&mut gizmos, sc);
 
