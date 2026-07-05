@@ -681,10 +681,12 @@ each time; since the simulator only ever executes one control per plan, a
 closed-loop trajectory stitched from many such plans doesn't inherit any
 single one's safety margin — the exact failure the `swerves_around_stopped_obstacle`
 test caught (realized clearance well under any individual plan's own
-`COLLISION_MARGIN_M`). Goal selection then *prefers* a warm-started node
-over a fresh one unless the fresh one makes meaningfully more progress (more
-than one `PROGRESS_TOLERANCE_M` bucket), so a good detour, once found, isn't
-abandoned for a marginally-cheaper alternative next tick.
+`COLLISION_MARGIN_M`). Goal selection then *continues* a warm-started node —
+takes its deepest node directly — as long as the replay still reaches within
+`WARM_VIABLE_BAND_M` of the furthest progress any leaf makes, so a good
+detour, once found, isn't abandoned for a marginally-cheaper alternative next
+tick. (This band replaced an older one-`PROGRESS_TOLERANCE_M`-bucket margin
+that the per-tick progress jitter kept crossing.)
 
 **Deterministic bypass seeding is what makes a good detour reliably
 *findable* in the first place.** Before the grid/Halton loop runs, every
@@ -713,12 +715,29 @@ lateral-offset pull, adding the shared cost per sampled point on top;
 curvature comes from `CubicSteer::curvature`, a closed-form fact about the
 already-fixed candidate curve, not a search gradient.
 
-**Progress, not raw distance, decides the goal**, bucketed to
-`PROGRESS_TOLERANCE_M` rather than compared exactly: without bucketing, a
-node a hair's-breadth further along but squeezing past an obstacle would beat
-a node a few centimeters short but giving it a much wider berth, every
-single time, since station is compared before cost (which includes an
-obstacle-proximity term) ever gets a say.
+**Effective progress — not raw distance, and biased toward the side already
+committed to — decides the goal.** Ranking on raw station bucketed to
+`PROGRESS_TOLERANCE_M` (rather than compared exactly) is most of it: without
+bucketing, a node a hair's-breadth further along but squeezing past an
+obstacle would beat a node a few centimeters short but giving it a much wider
+berth, every single time, since station is compared before cost (which
+includes an obstacle-proximity term) ever gets a say. But raw progress alone
+still let a *fresh* corner-cutter on the opposite side of an obstacle steal
+the goal from the smooth continuing detour whenever it reached a hair further
+— a left detour and its mirror-image right reach near-identical progress at
+near-identical cost, so which one won was effectively a coin flip that landed
+differently each tick and the ego chattered between the two. So each node
+also carries `peak_lateral`, the furthest-out *signed* offset along its path
+(which side it swings to and how far), and the goal ranks on **effective
+progress**: station minus `CONTINUITY_WEIGHT · (peak_lateral −
+committed_bias)²`, where `committed_bias` is an EMA of the executing plan's
+side. A path on the wrong side loses a double-digit-metre chunk of effective
+progress — several buckets — so it can't win by reaching marginally further,
+while on an open or gently curved lane every path has `peak_lateral ≈ 0` and
+the term is inert. Tuning `CONTINUITY_WEIGHT` against the synthetic batch,
+`0.15` both cut realized lateral-velocity reversals (151→128 over 40
+scenarios, worst 15→13) and nudged mean score up (0.5549→0.5761), where a
+heavier `0.3` started trading score away.
 
 **Seams**: `route` (build the `Path`), `warm_start` (custom — replaying the
 previous winning path), `optimize` (the grid-plus-Halton tree-growing
