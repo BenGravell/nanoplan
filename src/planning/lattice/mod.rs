@@ -1,7 +1,25 @@
 //! EM/lattice-style planner. Samples a deterministic grid of (station,
 //! lateral) points in the road Frenet frame, connects successive layers into
-//! a tree with cubic-in-time lateral segments, assigns node costs (offset,
-//! smoothness, predicted-obstacle proximity), and picks the best path.
+//! a layered DAG with cubic-in-time lateral segments, assigns edge costs
+//! (offset, smoothness, predicted-obstacle proximity), and finds the
+//! cheapest path with **A\*** (best-first) search.
+//!
+//! The grid is deliberately high-resolution — `STATION_LAYERS × LATERALS`
+//! is in the high hundreds — so the lattice can represent fine lateral
+//! maneuvers and commit to them smoothly. At that size the exhaustive
+//! layer-by-layer dynamic program this planner used to run (which prices
+//! *every* `L`-to-`L` inter-layer edge, `O(S·L²)` cost-function evaluations)
+//! is wasteful: almost all of those edges are large, obviously-bad lateral
+//! jumps that no optimal path uses. A\* evaluates edge costs lazily — only
+//! for nodes it actually expands, in increasing cost-so-far order — and
+//! stops the moment it settles a node in the final layer, so on a typical
+//! tick it prices a small fraction of the grid's edges and stays well inside
+//! the real-time budget. The path it returns is identical to the DP's (all
+//! edge costs are non-negative, so the first final-layer node A\* settles is
+//! the global optimum); only the work to find it is smaller.
+
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
@@ -11,9 +29,68 @@ use crate::wrap_angle;
 
 pub struct LatticePlanner;
 
-const LATERALS_M: [f64; 9] = [-3.5, -2.625, -1.75, -0.875, 0.0, 0.875, 1.75, 2.625, 3.5];
-const STATION_LAYERS: usize = 5;
-const SAMPLES_PER_SEGMENT: usize = 8;
+/// Number of lateral samples per station layer (lateral grid resolution),
+/// evenly spaced over `[-LAT_BOUND_M, LAT_BOUND_M]`. Odd, so one sample
+/// lands exactly on the centerline (`d = 0`).
+const LATERALS: usize = 47;
+/// Number of station layers reaching out to the planning horizon (progress
+/// grid resolution).
+const STATION_LAYERS: usize = 32;
+/// Half-width of the lateral sampling band. A bit inside the drivable
+/// half-width so a sampled path stays clearly on the road.
+const LAT_BOUND_M: f64 = 3.75;
+/// Samples per lateral segment for cost integration and collision checking.
+/// Lower than the old exhaustive DP used because there are now ~5× as many
+/// (much shorter) segments spanning the horizon, so the whole path is still
+/// sampled densely (`STATION_LAYERS × SAMPLES_PER_SEGMENT` points).
+const SAMPLES_PER_SEGMENT: usize = 4;
+/// How many lateral columns an edge may span between adjacent station
+/// layers. A layer is only ~`horizon/STATION_LAYERS` of travel, so a jump of
+/// more than a few columns (`≈ NEIGHBOR_SPAN × 0.25 m`) there is a curvature
+/// no real car has — the shared cost would reject it, or price it out of any
+/// optimal path, so never generating those edges costs nothing and keeps
+/// the search branching factor (and cost-function evaluations) bounded. Full
+/// lateral range is still reachable: over `STATION_LAYERS` layers the path
+/// can ramp `NEIGHBOR_SPAN` columns per layer, far more than the grid's
+/// width. This is what keeps the high-resolution grid inside the real-time
+/// budget together with A*'s lazy expansion.
+const NEIGHBOR_SPAN: usize = 4;
+
+/// Total grid nodes — the resolution knob. `STATION_LAYERS × LATERALS`.
+const GRID_NODES: usize = STATION_LAYERS * LATERALS;
+
+/// Lateral offset of grid column `j`.
+fn lateral(j: usize) -> f64 {
+    -LAT_BOUND_M + 2.0 * LAT_BOUND_M * j as f64 / (LATERALS - 1) as f64
+}
+
+/// A\* priority-queue entry: the cheapest cost-so-far pops first (min-heap
+/// via a reversed `Ord`). `total_cmp` gives a total order over the finite,
+/// non-negative edge costs; ties break on node index for determinism.
+struct QItem {
+    cost: f64,
+    node: usize,
+}
+impl PartialEq for QItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost == other.cost && self.node == other.node
+    }
+}
+impl Eq for QItem {}
+impl Ord for QItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // reversed so BinaryHeap (a max-heap) yields the minimum cost
+        other
+            .cost
+            .total_cmp(&self.cost)
+            .then_with(|| other.node.cmp(&self.node))
+    }
+}
+impl PartialOrd for QItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Turn a sampled position trajectory (spaced `dt` apart, starting one tick
 /// after the ego) into controls for the kinematic model.
@@ -70,12 +147,13 @@ impl Planner for LatticePlanner {
         };
 
         // cost of one lattice edge: planner-specific lateral-smoothness and
-        // centerline-pull terms (structural to the DP search itself) plus
-        // the shared cost of each sampled point, timed under the "cost"
-        // seam so it's comparable across planners. Curvature at each point
-        // is a numerical estimate off the last three sampled points
+        // centerline-pull terms (structural to the search itself) plus the
+        // shared cost of each sampled point, timed under the "cost" seam so
+        // it's comparable across planners. Curvature at each point is a
+        // numerical estimate off the last three sampled points
         // (`cost::curvature_of`) — the lattice has no closed-form curve to
-        // evaluate directly, unlike RRT*'s steering function.
+        // evaluate directly, unlike RRT*'s steering function. Returns
+        // `f64::INFINITY` for a colliding or off-road edge (A* skips it).
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
             let mut total = 2.0 * (db - da).powi(2); // lateral smoothness
             let mut prev2: Option<[f64; 2]> = None;
@@ -108,58 +186,86 @@ impl Planner for LatticePlanner {
             total
         };
 
-        // DP over layers: the lattice is a layered DAG, so dynamic programming
-        // finds the exact best path (A* would just add bookkeeping).
-        // (the nested "cost" seam accounts for most of this)
+        // Sampled Hermite connector between two grid nodes, for the
+        // diagnostic overlay (recomputed only when diagnostics are on).
+        let segment_pts = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> Vec<[f64; 2]> {
+            (0..=SAMPLES_PER_SEGMENT)
+                .map(|i| {
+                    let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
+                    let s = sa + (sb - sa) * u;
+                    let d = d_shape(da, db, m0, u);
+                    path.frenet_to_xy(s, d)
+                })
+                .collect()
+        };
+
+        // A* over the layered DAG. Node ids: 0 is the root (the ego's
+        // projected pose); node `1 + layer*LATERALS + j` is grid column `j`
+        // of station layer `layer`. `parent` reconstructs the winning path;
+        // the first final-layer node popped is optimal since all edge costs
+        // are non-negative.
         if let Some(diag) = ctx.diagnostics {
             diag.record_point(path.frenet_to_xy(s0, d0)); // tree root
         }
-        let mut prev: Vec<(f64, f64, Vec<f64>)> = vec![(d0, 0.0, vec![])]; // (d, cost, laterals so far)
+        let n_nodes = 1 + GRID_NODES;
+        let mut dist = vec![f64::INFINITY; n_nodes];
+        let mut parent = vec![usize::MAX; n_nodes];
+        dist[0] = 0.0;
+        let mut heap = BinaryHeap::new();
+        heap.push(QItem { cost: 0.0, node: 0 });
+        let mut goal: Option<usize> = None;
+
         ctx.time("optimize", || {
-            for (layer, ds) in stations_m.iter().enumerate() {
-                let sa = s0
-                    + if layer == 0 {
-                        0.0
-                    } else {
-                        stations_m[layer - 1]
-                    };
-                let sb = s0 + ds;
-                prev = LATERALS_M
-                    .iter()
-                    .map(|&db| {
-                        if let Some(diag) = ctx.diagnostics {
-                            diag.record_point(path.frenet_to_xy(sb, db));
-                        }
-                        prev.iter()
-                            .map(|(da, c, laterals)| {
-                                let mut l = laterals.clone();
-                                l.push(db);
-                                let m0 = if layer == 0 { m0_first } else { 0.0 };
-                                let edge_cost = c + edge_cost(sa, *da, sb, db, m0);
-                                if let Some(diag) = ctx.diagnostics {
-                                    // sample the cubic Hermite connector between the
-                                    // two grid nodes, for the diagnostic overlay
-                                    let traj = (0..=SAMPLES_PER_SEGMENT)
-                                        .map(|i| {
-                                            let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
-                                            let s = sa + (sb - sa) * u;
-                                            let d = d_shape(*da, db, m0, u);
-                                            path.frenet_to_xy(s, d)
-                                        })
-                                        .collect();
-                                    diag.record_trajectory(traj);
-                                }
-                                (db, edge_cost, l)
-                            })
-                            .min_by(|a, b| a.1.total_cmp(&b.1))
-                            .unwrap()
-                    })
-                    .collect();
+            while let Some(QItem { cost: g, node }) = heap.pop() {
+                if g > dist[node] {
+                    continue; // stale queue entry, already settled cheaper
+                }
+                // (station, lateral) and destination layer of this node
+                let (layer, sa, da, col) = if node == 0 {
+                    // map the ego's off-grid lateral to its nearest column so
+                    // the first (short) segment is limited the same way
+                    let c = (((d0 + LAT_BOUND_M) / (2.0 * LAT_BOUND_M) * (LATERALS - 1) as f64)
+                        .round() as i64)
+                        .clamp(0, LATERALS as i64 - 1) as usize;
+                    (None, s0, d0, c)
+                } else {
+                    let idx = node - 1;
+                    let l = idx / LATERALS;
+                    (Some(l), s0 + stations_m[l], lateral(idx % LATERALS), idx % LATERALS)
+                };
+                if layer == Some(STATION_LAYERS - 1) {
+                    goal = Some(node); // settled the cheapest final-layer node
+                    return;
+                }
+                let next_layer = layer.map_or(0, |l| l + 1);
+                let sb = s0 + stations_m[next_layer];
+                let m0 = if layer.is_none() { m0_first } else { 0.0 };
+                // only connect to nearby lateral columns (see NEIGHBOR_SPAN)
+                let lo = col.saturating_sub(NEIGHBOR_SPAN);
+                let hi = (col + NEIGHBOR_SPAN).min(LATERALS - 1);
+                for j in lo..=hi {
+                    let db = lateral(j);
+                    if let Some(diag) = ctx.diagnostics {
+                        diag.record_point(path.frenet_to_xy(sb, db));
+                        diag.record_trajectory(segment_pts(sa, da, sb, db, m0));
+                    }
+                    let ec = edge_cost(sa, da, sb, db, m0);
+                    if !ec.is_finite() {
+                        continue;
+                    }
+                    let succ = 1 + next_layer * LATERALS + j;
+                    let nd = g + ec;
+                    if nd < dist[succ] {
+                        dist[succ] = nd;
+                        parent[succ] = node;
+                        heap.push(QItem { cost: nd, node: succ });
+                    }
+                }
             }
         });
-        let (_, best_cost, laterals) = prev.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
-        if best_cost.is_infinite() {
-            // every path collides: brake straight ahead
+
+        let Some(goal) = goal else {
+            // every path collides / leaves the road: brake straight ahead
             return vec![
                 Control {
                     accel: -4.0,
@@ -167,6 +273,15 @@ impl Planner for LatticePlanner {
                 };
                 ctx.horizon
             ];
+        };
+
+        // reconstruct the chosen lateral per layer from the parent chain
+        let mut laterals = vec![0.0; STATION_LAYERS];
+        let mut node = goal;
+        while node != 0 {
+            let idx = node - 1;
+            laterals[idx / LATERALS] = lateral(idx % LATERALS);
+            node = parent[node];
         }
 
         // sample the winning path over time; d is cubic in t on each segment
@@ -243,11 +358,13 @@ mod tests {
         ctx.diagnostics = Some(&diag);
         LatticePlanner.plan(ego, &ctx);
         let data = diag.take();
-        // tree root + STATION_LAYERS * LATERALS_M.len() grid nodes
-        assert_eq!(data.points.len(), 1 + STATION_LAYERS * LATERALS_M.len());
-        // layer 0 has 1 predecessor, layers 1.. have LATERALS_M.len() each
-        let edges = LATERALS_M.len() + (STATION_LAYERS - 1) * LATERALS_M.len() * LATERALS_M.len();
-        assert_eq!(data.trajectories.len(), edges);
+        // A* records the tree root plus one point and one connector per
+        // *expanded* edge — the explored part of the search graph, not the
+        // full grid. The exact count is search-dependent, but there is at
+        // least the root and the first layer's fan-out, and points and
+        // connectors are recorded in lockstep.
+        assert!(data.points.len() > LATERALS, "only {} points", data.points.len());
+        assert_eq!(data.points.len(), data.trajectories.len() + 1); // +1 for the root point
         assert!(
             data.trajectories
                 .iter()

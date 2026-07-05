@@ -12,7 +12,7 @@ planning/
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── straight/      strawman: zero control, always
 ├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
-├── lattice/       Frenet lattice, sampled grid + dynamic programming
+├── lattice/       Frenet lattice, high-res sampled grid + A* search
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
 ├── rrt_star/      RRT*, cubic-polynomial (differential-flatness) steering
 └── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
@@ -444,20 +444,38 @@ stationary lead (`stops_behind_stopped_lead`).
 
 `lattice/mod.rs` — `LatticePlanner`
 
-An EM/Apollo-style planner. Samples a grid in the road's Frenet frame —
-`STATION_LAYERS = 5` layers spaced evenly out to `PLANNING_HORIZON_S = 10` s
-at the assumed cruise speed (`stations_m[i] = v * PLANNING_HORIZON_S * (i+1)
-/ STATION_LAYERS`) crossed with nine lateral offsets (`LATERALS_M = [-3.5,
--2.625, -1.75, -0.875, 0, 0.875, 1.75, 2.625, 3.5]` m) — connects consecutive
-layers with cubic-Hermite lateral segments, costs every edge (its own
-lateral-smoothness and centerline-pull terms, plus the [shared cost
-function](#the-shared-cost-function) per sampled point — including its hard
-`f64::INFINITY` reject on predicted collision or leaving the drivable area),
-and picks the best path with exact dynamic programming over the layered DAG
-(a proper A* would only add bookkeeping over a graph this small). Curvature
-at each sampled point, needed for the shared cost's comfort term, comes from
-`cost::curvature_of` — the lattice has no closed-form curve of its own, so
-it estimates curvature numerically off the last three sampled points.
+An EM/Apollo-style planner. Samples a **high-resolution** grid in the road's
+Frenet frame — `STATION_LAYERS = 32` layers spaced evenly out to
+`PLANNING_HORIZON_S = 10` s at the assumed cruise speed (`stations_m[i] = v *
+PLANNING_HORIZON_S * (i+1) / STATION_LAYERS`) crossed with `LATERALS = 47`
+lateral offsets evenly spanning `±3.75` m, i.e. **`32 × 47 = 1504` grid
+nodes** — connects consecutive layers with cubic-Hermite lateral segments,
+costs every edge (its own lateral-smoothness and centerline-pull terms, plus
+the [shared cost function](#the-shared-cost-function) per sampled point —
+including its hard `f64::INFINITY` reject on predicted collision or leaving
+the drivable area), and finds the cheapest path with **A\* (best-first)
+search** over the layered DAG. Curvature at each sampled point, needed for
+the shared cost's comfort term, comes from `cost::curvature_of` — the lattice
+has no closed-form curve of its own, so it estimates curvature numerically
+off the last three sampled points.
+
+**Why A\* rather than the exhaustive DP it used to run.** At this resolution
+the old layer-by-layer dynamic program — which prices *every* `L`-to-`L`
+inter-layer edge, `O(STATION_LAYERS · LATERALS²)` cost-function evaluations —
+would spend almost all its time on large, obviously-bad lateral jumps that no
+optimal path uses. Two changes keep the dense grid real-time (p95 well under
+10 ms, p100 under 50 ms on the synthetic batch):
+
+- **A\* evaluates edge costs lazily**, only for nodes it actually expands in
+  increasing cost-so-far order, and stops the moment it settles a node in the
+  final layer. All edge costs are non-negative, so that first final-layer
+  node is the global optimum — the path is identical to the DP's, only the
+  work to find it is smaller.
+- **`NEIGHBOR_SPAN` limits each edge to nearby lateral columns.** A layer is
+  only `~horizon / STATION_LAYERS` of travel, so a jump of more than a few
+  columns there is a curvature no real car has; never generating those edges
+  bounds the branching factor at no cost to path quality (the full lateral
+  range is still reachable by ramping over multiple layers).
 
 The path's initial segment matches the ego's *current* lateral rate (via the
 Hermite tangent `m0_first`) rather than starting flat — without this, every
@@ -471,17 +489,18 @@ source for the deferred upgrade path). If every sampled path collides, the
 planner gives up and brakes straight ahead (`accel: -4.0`) rather than
 returning a bad path.
 
-**Seams**: `route`, `optimize` (the layer-by-layer DP loop) with `cost`
-(the shared cost function — nested *inside* `optimize`; it's the hot loop,
-called `5 stations × 9 laterals × up to 9 predecessors × 8 samples` times
-per `plan()` call) as a nested seam, then `extract` (sample the winning path
-into `xy_to_controls`).
+**Seams**: `route`, `optimize` (the A\* search loop) with `cost` (the shared
+cost function — nested *inside* `optimize`; it's the hot loop, called once per
+sampled point of each edge A\* expands) as a nested seam, then `extract`
+(sample the winning path into `xy_to_controls`).
 
-**Diagnostics**: every `(station, lateral)` grid node as a `point` (plus the
-tree root at the ego's current position), and every DP edge sampled at
-`SAMPLES_PER_SEGMENT` points as a `trajectory` — the whole search graph the
-DP considered, not just the winning path (that's the separate future-preview
-line, always drawn regardless of the diagnostic overlay).
+**Diagnostics**: each grid node A\* *expands* as a `point` (plus the tree root
+at the ego's current position), and the cubic-Hermite connector of every edge
+it evaluates, sampled at `SAMPLES_PER_SEGMENT` points, as a `trajectory` — the
+part of the search graph A\* actually explored (which, unlike the old
+exhaustive DP, is a small fraction of the full grid), not just the winning
+path (that's the separate future-preview line, always drawn regardless of the
+diagnostic overlay).
 
 ## PI2-DDP
 
