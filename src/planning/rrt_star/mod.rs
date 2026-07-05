@@ -19,6 +19,7 @@
 //! curvature directly.
 
 use crate::planning::cost::{self, Sample};
+use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State};
@@ -26,11 +27,13 @@ use crate::wrap_angle;
 
 // Sampling budget for the tree-growing loop in `plan`, split ~50/50
 // between a deterministic road-geometry grid and a low-discrepancy
-// quasi-Monte-Carlo sequence — see the module doc and the sampling comment
-// in `plan` for why. Both are fully deterministic given the ego state, so
-// two calls to `plan` from the same state grow the identical tree; no `Rng`
-// is needed anywhere in this planner (unlike PI²-DDP, which still samples
-// pseudo-randomly for its rollouts).
+// quasi-Monte-Carlo sequence, both produced by
+// `sampling::road_frame_samples` — the shared hybrid road-model + QMC
+// sampler this planner and the judo optimizers (`sampling_mpc`) both draw
+// from (see that module's parity note). Both are fully deterministic given
+// the ego state, so two calls to `plan` from the same state grow the
+// identical tree; no `Rng` is needed anywhere in this planner (unlike
+// PI²-DDP, which still samples pseudo-randomly for its rollouts).
 // road-geometry-informed grid, the same idea as the Frenet lattice's
 // station-layers-by-laterals grid. An odd GRID_LATERALS keeps a station's
 // centerline (d = 0) sample exactly on the grid, and the grid's last
@@ -38,7 +41,7 @@ use crate::wrap_angle;
 const GRID_STATIONS: usize = 10;
 const GRID_LATERALS: usize = 9;
 const GRID_BUDGET: usize = GRID_STATIONS * GRID_LATERALS;
-// the rest of the budget: a 2D Halton sequence (see `van_der_corput`) over
+// the rest of the budget: a 2D Halton sequence (`sampling::Halton`) over
 // the same (station, lateral) domain, filling in what the fixed grid
 // misses with well-distributed points — unlike pseudo-random sampling,
 // which can leave gaps and clusters at this sample count. Set equal to
@@ -82,24 +85,6 @@ const DRIVABLE_HALF_WIDTH_M: f64 = 5.0;
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
-}
-
-/// The van der Corput radical-inverse sequence in `base`: reverse the
-/// base-`base` digits of `index` and put them after the radix point. The
-/// building block of a Halton sequence — pairing two of these in different
-/// (coprime) bases, one per dimension, gives a fully deterministic,
-/// index-only low-discrepancy point set in 2D with no RNG state at all.
-/// `index` should start at 1 — `index = 0` degenerates to `0.0` in every
-/// base, which would stack a sample from every dimension onto one corner.
-fn van_der_corput(mut index: usize, base: usize) -> f64 {
-    let mut result = 0.0;
-    let mut fraction = 1.0 / base as f64;
-    while index > 0 {
-        result += fraction * (index % base) as f64;
-        index /= base;
-        fraction /= base as f64;
-    }
-    result
 }
 
 /// Largest heading change worth attempting for a hop of length `step_len`,
@@ -558,8 +543,10 @@ impl Planner for RrtStarPlanner {
         // Tree growth: a fixed road-geometry grid first, then a Halton
         // low-discrepancy sequence over the same domain — see the constants'
         // doc comments for why this split replaces plain pseudo-random
-        // sampling. The grid runs in ascending-station order (station-major,
-        // laterals inner) so each layer's samples extend from parents the
+        // sampling. The (station, lateral) targets come from the shared
+        // `sampling::road_frame_samples`, which lays the grid down in
+        // ascending-station order (station-major, laterals inner) followed
+        // by the QMC pass, so each layer's samples extend from parents the
         // previous, nearer layer already planted, the same layer-by-layer
         // growth the deterministic bypass seeding above relies on; this
         // builds a connected backbone across the full planning horizon
@@ -567,17 +554,14 @@ impl Planner for RrtStarPlanner {
         // (which don't respect station order) almost always land near an
         // existing node instead of failing for lack of one.
         ctx.time("optimize", || {
-            for gi in 0..GRID_STATIONS {
-                let s = s0 + s_max * (gi + 1) as f64 / GRID_STATIONS as f64;
-                for gj in 0..GRID_LATERALS {
-                    let d = -LATERAL_BOUND_M
-                        + 2.0 * LATERAL_BOUND_M * gj as f64 / (GRID_LATERALS - 1) as f64;
-                    try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
-                }
-            }
-            for i in 1..=QMC_BUDGET {
-                let s = s0 + van_der_corput(i, 2) * s_max;
-                let d = -LATERAL_BOUND_M + van_der_corput(i, 3) * 2.0 * LATERAL_BOUND_M;
+            for (s, d) in sampling::road_frame_samples::<Halton>(
+                s0,
+                s_max,
+                LATERAL_BOUND_M,
+                GRID_STATIONS,
+                GRID_LATERALS,
+                QMC_BUDGET,
+            ) {
                 try_extend(&mut nodes, &path, s0, v, ctx, path.frenet_to_xy(s, d));
             }
         });
@@ -735,6 +719,40 @@ mod tests {
         let end = trace.last().unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");
         assert!(end.x > 60.0, "did not pass the obstacle, x {}", end.x);
+    }
+
+    /// Parity with the shared sampler: lifting RRT*'s old inline grid +
+    /// van-der-Corput loop into `sampling::road_frame_samples` must produce
+    /// the byte-identical target sequence it did before, so the compile-time
+    /// interface share didn't quietly change where the tree grows. Pins the
+    /// numeric contract on top of the structural (type-level) one.
+    #[test]
+    fn rrt_targets_match_shared_sampler() {
+        let (s0, s_max) = (12.5, 80.0);
+        let shared = sampling::road_frame_samples::<Halton>(
+            s0,
+            s_max,
+            LATERAL_BOUND_M,
+            GRID_STATIONS,
+            GRID_LATERALS,
+            QMC_BUDGET,
+        );
+        // reconstruct the historical inline loop and compare element-wise
+        let mut expected = Vec::new();
+        for gi in 0..GRID_STATIONS {
+            let s = s0 + s_max * (gi + 1) as f64 / GRID_STATIONS as f64;
+            for gj in 0..GRID_LATERALS {
+                let d = -LATERAL_BOUND_M
+                    + 2.0 * LATERAL_BOUND_M * gj as f64 / (GRID_LATERALS - 1) as f64;
+                expected.push((s, d));
+            }
+        }
+        for i in 1..=QMC_BUDGET {
+            let s = s0 + sampling::van_der_corput(i, 2) * s_max;
+            let d = -LATERAL_BOUND_M + sampling::van_der_corput(i, 3) * 2.0 * LATERAL_BOUND_M;
+            expected.push((s, d));
+        }
+        assert_eq!(shared, expected);
     }
 
     #[test]
