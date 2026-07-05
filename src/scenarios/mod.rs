@@ -47,11 +47,37 @@ impl Path {
     }
 
     /// Frenet coordinates of a point: (arc length, signed lateral offset).
-    /// Positive offset is left of the path.
+    /// Positive offset is left of the path. Scans every segment — see
+    /// [`Path::project_near`] for the windowed variant a caller that already
+    /// knows roughly where the point falls can use instead.
     pub fn project(&self, p: [f64; 2]) -> (f64, f64) {
+        self.project_range(p, 0, self.pts.len().saturating_sub(1))
+    }
+
+    /// [`Path::project`] restricted to the centerline segments within
+    /// `window_m` of arc length `s_hint` — `O(window)` rather than the full
+    /// `O(n)` segment scan, for callers (RRT*) that project many points and
+    /// already know each point's approximate station. Exact whenever the true
+    /// nearest segment lies inside the window; the caller sizes `window_m`
+    /// generously relative to how far a point can sit from `s_hint`, so in
+    /// practice it always does. Falls back to the full scan for a degenerate
+    /// window.
+    pub fn project_near(&self, p: [f64; 2], s_hint: f64, window_m: f64) -> (f64, f64) {
+        // segment `i` spans arc length [s[i], s[i+1]]; keep those overlapping
+        // [s_hint - window, s_hint + window]
+        let lo = self.s.partition_point(|&x| x < s_hint - window_m).saturating_sub(1);
+        let hi = self.s.partition_point(|&x| x <= s_hint + window_m);
+        self.project_range(p, lo, hi.max(lo + 1))
+    }
+
+    /// Shared body of [`project`](Path::project) / [`project_near`]: project
+    /// `p` onto segments `[lo, hi)` (point indices), returning the best
+    /// `(arc length, signed offset)`.
+    fn project_range(&self, p: [f64; 2], lo: usize, hi: usize) -> (f64, f64) {
+        let hi = hi.min(self.pts.len().saturating_sub(1));
         let mut best = (0.0, f64::INFINITY);
-        for (i, w) in self.pts.windows(2).enumerate() {
-            let (a, b) = (w[0], w[1]);
+        for i in lo..hi {
+            let (a, b) = (self.pts[i], self.pts[i + 1]);
             let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
             let len2 = (dx * dx + dy * dy).max(1e-12);
             let u = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
@@ -353,6 +379,31 @@ mod tests {
         let (s, d) = path.project([10.0, 2.5]);
         assert!((s - 30.0).abs() < 1e-9 && (d - 2.5).abs() < 1e-9);
         assert_eq!(path.frenet_to_xy(s, d), [10.0, 2.5]);
+    }
+
+    #[test]
+    fn project_near_matches_full_projection_within_window() {
+        // a wiggly path so segments differ in direction
+        let path = Path::new(&[
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [20.0, 5.0],
+            [30.0, 5.0],
+            [40.0, -3.0],
+            [50.0, 0.0],
+        ]);
+        for &p in &[[5.0, 1.0], [15.0, 3.0], [24.0, 6.0], [37.0, -5.0], [48.0, 2.0]] {
+            let (s, d) = path.project(p);
+            // even with a deliberately rough station hint, a generous window
+            // reproduces the full projection exactly
+            for hint in [s, s - 9.0, s + 9.0] {
+                let (sn, dn) = path.project_near(p, hint, 25.0);
+                assert!(
+                    (s - sn).abs() < 1e-9 && (d - dn).abs() < 1e-9,
+                    "p {p:?} hint {hint}: near ({sn},{dn}) vs full ({s},{d})"
+                );
+            }
+        }
     }
 
     #[test]

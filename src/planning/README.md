@@ -633,6 +633,34 @@ ego's own extracted trajectory momentarily reverse in `x` (caught by
 eyeballing this module's own closed-loop test trace, not just its
 pass/fail).
 
+**A spatial index and k-nearest bounding keep it real-time.** The three
+neighbor queries above were originally linear scans over every node, so the
+per-tick cost grew with the square of the tree size — the planner's dominant
+latency (tens of ms at p95). Two changes fix it while leaving the tree it
+builds essentially unchanged:
+
+- **An [`rstar`](https://docs.rs/rstar) R\*-tree** (a robust, pure-Rust,
+  wasm-compatible spatial index) holds every node's position, grown one node
+  at a time alongside `nodes`. Nearest-behind is its lazy nearest-first
+  iterator stopped at the first node behind the target; near-vertex queries
+  are its `nearest_neighbor_iter_with_distance_2` cut at `NEIGHBOR_RADIUS_M`.
+  Each is `O(log n)` instead of `O(n)`.
+- **`K_NEIGHBORS` bounds** the candidate parents and rewire targets to the
+  closest few — a *k*-nearest RRT* rather than an every-node-in-radius one
+  (both asymptotically optimal). Without it, the count of vertices inside the
+  radius still grows with the tree; the closest ones are also the only ones
+  that tend to win (a near parent is a short, cheap edge), so this barely
+  changes the result while bounding the steer + feasibility + edge-cost work
+  per new node.
+
+With the linear scans gone, the remaining hot spot was `Path::project` (an
+`O(centerline-length)` scan, run for every sampled point of every candidate
+edge). Since RRT* already knows each segment's rough station, it calls
+[`Path::project_near`](../scenarios/README.md#path-the-frenet-helper) — the
+same projection restricted to a generous arc-length window around the hint,
+`O(window)` and exact. Together these bring p95 well under 10 ms and p100
+under 50 ms on the synthetic batch (from ~55 ms / ~140 ms).
+
 **Warm start, with hysteresis, is what makes obstacle avoidance consistent
 tick to tick.** `RrtStarPlanner` remembers `prev_path`, last tick's winning
 polyline, and replays whatever part of it is still ahead of the ego and

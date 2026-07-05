@@ -42,6 +42,11 @@ bevy_egui = { version = "0.41", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 web-time = "1" # std::time::Instant shim that works on wasm
+# spatial index for RRT*'s nearest-neighbour / near-vertices queries: a
+# robust, pure-Rust R*-tree (wasm-compatible) with incremental insertion and
+# a lazy nearest-first iterator, so the tree grows a node at a time and each
+# query stays O(log n) instead of the old O(n) linear scan over all nodes.
+rstar = "0.12"
 
 # wasm only: the web build has no filesystem, so it can't use
 # load_path/CLI args like desktop does (see src/viewer/web.rs). gloo-net
