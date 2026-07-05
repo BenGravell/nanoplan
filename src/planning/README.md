@@ -202,6 +202,15 @@ than inventing new ones:
   (`2 × CAR_RADIUS_M`) to any actor's predicted position, or further than
   `metrics::drivable_area::ROAD_HALF_WIDTH_M` from the centerline. A planner
   should reject these outright, not merely disfavor them.
+- **Everything else is `WEIGHTS · features`** — the soft terms below are a
+  feature vector (`features()`, each term already squared/hinged) dotted
+  with one `pub(crate) const WEIGHTS`, so the finite cost is *linear* in the
+  weights. That form is what makes the weights *learnable*: the
+  [`tuning`](../tuning/README.md) module re-fits them to expert nuPlan
+  trajectories with maximum-entropy IRL (`cargo run --release --bin tune`),
+  printing a replacement `WEIGHTS` line to paste back here. The hard
+  rejection above is a fixed rule of `features()` (it returns `None`), never
+  a learned weight.
 - **Actor prediction** reuses `metrics::project` — the same constant-
   velocity, constant-heading model `metrics::ttc` scores against — instead
   of each planner reimplementing the same three lines independently.

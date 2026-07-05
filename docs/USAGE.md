@@ -195,6 +195,48 @@ trunk build --release --public-url /nanoplan/    # copies it into dist/
 > requires registration to download). Treat the first run against your own
 > log as a shakedown, and please report schema mismatches.
 
+## Autotuning the cost weights
+
+```sh
+cargo run --release --bin tune -- --dir out_dir
+```
+
+Fits the [shared cost function's](../src/planning/README.md#the-shared-cost-function)
+soft weights to the expert (human) trajectories in exported nuPlan scenarios,
+with maximum-entropy inverse reinforcement learning (DriveIRL-style — see
+[src/tuning/README.md](../src/tuning/README.md) for the model and its
+assumptions). Scenarios need an `expert` field, which
+`tools/export_nuplan_scenarios.py` includes; scenarios without a usable
+expert are counted and skipped. Collision and driving off-road stay
+**infinite cost by fiat** — only the soft weights are learned.
+
+The output ends with the learned `WEIGHTS` line to paste into
+`src/planning/cost.rs` (the weights are a compile-time constant, so applying
+a tune is a one-line diff), plus before/after diagnostics to judge it by:
+
+```
+maxent-irl cost-weight autotune
+  scenarios: 42 used, 3 skipped (no expert, expert shorter than the 10 s horizon, or expert hard-violating)
+  mean NLL/scenario:      4.3948 -> 0.9611
+  expert is min-cost in:  12/42 -> 33/42 scenarios
+
+  feature             current    learned
+  actor_proximity    200.0000   181.2034
+  ...
+
+paste into src/planning/cost.rs:
+pub(crate) const WEIGHTS: [f64; N_FEATURES] = [181.2034, ...];
+```
+
+After pasting, re-run the [batch evaluation](#batch-evaluation) to see what
+the new weights do to closed-loop scores.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--dir PATH` | (required) | A directory of scenario JSON files with `expert` trajectories. Repeatable. |
+| `--iters N` | `500` | Gradient-descent iterations. |
+| `--l2 X` | `1e-3` | Strength of the pull toward the current hand weights (a prior); lower it to let the data dominate. |
+
 ## Generating a diverse default scenario set
 
 Since there's no real nuPlan corpus checked into this repo,

@@ -146,7 +146,7 @@ impl Actor {
 /// Replayed state at time `t`: linear interpolation between waypoints
 /// (shortest-arc for yaw), the first waypoint before the log starts, and
 /// constant velocity beyond its end.
-fn replay(trajectory: &[Waypoint], t: f64) -> State {
+pub(crate) fn replay(trajectory: &[Waypoint], t: f64) -> State {
     let first = trajectory[0];
     if t <= first.t {
         return first.state;
@@ -234,6 +234,13 @@ pub struct Scenario {
     pub target_speed: f64,
     #[serde(default)]
     pub map: MapData,
+    /// The expert (human) ego trajectory logged over the same horizon, when
+    /// the scenario comes from a real log (tools/export_nuplan_scenarios.py).
+    /// Not used in simulation — the ego is planned, not replayed — but it is
+    /// the demonstration data the cost-weight autotuner ([`crate::tuning`])
+    /// learns from. Empty for synthetic and hand-authored scenarios.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expert: Vec<Waypoint>,
 }
 
 impl Scenario {
@@ -343,6 +350,7 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                 centerline,
                 target_speed: 10.0,
                 map: MapData::default(),
+                expert: vec![],
             }
         })
         .collect()
@@ -427,6 +435,7 @@ mod tests {
         let sc: Scenario = serde_json::from_str(json).unwrap();
         assert_eq!(sc.target_speed, 10.0);
         assert!(sc.actors.is_empty());
+        assert!(sc.expert.is_empty());
         let back: Scenario = serde_json::from_str(&serde_json::to_string(&sc).unwrap()).unwrap();
         assert_eq!(back.ego, sc.ego);
     }
@@ -457,6 +466,7 @@ mod tests {
             centerline: vec![[-10.0, 0.0], [100.0, 0.0]],
             target_speed: 10.0,
             map: MapData::default(),
+            expert: vec![],
         };
         let r = simulate(&sc, crate::PlannerKind::Straight, 2.0, 0.1);
         // interpolated halfway through the log
@@ -477,13 +487,19 @@ mod tests {
                     {"t": 0.5, "x": 32.5, "y": 0.0, "yaw": 0.0, "speed": 5.0}
                 ]
             }],
-            "centerline": [[-10.0, 0.0], [100.0, 0.0]]
+            "centerline": [[-10.0, 0.0], [100.0, 0.0]],
+            "expert": [
+                {"t": 0.0, "x": 0.0, "y": 0.0, "yaw": 0.0, "speed": 8.0},
+                {"t": 0.5, "x": 4.0, "y": 0.0, "yaw": 0.0, "speed": 8.0}
+            ]
         }"#;
         let sc: Scenario = serde_json::from_str(json).unwrap();
         assert_eq!(sc.actors[0].trajectory.len(), 2);
+        assert_eq!(sc.expert.len(), 2);
         let text = serde_json::to_string(&sc).unwrap();
         let back: Scenario = serde_json::from_str(&text).unwrap();
         assert_eq!(back.actors[0].trajectory, sc.actors[0].trajectory);
+        assert_eq!(back.expert, sc.expert);
     }
 
     #[test]
