@@ -63,7 +63,7 @@ A few more directories hold data rather than code:
 |---|---|---|
 | Strawman | Zero acceleration, zero curvature, always | [src/planning/README.md#strawman](src/planning/README.md#strawman) |
 | Bezier + IDM | Cubic Bezier back to the lane centerline; Intelligent Driver Model for speed | [src/planning/README.md#bezier--idm](src/planning/README.md#bezier--idm) |
-| Frenet lattice | EM/Apollo-style: sample a station×lateral grid, DP over layers | [src/planning/README.md#frenet-lattice](src/planning/README.md#frenet-lattice) |
+| Frenet lattice | EM/Apollo-style: sample a high-res station×lateral grid, A* over the layered DAG | [src/planning/README.md#frenet-lattice](src/planning/README.md#frenet-lattice) |
 | PI²-DDP | Sampling-based DDP (Lefebvre & Crevecoeur), road-informed exploration | [src/planning/README.md#pi2-ddp](src/planning/README.md#pi2-ddp) |
 | RRT* | Rapidly-exploring random tree with rewiring; steers between poses with a cubic polynomial via differential flatness | [src/planning/README.md#rrt](src/planning/README.md#rrt) |
 | Predictive sampling (judo) | Fixed-sigma sampling around a nominal, take the best rollout | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
