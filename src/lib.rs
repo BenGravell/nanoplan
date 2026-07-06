@@ -16,8 +16,9 @@ pub mod world;
 
 pub use metrics::Metrics;
 pub use planning::{
-    BezierIdmPlanner, Cem, Context, LatticePlanner, Mppi, Pi2DdpPlanner, Planner, PlannerKind,
-    PredictiveSampling, RrtStarPlanner, SamplingPlanner, StraightPlanner,
+    BezierIdmPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
+    PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner,
+    TreetopPlanner,
 };
 pub use scenarios::{Path, Road, Scenario};
 pub use simulation::{Control, IncrementalSim, Rollout, Simulator, State, simulate, step};
