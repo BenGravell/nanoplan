@@ -43,6 +43,22 @@ const DESPAWN_MARGIN_M: f64 = 30.0;
 /// the taper length of lane gains/losses and junction lane connectors.
 const CORNER_RADIUS_M: f64 = 12.0;
 
+/// Corner cut radius of a slip-lane right turn: a wide curve that bypasses
+/// the junction proper (see [`has_slip`]).
+pub const SLIP_RADIUS_M: f64 = 22.0;
+
+/// Length of a junction turn pocket (see [`has_pocket`]): over the last
+/// stretch of the approach the roadway flares one lane wider on the right,
+/// left-turners slide into the freed innermost lane, and through traffic
+/// deflects around them.
+pub const POCKET_M: f64 = 30.0;
+
+/// Length of the pocket's flare taper, for drawing.
+pub const POCKET_TAPER_M: f64 = 12.0;
+
+/// How far short of a junction node crosswalks sit (see [`has_crosswalk`]).
+pub const CROSSWALK_SETBACK_M: f64 = 15.0;
+
 /// Extra route cost for starting out against the ego's current heading —
 /// enough to prefer going around a couple of blocks over a U-turn (which
 /// the planners track with an ugly off-lane loop), without ever making a
@@ -210,41 +226,178 @@ fn random_next(seed: u64, walk: &[[i64; 2]], rng: &mut Rng) -> [i64; 2] {
     }
 }
 
-/// Per-leg lateral offsets (right of travel) for a vehicle driving `axis`
-/// with `lanes[i]` lanes per direction on leg `i`: keep right, except move
-/// to the innermost lane to approach a left turn — the turning lane.
-fn drive_offsets(axis: &[[f64; 2]], lanes: &[usize]) -> Vec<f64> {
-    (0..lanes.len())
-        .map(|i| {
-            let left_turn = i + 2 < axis.len() && {
-                let d0 = [axis[i + 1][0] - axis[i][0], axis[i + 1][1] - axis[i][1]];
-                let d1 = [
-                    axis[i + 2][0] - axis[i + 1][0],
-                    axis[i + 2][1] - axis[i + 1][1],
-                ];
-                let cross = d0[0] * d1[1] - d0[1] * d1[0];
-                cross > 0.35 * d0[0].hypot(d0[1]) * d1[0].hypot(d1[1])
-            };
-            if left_turn && lanes[i] >= 2 {
-                0.5 * LANE_W_M
-            } else {
-                (lanes[i] as f64 - 0.5) * LANE_W_M
+// --- junction furniture ----------------------------------------------------
+//
+// Turn pockets, slip lanes, and crosswalks are all keyed on (junction grid
+// coordinate, approach direction) — pure functions of the seed, like the
+// network itself, so drivers, pedestrians, and the viewer's drawing always
+// agree on where they are.
+
+fn dir_idx(d: [i64; 2]) -> u64 {
+    match d {
+        [1, 0] => 0,
+        [0, 1] => 1,
+        [-1, 0] => 2,
+        _ => 3,
+    }
+}
+
+/// Does the approach to junction `j` from grid direction `d_in` widen into
+/// a left-turn pocket? More likely downtown.
+pub fn has_pocket(seed: u64, j: [i64; 2], d_in: [i64; 2]) -> bool {
+    unit(hash(seed, j[0], j[1], 0xB0C0 + dir_idx(d_in)))
+        < 0.25 + 0.5 * urban(seed, node_pos(seed, j))
+}
+
+/// Does the right turn out of junction `j`, approached from `d_in`, have a
+/// slip lane — a wide corner-cutting curve past the junction proper?
+pub fn has_slip(seed: u64, j: [i64; 2], d_in: [i64; 2]) -> bool {
+    unit(hash(seed, j[0], j[1], 0x51B0 + dir_idx(d_in))) < 0.18
+}
+
+/// Is there a crosswalk across the approach to junction `j` from `d_in`
+/// (at [`CROSSWALK_SETBACK_M`] before the node)? More likely downtown.
+pub fn has_crosswalk(seed: u64, j: [i64; 2], d_in: [i64; 2]) -> bool {
+    unit(hash(seed, j[0], j[1], 0xC205 + dir_idx(d_in)))
+        < 0.2 + 0.6 * urban(seed, node_pos(seed, j))
+}
+
+/// Does pedestrian `id` cross at the crosswalk into `j` from `d_in`, if
+/// one exists? Deterministic per (pedestrian, junction), so path rebuilds
+/// mid-walk never flip an already-planned crossing under its feet.
+fn ped_crosses(seed: u64, id: u64, j: [i64; 2], d_in: [i64; 2]) -> bool {
+    has_crosswalk(seed, j, d_in) && unit(hash(id, j[0], j[1], 0xC407)) < 0.35
+}
+
+/// Grid coordinate of the node at position `p` — jitter is well under half
+/// a grid step, so rounding recovers it exactly.
+fn coord_near(p: [f64; 2]) -> [i64; 2] {
+    [
+        (p[0] / GRID_SPACING_M).round() as i64,
+        (p[1] / GRID_SPACING_M).round() as i64,
+    ]
+}
+
+/// Grid direction of travel from `a` to `b` (dominant axis).
+fn grid_dir(a: [f64; 2], b: [f64; 2]) -> [i64; 2] {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    if dx.abs() >= dy.abs() {
+        [dx.signum() as i64, 0]
+    } else {
+        [0, dy.signum() as i64]
+    }
+}
+
+/// Turn direction at `v` coming from `a` and leaving toward `b`:
+/// +1 left, -1 right, 0 near-straight.
+fn turn_dir(a: [f64; 2], v: [f64; 2], b: [f64; 2]) -> i8 {
+    let d0 = [v[0] - a[0], v[1] - a[1]];
+    let d1 = [b[0] - v[0], b[1] - v[1]];
+    let cross = d0[0] * d1[1] - d0[1] * d1[0];
+    let lim = 0.35 * d0[0].hypot(d0[1]) * d1[0].hypot(d1[1]);
+    (cross > lim) as i8 - (cross < -lim) as i8
+}
+
+/// Assemble the polyline a road user follows along `axis` (leg `i` runs
+/// `axis[i]→axis[i+1]` with `lanes[i]` lanes per direction): keep right,
+/// move to the innermost lane to approach a left turn (via the turn pocket
+/// where one exists, while through traffic deflects around it and bikes and
+/// sidewalks follow the flared curb), take slip-lane right turns on the
+/// wide radius — and, for a pedestrian `ped = (id, side)` (`side` = the
+/// sidewalk sign at `axis[0]`, +1 right of travel), cross to the other
+/// sidewalk at the crosswalks [`ped_crosses`] picks.
+fn corridor(
+    seed: u64,
+    axis: &[[f64; 2]],
+    lanes: &[usize],
+    kind: ActorKind,
+    ped: Option<(u64, f64)>,
+) -> Vec<[f64; 2]> {
+    let mut side = ped.map_or(1.0, |(_, s)| s);
+    let mut pts = vec![axis[0]];
+    let (mut offs, mut radii) = (vec![], vec![CORNER_RADIUS_M]);
+    for i in 0..lanes.len() {
+        let (a, b) = (axis[i], axis[i + 1]);
+        let (len, n) = (dist(a, b), lanes[i] as f64);
+        // legs ending at a junction (not the walk/route endpoint) get the
+        // junction furniture
+        let junction = i + 2 < axis.len();
+        let (d_in, j) = (grid_dir(a, b), coord_near(b));
+        let turn = if junction {
+            turn_dir(a, b, axis[i + 2])
+        } else {
+            0
+        };
+        let pocket = junction && len > 45.0 && has_pocket(seed, j, d_in);
+        let split_at = |u_m: f64| {
+            [
+                a[0] + (b[0] - a[0]) * u_m / len,
+                a[1] + (b[1] - a[1]) * u_m / len,
+            ]
+        };
+        let base = match kind {
+            ActorKind::Car | ActorKind::Truck => {
+                if turn > 0 && !pocket && lanes[i] >= 2 {
+                    0.5 * LANE_W_M // no pocket: approach in the inner lane
+                } else {
+                    (n - 0.5) * LANE_W_M
+                }
             }
-        })
-        .collect()
+            ActorKind::Bike => n * LANE_W_M - 1.0,
+            ActorKind::Pedestrian => side * (n * LANE_W_M + 1.8),
+        };
+        let mut cur = base;
+        if pocket {
+            let shifted = match kind {
+                // left turn: slide into the pocket lane
+                ActorKind::Car | ActorKind::Truck if turn > 0 => 0.5 * LANE_W_M,
+                // the far sidewalk doesn't flare
+                ActorKind::Pedestrian if side < 0.0 => base,
+                // deflect around the pocket / follow the flared curb
+                _ => base + LANE_W_M,
+            };
+            pts.push(split_at(len - POCKET_M));
+            offs.push(cur);
+            radii.push(CORNER_RADIUS_M);
+            cur = shifted;
+        }
+        if let Some((id, _)) = ped
+            && junction
+            && ped_crosses(seed, id, j, d_in)
+        {
+            // cross at the crosswalk: a sharp offset flip to the opposite
+            // sidewalk just before the junction
+            pts.push(split_at(len - CROSSWALK_SETBACK_M));
+            offs.push(cur);
+            radii.push(2.0);
+            side = -side;
+            cur = side * (n * LANE_W_M + 1.8);
+        }
+        pts.push(b);
+        offs.push(cur);
+        radii.push(
+            if junction && turn < 0 && kind != ActorKind::Pedestrian && has_slip(seed, j, d_in) {
+                SLIP_RADIUS_M
+            } else {
+                CORNER_RADIUS_M
+            },
+        );
+    }
+    lane_polyline(&pts, &offs, &radii)
 }
 
 /// Turn a road-axis polyline into a drivable lane centerline: cut each
-/// corner with a quadratic Bezier of radius [`CORNER_RADIUS_M`], then offset
-/// each point to the right of travel by its leg's offset (`offsets[i]` for
-/// the leg `axis[i]→axis[i+1]`), blended across corners — so lane gains and
-/// losses taper smoothly and junction turns come out as lane connectors
-/// from the departure lane to the arrival lane.
-fn lane_polyline(axis: &[[f64; 2]], offsets: &[f64]) -> Vec<[f64; 2]> {
+/// vertex with a quadratic Bezier of radius `radii[i]` (capped by the
+/// adjacent leg lengths), then offset each point to the right of travel by
+/// its leg's offset (`offsets[i]` for the leg `axis[i]→axis[i+1]`), blended
+/// across corners — so lane gains and losses taper smoothly and junction
+/// turns come out as lane connectors from the departure lane to the
+/// arrival lane.
+fn lane_polyline(axis: &[[f64; 2]], offsets: &[f64], radii: &[f64]) -> Vec<[f64; 2]> {
     let mut rounded: Vec<([f64; 2], f64)> = vec![(axis[0], offsets[0])];
     for i in 1..axis.len().saturating_sub(1) {
         let (a, v, b) = (axis[i - 1], axis[i], axis[i + 1]);
-        let r = CORNER_RADIUS_M.min(0.4 * dist(a, v)).min(0.4 * dist(v, b));
+        let r = radii[i].min(0.4 * dist(a, v)).min(0.4 * dist(v, b));
         let pull = |from: [f64; 2]| {
             let d = dist(v, from).max(1e-9);
             [
@@ -455,7 +608,7 @@ impl StreetMap {
             .windows(2)
             .map(|w| self.lanes[self.snap(mid(w[0], w[1])).0])
             .collect();
-        lane_polyline(&axis, &drive_offsets(&axis, &lanes))
+        corridor(self.seed, &axis, &lanes, ActorKind::Car, None)
     }
 }
 
@@ -496,17 +649,6 @@ impl ActorKind {
             ActorKind::Pedestrian => (0.9, 1.6),
         }
     }
-
-    /// Per-leg lateral offsets for a walk: vehicles pick lanes (turning
-    /// lane on left turns), bikes hug the curb, pedestrians take the
-    /// sidewalk just outside the roadway.
-    fn offsets(self, axis: &[[f64; 2]], lanes: &[usize]) -> Vec<f64> {
-        match self {
-            ActorKind::Car | ActorKind::Truck => drive_offsets(axis, lanes),
-            ActorKind::Bike => lanes.iter().map(|&n| n as f64 * LANE_W_M - 1.0).collect(),
-            ActorKind::Pedestrian => lanes.iter().map(|&n| n as f64 * LANE_W_M + 1.8).collect(),
-        }
-    }
 }
 
 /// A traffic actor that wanders the street network: it follows its own
@@ -517,6 +659,8 @@ impl ActorKind {
 pub struct SmartActor {
     pub kind: ActorKind,
     pub state: State,
+    /// Stable identity, for per-actor deterministic choices (crosswalks).
+    id: u64,
     /// Chunk that spawned it; one spawn set lives per populated chunk.
     home: [i64; 2],
     /// World time it left the active bounds, if it has (despawn grace).
@@ -526,6 +670,9 @@ pub struct SmartActor {
     path: Path,
     s: f64,
     target_speed: f64,
+    /// Sidewalk sign (±1, right of travel) at the start of the current
+    /// walk — pedestrians flip it by crossing at crosswalks.
+    side: f64,
 }
 
 /// The deterministic traffic of one chunk: count and mix follow the
@@ -580,12 +727,14 @@ impl SmartActor {
         let mut actor = SmartActor {
             kind,
             state: State::default(),
+            id: rng.uniform().to_bits(),
             home: chunk,
             out_since: None,
             walk,
             path: Path::new(&[[0.0, 0.0], [1.0, 0.0]]),
             s: 0.0,
             target_speed: rng.range(lo, hi),
+            side: 1.0,
         };
         actor.rebuild_path(seed);
         actor.s = rng.range(0.1, 0.4) * actor.path.length();
@@ -607,13 +756,14 @@ impl SmartActor {
             .windows(2)
             .map(|w| edge_lanes(seed, w[0], w[1]))
             .collect();
-        self.path = Path::new(&lane_polyline(&axis, &self.kind.offsets(&axis, &lanes)));
+        let ped = (self.kind == ActorKind::Pedestrian).then_some((self.id, self.side));
+        self.path = Path::new(&corridor(seed, &axis, &lanes, self.kind, ped));
     }
 
     /// Nearest thing to follow: (gap, its speed along my direction) —
     /// either something ahead in my corridor, or anything close in front of
     /// my bumper regardless of lane (the intersection/crossing guard).
-    fn lead(&self, others: &[State]) -> Option<(f64, f64)> {
+    fn lead(&self, others: &[(State, ActorKind)]) -> Option<(f64, f64)> {
         let me = self.state;
         let follow_gap = self.kind.size_m()[0] / 2.0 + 2.5;
         // bumper guard reach scales with speed: about a stride for a
@@ -621,7 +771,14 @@ impl SmartActor {
         let reach = 4.0 + 1.2 * me.speed;
         others
             .iter()
-            .filter_map(|o| {
+            .filter_map(|&(o, okind)| {
+                // pedestrians have right of way: they queue behind other
+                // pedestrians but never yield to vehicles (which brake for
+                // them via their own bumper guard) — otherwise a crossing
+                // ped and the car yielding to it deadlock at the crosswalk
+                if self.kind == ActorKind::Pedestrian && okind != ActorKind::Pedestrian {
+                    return None;
+                }
                 let (so, d) = self.path.project_near([o.x, o.y], self.s + 30.0, 55.0);
                 let along = d.abs() < 2.5 && so > self.s + 0.5 && so - self.s < 80.0;
                 let mut gap = along.then_some(so - self.s - follow_gap);
@@ -642,7 +799,7 @@ impl SmartActor {
     }
 
     /// Advance one tick, reacting to a snapshot of every other road user.
-    fn step(&mut self, seed: u64, others: &[State], dt: f64, rng: &mut Rng) {
+    fn step(&mut self, seed: u64, others: &[(State, ActorKind)], dt: f64, rng: &mut Rng) {
         if self.s > self.path.length() - 60.0 {
             self.extend(seed, rng);
         }
@@ -669,6 +826,17 @@ impl SmartActor {
                 dist(pos, m(i)).total_cmp(&dist(pos, m(j)))
             })
             .unwrap_or(0);
+        // crossings already walked flip which sidewalk the rebuilt path
+        // starts on (deterministic per junction, so the path never jumps
+        // under the pedestrian's feet)
+        if self.kind == ActorKind::Pedestrian {
+            for k in 0..at {
+                let (a, j) = (self.walk[k], self.walk[k + 1]);
+                if ped_crosses(seed, self.id, j, [j[0] - a[0], j[1] - a[1]]) {
+                    self.side = -self.side;
+                }
+            }
+        }
         self.walk.drain(..at);
         while self.walk.len() < 6 {
             let next = random_next(seed, &self.walk, rng);
@@ -866,11 +1034,11 @@ impl LiveWorld {
                 t - *a.out_since.get_or_insert(t) < DESPAWN_GRACE_S
             }
         });
-        let snapshot: Vec<State> = std::iter::once(self.ego)
-            .chain(self.actors.iter().map(|a| a.state))
+        let snapshot: Vec<(State, ActorKind)> = std::iter::once((self.ego, ActorKind::Car))
+            .chain(self.actors.iter().map(|a| (a.state, a.kind)))
             .collect();
         for (i, actor) in self.actors.iter_mut().enumerate() {
-            let others: Vec<State> = snapshot
+            let others: Vec<(State, ActorKind)> = snapshot
                 .iter()
                 .enumerate()
                 .filter_map(|(j, &s)| (j != i + 1).then_some(s))
@@ -992,7 +1160,7 @@ mod tests {
         for &p in &line {
             let (e, q) = map.snap(p);
             assert!(
-                dist(p, q) <= map.half_width(e) + 0.5 * CORNER_RADIUS_M,
+                dist(p, q) <= map.half_width(e) + 0.6 * SLIP_RADIUS_M,
                 "{p:?} is {} m off a {}-lane road",
                 dist(p, q),
                 map.lanes[e]
@@ -1014,7 +1182,8 @@ mod tests {
             free.state.speed
         );
 
-        // park a blocker 30 m ahead on the actor's own corridor
+        // park a blocker (a pedestrian: every kind yields to those)
+        // 30 m ahead on the actor's own corridor
         let mut actor = spawn_chunk(seed, [1, 1]).remove(0);
         let (p, yaw) = actor.path.pose_at(actor.s + 30.0);
         let blocker = State {
@@ -1024,7 +1193,7 @@ mod tests {
             speed: 0.0,
         };
         for _ in 0..600 {
-            actor.step(seed, &[blocker], 0.1, &mut rng);
+            actor.step(seed, &[(blocker, ActorKind::Pedestrian)], 0.1, &mut rng);
         }
         assert!(actor.state.speed < 0.3, "speed {}", actor.state.speed);
         let gap = dist([actor.state.x, actor.state.y], [blocker.x, blocker.y]);
@@ -1094,6 +1263,139 @@ mod tests {
             "stopped {} m from the goal",
             dist([w.ego.x, w.ego.y], snapped)
         );
+    }
+
+    /// Signed lateral offset of `line` from the axis point at station `s_m`
+    /// along the ray `a→dir` (positive = right of travel).
+    fn lateral_near(line: &[[f64; 2]], a: [f64; 2], dir: [f64; 2], s_m: f64) -> f64 {
+        let q = [a[0] + dir[0] * s_m, a[1] + dir[1] * s_m];
+        // project's lateral is positive when the query is left of the path,
+        // i.e. when the path runs right of the axis
+        Path::new(line).project(q).1
+    }
+
+    /// Eastbound approach geometry into junction `j`: (axis start, unit
+    /// direction, leg length).
+    fn east_leg(seed: u64, j: [i64; 2]) -> ([f64; 2], [f64; 2], f64) {
+        let (a, v) = (node_pos(seed, [j[0] - 1, j[1]]), node_pos(seed, j));
+        let len = dist(a, v);
+        (
+            [a[0], a[1]],
+            [(v[0] - a[0]) / len, (v[1] - a[1]) / len],
+            len,
+        )
+    }
+
+    #[test]
+    fn turn_pockets_deflect_through_traffic() {
+        let seed = 21;
+        // an eastbound approach with a pocket, driven straight through
+        let j = (0..99)
+            .map(|x| [x, 3])
+            .find(|&j| has_pocket(seed, j, [1, 0]))
+            .unwrap();
+        let axis = [
+            node_pos(seed, [j[0] - 1, j[1]]),
+            node_pos(seed, j),
+            node_pos(seed, [j[0] + 1, j[1]]),
+        ];
+        let line = corridor(seed, &axis, &[1, 1], ActorKind::Car, None);
+        let (a, dir, len) = east_leg(seed, j);
+        // mid-block: the ordinary rightmost lane; entering the junction:
+        // deflected one lane right, around the left-turn pocket
+        let mid_off = lateral_near(&line, a, dir, 0.45 * len);
+        // measured inside the pocket zone but before the through lanes
+        // start merging back across the junction
+        let end_off = lateral_near(&line, a, dir, len - 16.0);
+        assert!((mid_off - 0.5 * LANE_W_M).abs() < 1.0, "mid {mid_off}");
+        assert!((end_off - 1.5 * LANE_W_M).abs() < 1.2, "end {end_off}");
+    }
+
+    #[test]
+    fn slip_lanes_widen_right_turns() {
+        let seed = 21;
+        let apex = |j: [i64; 2]| {
+            // eastbound, turning right (south) at j
+            let axis = [
+                node_pos(seed, [j[0] - 1, j[1]]),
+                node_pos(seed, j),
+                node_pos(seed, [j[0], j[1] - 1]),
+            ];
+            let line = corridor(seed, &axis, &[1, 1], ActorKind::Car, None);
+            let v = node_pos(seed, j);
+            line.iter()
+                .map(|&p| dist(p, v))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let find = |want: bool| {
+            (0..99)
+                .map(|x| [x, 5])
+                .find(|&j| has_slip(seed, j, [1, 0]) == want)
+                .unwrap()
+        };
+        // the slip-lane corner is cut visibly wider than a plain corner
+        assert!(apex(find(true)) > apex(find(false)) + 2.0);
+    }
+
+    #[test]
+    fn pedestrians_cross_at_crosswalks() {
+        let seed = 21;
+        // a junction with a crosswalk on its eastbound approach, and a
+        // pedestrian id that chooses to cross there
+        // (pocket-free, so the sidewalk holds its ordinary offset)
+        let j = (0..99)
+            .map(|x| [x, 7])
+            .find(|&j| has_crosswalk(seed, j, [1, 0]) && !has_pocket(seed, j, [1, 0]))
+            .unwrap();
+        let id = (0..999)
+            .find(|&id| ped_crosses(seed, id, j, [1, 0]))
+            .unwrap();
+        let axis = [
+            node_pos(seed, [j[0] - 1, j[1]]),
+            node_pos(seed, j),
+            node_pos(seed, [j[0] + 1, j[1]]),
+        ];
+        let line = corridor(seed, &axis, &[1, 1], ActorKind::Pedestrian, Some((id, 1.0)));
+        let (a, dir, len) = east_leg(seed, j);
+        let sidewalk = LANE_W_M + 1.8;
+        // right sidewalk before the crosswalk, left sidewalk after it
+        let before = lateral_near(&line, a, dir, len - CROSSWALK_SETBACK_M - 12.0);
+        let after = lateral_near(&line, a, dir, len - 4.0);
+        assert!((before - sidewalk).abs() < 1.0, "before {before}");
+        assert!((after + sidewalk).abs() < 1.0, "after {after}");
+        // an id that doesn't cross stays on the right sidewalk
+        let id2 = (0..999)
+            .find(|&id| !ped_crosses(seed, id, j, [1, 0]))
+            .unwrap();
+        let stay = corridor(
+            seed,
+            &axis,
+            &[1, 1],
+            ActorKind::Pedestrian,
+            Some((id2, 1.0)),
+        );
+        let kept = lateral_near(&stay, a, dir, len - 4.0);
+        assert!(kept > 0.0, "kept {kept}");
+    }
+
+    #[test]
+    fn traffic_keeps_flowing_through_junction_furniture() {
+        // dense mixed traffic for a simulated minute: the pedestrian
+        // right-of-way rule must prevent crosswalk deadlocks, so average
+        // actor speed stays healthy instead of collapsing toward zero
+        let mut w = LiveWorld::new(9, PlannerKind::Straight, 64, 0.1);
+        assert!(w.actors.len() > 10);
+        for _ in 0..500 {
+            w.tick();
+        }
+        let mut moving = 0.0;
+        for _ in 0..100 {
+            w.tick();
+            let mean: f64 =
+                w.actors.iter().map(|a| a.state.speed).sum::<f64>() / w.actors.len() as f64;
+            moving += mean / 100.0;
+        }
+        assert!(moving > 1.0, "traffic gridlocked: mean speed {moving}");
     }
 
     #[test]
