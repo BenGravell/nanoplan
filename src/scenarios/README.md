@@ -119,20 +119,23 @@ pub struct Waypoint {
 
 ```rust
 pub struct MapData {
-    pub road_half_width: f64,      // default 5.5 — matches the drivable-area metric's threshold
+    pub road_half_width: f64,      // default 5.5 — the drivable half-width the planner and metric use
     pub divider_d: Option<f64>,    // Some(offset) draws a dashed lane divider at that Frenet offset
     pub crosswalk_s: Vec<f64>,     // stations along the centerline where a crosswalk band is drawn
     pub cross_streets: Vec<f64>,   // stations where a perpendicular street is drawn crossing the road
 }
 ```
 
-This is purely descriptive: the viewer draws it (road boundary lines, dashed
-divider, crosswalk stripes, cross streets), and `road_half_width` happens to
-match the constant the [`drivable_area`](../metrics/README.md) metric uses —
-but metrics read their own constant, not this field, so changing
-`road_half_width` in a scenario file does not change what counts as off-road
-for scoring purposes. If you need that coupled, the metric constant is the
-one to edit.
+The viewer draws it (road boundary lines, dashed divider, crosswalk stripes,
+cross streets), and `road_half_width` is also the *actual* drivable
+half-width the run enforces: `Scenario::road` copies it into
+[`Road::half_width`](#road-the-fixed-setting-of-a-run), which the
+[`drivable_area`](../metrics/README.md) metric scores against and every
+planner's shared cost function rejects trajectories outside of. So a
+narrower `road_half_width` genuinely tightens what counts as off-road, for
+both scoring and planning, on that scenario. The `ROAD_HALF_WIDTH_M = 5.5`
+constant in `metrics::drivable_area` is now only the *default* used when a
+scenario doesn't set its own (and `MapData::default`'s value).
 
 `cross_streets` exists because the `Scenario` format has only ever modeled a
 single road (`centerline`) — an intersection/crossing actor's trajectory
@@ -148,6 +151,7 @@ from — it isn't itself a lane the planner or metrics know anything about.
 pub struct Road {
     pub centerline: Vec<[f64; 2]>, // route reference path
     pub target_speed: f64,         // cruise speed; doubles as the metrics' speed limit
+    pub half_width: f64,           // drivable half-width; the off-road bound planner + metric enforce
     pub dt: f64,                   // tick length everything is sampled at
 }
 
@@ -157,7 +161,8 @@ impl Scenario {
 ```
 
 Not part of the JSON format — a `Road` is derived per *run*, pairing the
-scenario's `centerline`/`target_speed` with the caller-chosen `dt` (see
+scenario's `centerline`/`target_speed`/`map.road_half_width` with the
+caller-chosen `dt` (see
 [`src/simulation/README.md`](../simulation/README.md#why-this-design) for
 why `dt` belongs to the experiment, not the scenario). These three values
 always travel together — the planning `Context` embeds a `&Road`, the

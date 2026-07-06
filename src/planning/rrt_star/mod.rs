@@ -138,10 +138,21 @@ const CONTINUITY_WEIGHT: f64 = 0.15;
 // weight on the new value). High enough to follow a real change of plan
 // within a few ticks, low enough to smooth over single-tick sampling jitter.
 const COMMIT_SMOOTHING: f64 = 0.5;
-// a bit inside the drivable_area metric's own ROAD_HALF_WIDTH_M (5.5, see
-// src/metrics/drivable_area) so a bypass never scores a "successful"
-// avoidance by driving off the road instead
-const DRIVABLE_HALF_WIDTH_M: f64 = 5.0;
+// How far inside the road's own drivable half-width ([`Road::half_width`],
+// the bound the `drivable_area` metric and the shared cost score against)
+// RRT* holds its detours, so a bypass never scores a "successful" avoidance
+// by driving right up against the true edge. Subtracted from the road's
+// actual half-width per plan (see `drivable_bound`) rather than a fixed
+// 5.0 m, so the margin follows a narrow street in instead of letting the
+// tree wander off it.
+const DRIVABLE_MARGIN_M: f64 = 0.5;
+
+/// The lateral bound RRT* holds its detours within on `ctx`'s road: the
+/// road's drivable half-width less [`DRIVABLE_MARGIN_M`], floored so a very
+/// narrow road still leaves the centerline itself reachable.
+fn drivable_bound(ctx: &Context) -> f64 {
+    (ctx.road.half_width - DRIVABLE_MARGIN_M).max(0.5)
+}
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
@@ -315,10 +326,10 @@ fn steer_cost(
         // over general synthetic scenarios and finding `drivable_area`
         // scoring 0 despite every sampled *target* being in-bounds. This
         // is tighter than the shared cost function's own road-edge check
-        // (`drivable_area::ROAD_HALF_WIDTH_M`, 5.5 m), on purpose: a bypass
-        // should never count as "successful" avoidance by driving right up
-        // against the true edge.
-        if d.abs() > DRIVABLE_HALF_WIDTH_M {
+        // (the road's `half_width`), on purpose: a bypass should never count
+        // as "successful" avoidance by driving right up against the true
+        // edge.
+        if d.abs() > drivable_bound(ctx) {
             return None;
         }
         let t = (s - s0) / v;
@@ -337,7 +348,7 @@ fn steer_cost(
             ..Default::default()
         };
         let point = ctx.time("cost", || {
-            cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
+            cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
         });
         if point.is_infinite() {
             return None;
@@ -615,11 +626,11 @@ impl Planner for RrtStarPlanner {
         // offset up and back down rather than demanding one hop cover the
         // whole lateral distance (which max_yaw_change's steering-angle
         // limit would reject outright).
+        let drivable = drivable_bound(ctx);
         for a in ctx.actors {
             let (a_s, a_d) = path.project([a.x, a.y]);
             for side in [-1.0, 1.0] {
-                let bypass = (a_d + side * (COLLISION_MARGIN_M + 2.0))
-                    .clamp(-DRIVABLE_HALF_WIDTH_M, DRIVABLE_HALF_WIDTH_M);
+                let bypass = (a_d + side * (COLLISION_MARGIN_M + 2.0)).clamp(-drivable, drivable);
                 for (station_offset, lateral) in [
                     (-20.0, 0.25 * bypass),
                     (-10.0, 0.6 * bypass),

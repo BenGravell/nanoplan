@@ -174,7 +174,7 @@ impl Planner for LatticePlanner {
                     ..Default::default()
                 };
                 let point = ctx.time("cost", || {
-                    cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
+                    cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
                 });
                 if point.is_infinite() {
                     return f64::INFINITY;
@@ -310,7 +310,8 @@ impl Planner for LatticePlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning::test_run;
+    use crate::planning::{test_road, test_run, test_run_on};
+    use crate::scenarios::Road;
 
     #[test]
     fn stays_on_empty_centerline() {
@@ -342,6 +343,42 @@ mod tests {
         let end = trace.last().unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");
         assert!(end.x > 60.0, "did not pass the obstacle, x {}", end.x);
+    }
+
+    #[test]
+    fn respects_the_roads_own_half_width_around_an_obstacle() {
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
+        let peak = |trace: &[State]| trace.iter().map(|s| s.y.abs()).fold(0.0, f64::max);
+        let base = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+
+        // A one-lane-wide road (3.5 m half-width) has just enough room to
+        // detour around a stopped car (needs ~2.5 m of clearance): the
+        // lattice passes it while never crossing the road edge.
+        let narrow = Road {
+            half_width: 3.5,
+            ..base.clone()
+        };
+        let trace = test_run_on(&mut LatticePlanner, &narrow, ego, &[obstacle], 150);
+        assert!(peak(&trace) <= 3.5, "left the road, peak {}", peak(&trace));
+        assert!(trace.last().unwrap().x > 60.0, "never got past the obstacle");
+
+        // A road too tight to fit the detour: rather than plan off the
+        // surface to get around, the planner holds inside the road edge
+        // (and brakes short of the obstacle).
+        let too_tight = Road {
+            half_width: 2.0,
+            ..base
+        };
+        let trace = test_run_on(&mut LatticePlanner, &too_tight, ego, &[obstacle], 150);
+        assert!(peak(&trace) <= 2.0, "left the tight road, peak {}", peak(&trace));
+        assert!(trace.last().unwrap().x < 38.0, "drove into/around the obstacle");
     }
 
     #[test]

@@ -53,6 +53,9 @@ pub struct TickCtx<'a> {
     /// Tickwise ego kinematics (accels, jerks, yaw rates).
     pub kinematics: &'a comfort::Kinematics,
     pub speed_limit: f64,
+    /// Drivable half-width of the road, from [`Road::half_width`] — the
+    /// lateral bound `drivable_area` scores against.
+    pub road_half_width: f64,
     pub dt: f64,
 }
 
@@ -218,6 +221,7 @@ pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
         lateral: &lateral,
         kinematics: &kinematics,
         speed_limit: road.target_speed,
+        road_half_width: road.half_width,
         dt: road.dt,
     };
 
@@ -250,6 +254,7 @@ mod tests {
         Road {
             centerline: CENTERLINE.to_vec(),
             target_speed: 10.0,
+            half_width: drivable_area::ROAD_HALF_WIDTH_M,
             dt: DT,
         }
     }
@@ -339,5 +344,24 @@ mod tests {
         assert_eq!(m.at(51).0[1], 1.0);
         assert_eq!(m.aggregate[1], 0.0); // min aggregation: one bad tick
         assert_eq!(m.score, 0.0);
+    }
+
+    #[test]
+    fn drivable_area_tracks_the_road_half_width() {
+        // the same 4 m lateral excursion is on a wide road but off a narrow
+        // one: the drivable-area bound follows the road's own half-width,
+        // not a fixed constant
+        let mut ego = cruise(10.0, 200);
+        ego[50].y = 4.0;
+        let wide = Road {
+            half_width: 5.5,
+            ..road()
+        };
+        let narrow = Road {
+            half_width: 3.5,
+            ..road()
+        };
+        assert_eq!(evaluate(&ego, &[], &wide).aggregate[1], 1.0);
+        assert_eq!(evaluate(&ego, &[], &narrow).aggregate[1], 0.0);
     }
 }

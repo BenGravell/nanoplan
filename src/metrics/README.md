@@ -109,7 +109,7 @@ reports).
 | # | Metric | Module | Rule | What it checks | Key thresholds |
 |---|---|---|---|---|---|
 | 0 | No at-fault collisions | `collisions` | min | Ego stays farther than `2 × CAR_RADIUS_M` (2.5 m) from every actor. | `CAR_RADIUS_M = 1.25` (circle approximation of the vehicle footprint, shared with the planners' own 2.5 m collision spacing) |
-| 1 | Drivable area | `drivable_area` | min | Ego's signed Frenet lateral offset stays within the road half-width. | `ROAD_HALF_WIDTH_M = 5.5` |
+| 1 | Drivable area | `drivable_area` | min | Ego's signed Frenet lateral offset stays within the road's half-width (`Road::half_width`, from the scenario's `map.road_half_width` or the live street geometry). | `ROAD_HALF_WIDTH_M = 5.5` (default when a scenario sets none) |
 | 2 | Driving direction | `driving_direction` | min | Ego doesn't move backward along the route by more than a threshold over a trailing 1 s window. | `2.0` m → full credit, `2.0`-`6.0` m → half credit, `>6.0` m → zero |
 | 3 | Making progress | `making_progress` | threshold | The (aggregated or per-tick) progress ratio exceeds a minimum. | `MIN_PROGRESS_RATIO = 0.2` |
 | 4 | TTC within bound | `ttc` | min | Constant-velocity projections of ego and every actor, sampled every `0.1` s out to `3.0` s, never come within `2 × CAR_RADIUS_M`. | `LEAST_MIN_TTC_S = 0.95` |

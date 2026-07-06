@@ -71,7 +71,6 @@
 //! points.
 
 use super::{TICKS, goal_state, rollout_constrained, take_warm};
-use crate::metrics::drivable_area;
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, step};
@@ -199,7 +198,8 @@ impl Ocp<'_, '_> {
             t: t as f64 * self.ctx.road.dt,
         };
         let target = self.ctx.road.target_speed;
-        let mut shared = cost::point_cost(&sample, target, self.ctx.actors);
+        let mut shared =
+            cost::point_cost(&sample, target, self.ctx.road.half_width, self.ctx.actors);
         if !shared.is_finite() {
             // hard violation with an escape slope (see the module doc)
             shared = cost::HARD_VIOLATION_PENALTY * (1.0 + violation_depth(&sample, self.ctx));
@@ -236,7 +236,10 @@ impl Ocp<'_, '_> {
 /// boundary, so the escape-slope penalty is continuous with the flat
 /// [`cost::HARD_VIOLATION_PENALTY`] there.
 fn violation_depth(sample: &cost::Sample, ctx: &Context) -> f64 {
-    let mut depth = (sample.lateral.abs() - drivable_area::ROAD_HALF_WIDTH_M).max(0.0);
+    // measured against the road's own drivable half-width, the same bound
+    // `cost::point_cost` rejects on — so the escape slope stays continuous
+    // with the flat penalty exactly at the true road edge, not a fixed 5.5 m
+    let mut depth = (sample.lateral.abs() - ctx.road.half_width).max(0.0);
     for a in ctx.actors {
         let p = crate::metrics::project(a, sample.t);
         let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
