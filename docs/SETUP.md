@@ -7,10 +7,13 @@
   [`rust-toolchain.toml`](../rust-toolchain.toml) pins the channel and adds
   the `wasm32-unknown-unknown` target automatically the first time you run
   `cargo` in this repo.
-- **Python 3** with the standard library only, if you plan to export real
-  nuPlan log scenarios (`tools/export_nuplan_scenarios.py` uses `sqlite3`
-  from the standard library — no `pip install` and no `nuplan-devkit`
-  needed).
+- **Python 3** with the standard library only, if you plan to regenerate or
+  convert the CommonRoad scenario corpus
+  (`tools/generate_diverse_scenarios.py`,
+  `tools/export_commonroad_scenarios.py` — no `pip install` and no
+  `commonroad-io` needed) or export real nuPlan log scenarios locally
+  (`tools/export_nuplan_scenarios.py` uses `sqlite3` from the standard
+  library — no `nuplan-devkit` needed).
 
 No other language toolchains are required. There is no JavaScript build step
 outside of what [Trunk](#web-wasm-build) drives.
@@ -147,17 +150,29 @@ cargo run --release --bin batch -- --count 20
 See [docs/USAGE.md#batch-evaluation](USAGE.md#batch-evaluation) for flags and
 output format.
 
-## Exporting real nuPlan scenarios
+## Converting scenarios
 
-`tools/export_nuplan_scenarios.py` reads a nuPlan log `.db` (SQLite) file
-directly — you do not need to install `nuplan-devkit` or download the full
-nuPlan dataset's maps to use it, only a log file:
+The repo ships its scenario corpus as CommonRoad XML in
+`scenarios/commonroad/`; `tools/export_commonroad_scenarios.py` converts it
+(or any scenario from [commonroad.in.tum.de](https://commonroad.in.tum.de))
+into the JSON the viewer and batch runner load:
+
+```sh
+python3 tools/export_commonroad_scenarios.py scenarios/commonroad out_dir
+```
+
+For tuning against real human driving, `tools/export_nuplan_scenarios.py`
+reads a nuPlan log `.db` (SQLite) file directly — you do not need to install
+`nuplan-devkit` or download the full nuPlan dataset's maps to use it, only a
+log file (which stays local: the nuPlan license doesn't permit
+redistribution):
 
 ```sh
 python3 tools/export_nuplan_scenarios.py path/to/log.db out_dir
 ```
 
-See [docs/USAGE.md#exporting-real-nuplan-scenarios](USAGE.md#exporting-real-nuplan-scenarios)
+See [docs/USAGE.md#converting-commonroad-scenarios](USAGE.md#converting-commonroad-scenarios)
+and [docs/USAGE.md#exporting-real-nuplan-scenarios-local-only](USAGE.md#exporting-real-nuplan-scenarios-local-only)
 for details and flags.
 
 ## Verifying the setup

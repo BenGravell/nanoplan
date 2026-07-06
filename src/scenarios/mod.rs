@@ -1,8 +1,10 @@
 //! Scenario data, road geometry, loading, and generation.
 //!
 //! Scenarios are plain data (serde JSON) so large batches can come from
-//! anywhere: the built-in synthetic generator, or real nuPlan logs exported
-//! with tools/export_nuplan_scenarios.py.
+//! anywhere: the built-in synthetic generator, CommonRoad scenarios
+//! converted with tools/export_commonroad_scenarios.py (the repo's own
+//! corpus in scenarios/commonroad/, or files from commonroad.in.tum.de),
+//! or real nuPlan logs exported locally with tools/export_nuplan_scenarios.py.
 
 use serde::{Deserialize, Serialize};
 
@@ -118,8 +120,9 @@ pub struct Actor {
     pub init: State,
     #[serde(default)]
     pub control: Control,
-    /// Logged trajectory to replay (e.g. from a nuPlan log); must be sorted
-    /// by time. Overrides `control` when non-empty.
+    /// Logged trajectory to replay (e.g. a CommonRoad obstacle trajectory
+    /// or a nuPlan track); must be sorted by time. Overrides `control` when
+    /// non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trajectory: Vec<Waypoint>,
 }
@@ -172,8 +175,9 @@ pub(crate) fn replay(trajectory: &[Waypoint], t: f64) -> State {
     }
 }
 
-/// Environmental data mirroring the nuPlan map/scenario elements
-/// (drivable area edges, lane boundary, crosswalks).
+/// Environmental data distilled from the scenario's map (drivable area
+/// edges, lane boundary, crosswalks — e.g. derived from a CommonRoad
+/// lanelet network by tools/export_commonroad_scenarios.py).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapData {
     /// Lateral offset of the road boundaries (drivable area edge).
@@ -235,7 +239,9 @@ pub struct Scenario {
     #[serde(default)]
     pub map: MapData,
     /// The expert (human) ego trajectory logged over the same horizon, when
-    /// the scenario comes from a real log (tools/export_nuplan_scenarios.py).
+    /// the scenario comes from a real log (tools/export_nuplan_scenarios.py;
+    /// nuPlan exports stay local — see docs/USAGE.md — and CommonRoad
+    /// scenarios carry no expert, so bundled scenarios leave this empty).
     /// Not used in simulation — the ego is planned, not replayed — but it is
     /// the demonstration data the cost-weight autotuner ([`crate::tuning`])
     /// learns from. Empty for synthetic and hand-authored scenarios.
@@ -292,7 +298,8 @@ pub fn load_path(path: &std::path::Path) -> std::io::Result<Vec<Scenario>> {
 
 /// Generate `count` randomized scenario variations: lead vehicles at varying
 /// gaps and speeds, oncoming and crossing traffic, and curved roads.
-/// Deterministic in `seed`, standing in for nuPlan logs at batch scale.
+/// Deterministic in `seed` — an endless batch-scale supplement to the
+/// checked-in CommonRoad corpus.
 pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
     let mut rng = crate::Rng(seed | 1);
     (0..count)

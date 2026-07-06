@@ -26,7 +26,7 @@ viewer's modes:
 | **scenario** dropdown | Selects which `Scenario` to simulate. See [Scenario sources](#scenario-sources) below for what's in the list. |
 | **planner** dropdown | Selects which planner drives the ego vehicle. If this (scenario, planner) combo hasn't been simulated yet, a "Simulate" button (then a progress bar while it runs) appears in place of the metrics table below — simulating doesn't block the window, so an expensive planner like PI²-DDP or RRT* never freezes the UI. Re-selecting a combo already simulated is instant. |
 | **time [s]** slider | Scrubs through the 20-second rollout. The camera follows the ego; the metrics and latency tables below update to the scrubbed tick. |
-| **future preview [s]** slider | When above zero, frames the screen in an accent color and overlays: the ego's plan from the scrubbed state (replanned live, pink line + ghost car at the horizon) and every actor's constant-velocity prediction (dimmer pink). Use this to see a planner's plan diverge from reality — e.g. select "curving lead" or the bundled "nuplan: cut-in" scenario and watch the prediction miss. |
+| **future preview [s]** slider | When above zero, frames the screen in an accent color and overlays: the ego's plan from the scrubbed state (replanned live, pink line + ghost car at the horizon) and every actor's constant-velocity prediction (dimmer pink). Use this to see a planner's plan diverge from reality — e.g. select "curving lead" or the bundled "ZAM_CutIn-1_1_T-1" scenario and watch the prediction miss. |
 | **diagnostic points** / **diagnostic trajectories** checkboxes | Only shown for planners with search geometry to show (all but the strawman and Bezier+IDM). Overlays what the planner considered during the future-preview replan above: for the lattice, its (station, lateral) sample grid (yellow points) and every DP edge it costed (cyan trajectories); for PI²-DDP, its sampled rollout states (points) and rollouts (trajectories); for RRT*, every tree node (points) and the sampled polyline of the edge that added it (trajectories). Needs **future preview [s]** above zero — that replan is what gets recorded. |
 
 ### Reading the metrics table
@@ -99,7 +99,10 @@ order:
 2. **Bundled JSON scenarios** from [`scenarios/json/`](../scenarios/json/),
    embedded into the binary at compile time with `include_str!` — they ship
    in the web build too, with no filesystem access needed. Currently a
-   braking lead and a lane cut-in, both driven by logged trajectory replay
+   braking lead (`ZAM_BrakingLead-1_1_T-1`) and a lane cut-in
+   (`ZAM_CutIn-1_1_T-1`), converted from the CommonRoad corpus in
+   [`scenarios/commonroad/`](../scenarios/commonroad/) and driven by logged
+   trajectory replay
    (see [src/scenarios/README.md#trajectory-replay](../src/scenarios/README.md#trajectory-replay)).
 3. **Desktop only**: any files or directories passed as command-line
    arguments, each loaded with `nanoplan::scenarios::load_path`:
@@ -111,34 +114,33 @@ order:
 
    Bad paths are skipped with a warning on stderr rather than crashing the
    viewer.
-4. **Desktop only, live**: the "nuPlan path" text field + "Load" button in
+4. **Desktop only, live**: the "scenario path" text field + "Load" button in
    the viewer window itself — type a path to a `*.json` file or a directory
    of them and click Load. Newly loaded scenarios are appended to the
    dropdown and the first one is selected immediately; a status line reports
    how many scenarios loaded, or why loading failed. This is the same
    `load_path` used for CLI args, just without needing to relaunch — the way
-   to browse scenarios exported from a real nuPlan log (see
-   [below](#exporting-real-nuplan-scenarios)) during a live session.
+   to browse scenarios converted from CommonRoad files (see
+   [below](#converting-commonroad-scenarios)) or exported from a local
+   nuPlan log during a live session.
 5. **Web only**: `scenarios/web_bundle.json`, fetched automatically at
    startup — the filesystem-based sources above don't exist in a browser.
    It's a single compact JSON array (built by
    `tools/bundle_web_scenarios.py` from a directory of scenario files, one
    HTTP request instead of one per scenario) that Trunk copies into `dist/`
-   at build time. Ships with 115 generated scenarios by default (see
-   [Generating a diverse default scenario set](#generating-a-diverse-default-scenario-set)
-   below) since there's no real nuPlan corpus checked into this repo — see
-   the note in [Exporting real nuPlan scenarios](#exporting-real-nuplan-scenarios).
-   A maintainer can replace them by exporting real logs into `scenarios/web/`
-   and rerunning the bundler before deploying. A failed or empty fetch
-   degrades silently (a warning in the browser console, zero extra
-   scenarios) rather than breaking the viewer.
+   at build time. Ships with the converted CommonRoad corpus from
+   [`scenarios/commonroad/`](../scenarios/commonroad/) — freely
+   redistributable, unlike nuPlan data (see
+   [Generating the scenario corpus](#generating-the-scenario-corpus)
+   below). A failed or empty fetch degrades silently (a warning in the
+   browser console, zero extra scenarios) rather than breaking the viewer.
 6. **Web only, live**: the "Load scenario file(s)…" button in the viewer —
    opens the browser's native file picker (via the `rfd` crate) so a visitor
    can browse to their own exported `*.json` scenario file(s) — a single
    scenario, or a bundle array like `web_bundle.json`'s format — and load
    them into the running app without a maintainer having to bake them into
    the deployed bundle first. This is the web equivalent of desktop's
-   "nuPlan path" widget above: same "append to the dropdown, select the
+   "scenario path" widget above: same "append to the dropdown, select the
    first newly loaded one" behavior, same status line, just picking files
    through the browser's dialog instead of typing a filesystem path.
 
@@ -187,11 +189,63 @@ Flags:
 | `--seed S` | `42` | Seed for the synthetic generator. Same seed + count always produces the same scenarios. |
 | `--dir PATH` | (none) | A directory of `*.json` scenario files to include. Repeatable — pass `--dir a --dir b` to combine multiple directories. |
 
-## Exporting real nuPlan scenarios
+## Converting CommonRoad scenarios
+
+`tools/export_commonroad_scenarios.py` reads [CommonRoad](https://commonroad.in.tum.de)
+2020a XML scenarios with only the Python standard library — no
+`commonroad-io` install required — and writes one nanoplan-format JSON file
+per scenario: the route through the lanelet network becomes the
+`centerline`, the planning problem's initial state becomes the `ego`, every
+obstacle becomes an actor (dynamic ones replay their logged trajectory), and
+the road half-width / lane divider / crosswalks are derived from the
+lanelets. The mapping details are documented in
+[src/scenarios/README.md#commonroad-export-mapping](../src/scenarios/README.md#commonroad-export-mapping).
+
+```sh
+python3 tools/export_commonroad_scenarios.py scenarios/commonroad out_dir
+python3 tools/export_commonroad_scenarios.py path/to/ONE_Scenario-1_1_T-1.xml out_dir
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `src` (positional) | — | A CommonRoad `*.xml` file, or a directory of them (non-recursive). |
+| `out` (positional) | — | Output directory; created if it doesn't exist. |
+
+This works on the corpus shipped in
+[`scenarios/commonroad/`](../scenarios/commonroad/) and on real scenarios
+downloaded from the [CommonRoad database](https://commonroad.in.tum.de/scenarios)
+alike. Once converted, feed the directory into either tool:
+
+```sh
+cargo run --release --bin batch -- --count 0 --dir out_dir   # score every planner on them
+cargo run -- out_dir                                          # browse them in the viewer
+```
+
+To make them available in the **web build** too (the deployed viewer has no
+filesystem, so `out_dir` above only works on desktop), convert straight into
+`scenarios/web/` and bundle it into the single file the web build fetches at
+startup (see [Scenario sources](#scenario-sources) above):
+
+```sh
+python3 tools/export_commonroad_scenarios.py scenarios/commonroad scenarios/web
+python3 tools/bundle_web_scenarios.py            # writes scenarios/web_bundle.json
+trunk build --release --public-url /nanoplan/    # copies it into dist/
+```
+
+## Exporting real nuPlan scenarios (local only)
 
 `tools/export_nuplan_scenarios.py` reads a nuPlan log database directly with
 Python's standard-library `sqlite3` — no `nuplan-devkit` install required —
 and writes one nanoplan-format JSON file per tagged scenario in the log.
+Its main purpose now is the `expert` (human) trajectory each export carries:
+the demonstration data the [cost-weight autotuner](#autotuning-the-cost-weights)
+learns from, which CommonRoad scenarios don't include.
+
+> **Keep nuPlan exports local.** The nuPlan dataset is registration-gated
+> and its license does not permit redistribution — don't commit exported
+> scenarios to this repo or bundle them into the deployed web build. That's
+> exactly why the corpus this repo *ships* is CommonRoad-format instead
+> (see [Converting CommonRoad scenarios](#converting-commonroad-scenarios)).
 
 ```sh
 python3 tools/export_nuplan_scenarios.py path/to/log.db out_dir
@@ -209,23 +263,9 @@ python3 tools/export_nuplan_scenarios.py path/to/log.db out_dir \
 
 What ends up in each JSON file (and why) is documented in
 [src/scenarios/README.md#nuplan-export-mapping](../src/scenarios/README.md#nuplan-export-mapping).
-Once exported, feed the directory into either tool:
-
-```sh
-cargo run --release --bin batch -- --count 0 --dir out_dir   # score every planner on them
-cargo run -- out_dir                                          # browse them in the viewer
-```
-
-To make them available in the **web build** too (the deployed viewer has no
-filesystem, so `out_dir` above only works on desktop), export straight into
-`scenarios/web/` and bundle it into the single file the web build fetches at
-startup (see [Scenario sources](#scenario-sources) above):
-
-```sh
-python3 tools/export_nuplan_scenarios.py path/to/log.db scenarios/web
-python3 tools/bundle_web_scenarios.py            # writes scenarios/web_bundle.json
-trunk build --release --public-url /nanoplan/    # copies it into dist/
-```
+Exported directories work everywhere converted CommonRoad ones do (batch
+`--dir`, viewer CLI args, the in-app "scenario path" widget) — just keep
+them out of `scenarios/web/`.
 
 > **Note:** the export script is written strictly against the vendored
 > [`nuplan_schema.md`](../scenarios/nuplan/nuplan_schema.md) but has not been
@@ -244,8 +284,11 @@ soft weights to the expert (human) trajectories in exported nuPlan scenarios,
 with maximum-entropy inverse reinforcement learning (DriveIRL-style — see
 [src/tuning/README.md](../src/tuning/README.md) for the model and its
 assumptions). Scenarios need an `expert` field, which
-`tools/export_nuplan_scenarios.py` includes; scenarios without a usable
-expert are counted and skipped. Collision and driving off-road stay
+`tools/export_nuplan_scenarios.py` includes (from nuPlan data you've
+licensed and exported locally — see
+[above](#exporting-real-nuplan-scenarios-local-only)); CommonRoad scenarios
+carry no expert trajectory, and scenarios without a usable expert are
+counted and skipped. Collision and driving off-road stay
 **infinite cost by fiat** — only the soft weights are learned.
 
 The output ends with the learned `WEIGHTS` line to paste into
@@ -275,41 +318,38 @@ the new weights do to closed-loop scores.
 | `--iters N` | `500` | Gradient-descent iterations. |
 | `--l2 X` | `1e-3` | Strength of the pull toward the current hand weights (a prior); lower it to let the data dominate. |
 
-## Generating a diverse default scenario set
+## Generating the scenario corpus
 
-Since there's no real nuPlan corpus checked into this repo,
-`tools/generate_diverse_scenarios.py` procedurally fills the same role for
-the web build: it writes a large, varied set of scenarios straight into
-`scenarios/web/`, tagged with nuPlan-style scenario-type names (stopping
-with a lead, starting a turn, traversing an intersection, near multiple
-vehicles, congested stop-and-go, cutting in, merging onto a highway, and
-more — see the script for the full list), spanning a wide range of speeds
+`tools/generate_diverse_scenarios.py` procedurally generates the CommonRoad
+XML corpus checked into [`scenarios/commonroad/`](../scenarios/commonroad/):
+one scenario per category (stopping with a lead, traversing an intersection,
+near multiple vehicles, congested stop-and-go, cutting in, merging onto a
+highway, and more — see the script for the full list) plus the two fixed
+classics compiled into the viewer binary, spanning a wide range of speeds
 (residential to highway), road geometries (straight, sine curves, arcs,
-S-curves, roundabout-like loops), and agent interactions. It's what
-populates the 115 scenarios shipped in `scenarios/web_bundle.json` by
-default.
+S-curves, roundabout-like loops), and agent interactions. Each file is a
+complete CommonRoad 2020a scenario: lanelet network, obstacles with scripted
+20 s / 10 Hz trajectories, and a planning problem.
 
 ```sh
-python3 tools/generate_diverse_scenarios.py --clean   # writes scenarios/web/*.json
-python3 tools/bundle_web_scenarios.py                  # writes scenarios/web_bundle.json
+python3 tools/generate_diverse_scenarios.py --clean                          # scenarios/commonroad/*.xml
+python3 tools/export_commonroad_scenarios.py scenarios/commonroad scenarios/web
+python3 tools/bundle_web_scenarios.py                                        # scenarios/web_bundle.json
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--out` | `scenarios/web` | Output directory. |
-| `--variations` | `5` | How many randomized variations to generate per scenario category. |
+| `--out` | `scenarios/commonroad` | Output directory. |
+| `--variations` | `1` | How many randomized variations to generate per scenario category. |
 | `--seed` | `1` | RNG seed; same seed + variations always produces byte-identical scenarios. |
-| `--clean` | off | Remove the output directory first, instead of adding to whatever's already there. |
+| `--clean` | off | Remove the output directory's `*.xml` files first, instead of adding to whatever's already there. |
 
-A random subset of scenarios additionally gets a `[wet_road]` /
-`[night_low_visibility]` / `[dense_fog]` / `[school_zone_caution]` suffix and
-a reduced `target_speed` — nanoplan has no weather/visibility model, so this
-is the only way the schema can express a driving-condition axis; it's a
-difficulty/flavor variation, not a claim that the viewer renders weather.
-
-Regenerating replaces the *procedural* scenarios; it doesn't touch anything
-exported from a real log via `export_nuplan_scenarios.py` unless you point
-both tools at the same directory.
+A random subset of scenarios additionally gets CommonRoad environment
+conditions (light rain, night, fog) and a correspondingly derated
+goal-velocity interval, which the converter surfaces as a reduced
+`target_speed` and a `[light_rain]`-style name suffix — nanoplan has no
+weather/visibility model, so treat it as difficulty/flavor variation, not a
+claim that the viewer renders weather.
 
 ## Web deploy
 

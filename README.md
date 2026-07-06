@@ -15,7 +15,7 @@ from `main`; see [Web deploy](docs/USAGE.md#web-deploy)).
 | I want to... | Read |
 |---|---|
 | Install the toolchain and get a build running | [docs/SETUP.md](docs/SETUP.md) |
-| Run the viewer, the batch tool, or export real nuPlan scenarios | [docs/USAGE.md](docs/USAGE.md) |
+| Run the viewer, the batch tool, or convert CommonRoad scenarios | [docs/USAGE.md](docs/USAGE.md) |
 | Understand or extend a specific part of the code | the component READMEs below |
 | Know *why* a core abstraction is shaped the way it is | [docs/adr/](docs/adr/) |
 
@@ -50,14 +50,20 @@ planning, simulation, or scoring logic itself.
 
 A few more directories hold data rather than code:
 
+- [`scenarios/commonroad/`](scenarios/commonroad/) — the scenario corpus
+  this repo ships, in the open [CommonRoad](https://commonroad.in.tum.de)
+  2020a XML format (original to this repo, MIT — redistributable, unlike
+  nuPlan data). `tools/export_commonroad_scenarios.py` converts these (or
+  any real CommonRoad scenario) into nanoplan's JSON.
 - [`scenarios/nuplan/`](scenarios/nuplan/) — reference material vendored from
   [nuplan-devkit](https://github.com/motional/nuplan-devkit) (log schema,
   vehicle parameters, metric definitions). Source of truth for the metric
-  thresholds in `src/metrics/`.
-- `scenarios/json/` — example scenario JSON files bundled into the viewer
-  binary at compile time (see [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
-- `scenarios/web/` (not checked in by default) — scenarios for the *web*
-  build to fetch at startup instead, combined by `tools/bundle_web_scenarios.py`
+  thresholds in `src/metrics/`; scenario data exported from real nuPlan logs
+  stays local (tuning only — see [docs/USAGE.md](docs/USAGE.md#exporting-real-nuplan-scenarios-local-only)).
+- `scenarios/json/` — bundled conversions of two CommonRoad scenarios,
+  compiled into the viewer binary (see [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
+- `scenarios/web/` (not checked in) — staging directory for the *web*
+  build's scenario set, combined by `tools/bundle_web_scenarios.py`
   into `scenarios/web_bundle.json` (see
   [docs/USAGE.md](docs/USAGE.md#scenario-sources)).
 
@@ -106,6 +112,11 @@ A few more directories hold data rather than code:
   — the maximum-entropy IRL recipe (lattice candidates, safety filter, linear
   reward over trajectory features) behind the cost-weight autotuner in
   `src/tuning/`.
+- **CommonRoad**: the scenario corpus in [`scenarios/commonroad/`](scenarios/commonroad/)
+  uses the [CommonRoad](https://commonroad.in.tum.de) 2020a XML format
+  (Althoff, Koschi & Manzinger, "CommonRoad: Composable benchmarks for
+  motion planning on roads", IV 2017) so scenarios interoperate with the
+  CommonRoad ecosystem; the files themselves are original to this repo.
 - **nuPlan**: scenario schema, vehicle parameters, and closed-loop metric
   definitions vendored from [nuplan-devkit](https://github.com/motional/nuplan-devkit)
   (Apache-2.0) — see [`scenarios/nuplan/README.md`](scenarios/nuplan/README.md).

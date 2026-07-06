@@ -11,14 +11,16 @@ scenarios/
 
 > **Naming note**: this is the Rust module `src/scenarios/`. There are also
 > repo-root *data* directories with similar names — don't confuse them:
-> [`scenarios/nuplan/`](../../scenarios/nuplan/) holds vendored nuPlan
-> reference documents (schema, vehicle parameters, metric definitions),
-> `scenarios/json/` holds example scenario JSON files bundled into the
-> viewer binary at compile time, and `scenarios/web/` (not checked in by
-> default) is the source directory `tools/bundle_web_scenarios.py` reads to
-> build `scenarios/web_bundle.json`, fetched by the web build at startup —
-> see [docs/USAGE.md#scenario-sources](../../docs/USAGE.md#scenario-sources).
-> None of these three contain code.
+> [`scenarios/commonroad/`](../../scenarios/commonroad/) holds the CommonRoad
+> XML scenario corpus this repo ships, [`scenarios/nuplan/`](../../scenarios/nuplan/)
+> holds vendored nuPlan reference documents (schema, vehicle parameters,
+> metric definitions), `scenarios/json/` holds two converted CommonRoad
+> scenarios bundled into the viewer binary at compile time, and
+> `scenarios/web/` (not checked in) is the staging directory
+> `tools/bundle_web_scenarios.py` reads to build `scenarios/web_bundle.json`,
+> fetched by the web build at startup — see
+> [docs/USAGE.md#scenario-sources](../../docs/USAGE.md#scenario-sources).
+> None of these contain code.
 
 ## `Scenario`, the JSON format
 
@@ -46,24 +48,28 @@ on every optional field, so a scenario file can be as small as:
 ```
 
 A fuller example, with an actor replaying a logged trajectory and explicit
-map data (this is a trimmed version of [`scenarios/json/braking_lead.json`](../../scenarios/json/braking_lead.json)):
+map data (this is a trimmed version of
+[`scenarios/json/braking_lead.json`](../../scenarios/json/braking_lead.json),
+which `tools/export_commonroad_scenarios.py` converted from
+[`scenarios/commonroad/ZAM_BrakingLead-1_1_T-1.xml`](../../scenarios/commonroad/ZAM_BrakingLead-1_1_T-1.xml)):
 
 ```json
 {
-  "name": "nuplan: braking lead",
-  "ego": { "x": 0.0, "y": 0.0, "speed": 8.0 },
+  "name": "ZAM_BrakingLead-1_1_T-1",
+  "ego": { "x": 0.0, "y": 0.0, "yaw": 0.0, "speed": 8.0 },
   "actors": [
     {
       "init": { "x": 40.0, "y": 0.0, "yaw": 0.0, "speed": 8.0 },
       "trajectory": [
         { "t": 0.0, "x": 40.0, "y": 0.0, "yaw": 0.0, "speed": 8.0 },
         { "t": 0.1, "x": 40.8, "y": 0.0, "yaw": 0.0, "speed": 8.0 },
-        { "t": 2.0, "x": 56.0, "y": 0.0, "yaw": 0.0, "speed": 8.0 },
-        { "t": 6.0, "x": 76.0, "y": 0.0, "yaw": 0.0, "speed": 0.0 }
+        { "t": 6.0, "x": 71.6, "y": 0.0, "yaw": 0.0, "speed": 0.0 }
       ]
     }
   ],
-  "centerline": [[-50.0, 0.0], [400.0, 0.0]]
+  "centerline": [[-50.0, 0.0], [-45.0, 0.0], [400.0, 0.0]],
+  "target_speed": 10.0,
+  "map": { "road_half_width": 5.5, "divider_d": null, "crosswalk_s": [], "cross_streets": [] }
 }
 ```
 
@@ -256,7 +262,7 @@ the batch runner's `--dir` flag.
 
 `load_path` is the same, generalized to accept either a directory (delegates
 to `load_dir`) or a single scenario file. It's what the viewer uses for both
-its CLI-argument scenario sources and its in-app "nuPlan path" loading
+its CLI-argument scenario sources and its in-app "scenario path" loading
 widget (desktop only — see
 [`docs/USAGE.md`](../../docs/USAGE.md#scenario-sources)).
 
@@ -268,9 +274,9 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario>
 
 Generates `count` scenarios deterministically from `seed` (same seed + count
 always produces byte-identical scenarios — see
-`synthetic_batch_is_deterministic`), standing in for real nuPlan logs when
-you want a large batch without exporting one. Cycles through four families
-by index (`i % 4`):
+`synthetic_batch_is_deterministic`), supplementing the checked-in CommonRoad
+corpus when you want a large batch without converting one. Cycles through
+four families by index (`i % 4`):
 
 | `i % 4` | Family | Actor placed |
 |---|---|---|
@@ -289,21 +295,41 @@ scores are reproducible byte-for-byte across machines and CI runs).
 
 A separate, much larger generator lives outside the crate:
 [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)
-writes scenarios straight into `scenarios/web/` across ~20 nuPlan-style
-scenario-type categories (turns, intersections, cut-ins, stop-and-go
-traffic, and more), each with a fully scripted actor trajectory rather than
-a constant `Control` — see
-[docs/USAGE.md#generating-a-diverse-default-scenario-set](../../docs/USAGE.md#generating-a-diverse-default-scenario-set).
-It's what populates the 115 scenarios shipped in the default
-`scenarios/web_bundle.json`; `synthetic_batch` above is the batch runner's
-own generator and is unrelated (Rust, not Python; used by `--count`, not the
-web build).
+writes the CommonRoad XML corpus in `scenarios/commonroad/` across ~20
+scenario categories (turns, intersections, cut-ins, stop-and-go traffic,
+and more), each obstacle with a fully scripted trajectory rather than a
+constant `Control` — see
+[docs/USAGE.md#generating-the-scenario-corpus](../../docs/USAGE.md#generating-the-scenario-corpus).
+Converted, it's what populates `scenarios/web_bundle.json`;
+`synthetic_batch` above is the batch runner's own generator and is
+unrelated (Rust, not Python; used by `--count`, not the web build).
+
+## CommonRoad export mapping
+
+`tools/export_commonroad_scenarios.py` (documented for *usage* in
+[`docs/USAGE.md`](../../docs/USAGE.md#converting-commonroad-scenarios))
+converts CommonRoad 2020a XML into this JSON format. What maps to what, and
+why:
+
+| nanoplan field | CommonRoad source | Rationale |
+|---|---|---|
+| `name` | The `benchmarkID`, plus a `[fog]`-style suffix when the scenario declares environment conditions | Benchmark IDs are CommonRoad's own unique scenario names. |
+| `ego` | The planning problem's `initialState` (position, orientation, velocity) | Direct mapping — CommonRoad separates the planned vehicle from the obstacles the same way nanoplan does. |
+| `centerline` | Concatenated centers (midpoint of left/right bounds) of the lanelets on the route from the ego's lanelet to the goal, following `successor` edges | nanoplan models one reference route, not a full lanelet network; the successor chain to the goal is that route. Without a reachable position goal, the deepest successor chain stands in. |
+| `actors[].init` / `.trajectory` | Every static and dynamic obstacle; dynamic ones carry their full state trajectory (time step × `timeStepSize`) | Logged trajectories, replayed exactly — see [Trajectory replay](#trajectory-replay). Static obstacles become speed-0 actors. |
+| `target_speed` | Midpoint of the goal state's `velocity` interval, else the ego's initial speed | CommonRoad 2020a has no per-lanelet speed limit element (that moved to traffic signs); the goal velocity interval is the scenario's own statement of the intended speed. |
+| `map.road_half_width` | Max lateral extent of the route lanelets' bounds, including one adjacent lanelet per side | The drawn road edge spans every lane, not just the ego's. |
+| `map.divider_d` | Signed lateral offset of the bound shared with an `adjacentLeft`/`adjacentRight` lanelet | Where the viewer draws the dashed lane divider. |
+| `map.crosswalk_s` / `map.cross_streets` | Stations (projected onto the route) of `crosswalk`-type lanelets, and of other roads whose centerline crosses the route at a steep angle | Purely descriptive markers the viewer draws — nanoplan's planner and metrics only know the single route. |
 
 ## nuPlan export mapping
 
 `tools/export_nuplan_scenarios.py` (documented for *usage* in
-[`docs/USAGE.md`](../../docs/USAGE.md#exporting-real-nuplan-scenarios))
-converts nuPlan log rows into this JSON format. What maps to what, and why:
+[`docs/USAGE.md`](../../docs/USAGE.md#exporting-real-nuplan-scenarios-local-only);
+exports stay local — nuPlan data is not redistributable) converts nuPlan
+log rows into this JSON format. Its main remaining role is producing
+`expert` trajectories for the cost-weight autotuner, which CommonRoad
+scenarios don't carry. What maps to what, and why:
 
 | nanoplan field | nuPlan source | Rationale |
 |---|---|---|

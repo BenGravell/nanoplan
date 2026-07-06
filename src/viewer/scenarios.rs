@@ -11,9 +11,10 @@ const BUNDLED: [&str; 2] = [
     include_str!("../../scenarios/json/cut_in.json"),
 ];
 
-/// All scenarios the viewer offers: built-ins, bundled JSON (e.g. exported
-/// from nuPlan logs), and — on desktop — any files or directories passed as
-/// CLI args (see also the in-app scenario-loading widget in `ui`).
+/// All scenarios the viewer offers: built-ins, bundled JSON (converted from
+/// the CommonRoad scenarios in scenarios/commonroad/), and — on desktop —
+/// any files or directories passed as CLI args (see also the in-app
+/// scenario-loading widget in `ui`).
 pub(crate) fn all_scenarios() -> Vec<Scenario> {
     let mut all = scenarios();
     all.extend(
@@ -44,7 +45,7 @@ fn s_curve_road() -> Vec<[f64; 2]> {
         .collect()
 }
 
-// ponytail: synthetic scenarios stand in for nuPlan logs until a loader exists
+// ponytail: hardcoded synthetic scenarios cover cases the CommonRoad corpus doesn't need to
 fn scenarios() -> Vec<Scenario> {
     let state = |x, y, yaw, speed| State { x, y, yaw, speed };
     let drive = |accel, curvature| Control { accel, curvature };
@@ -140,7 +141,7 @@ mod tests {
         let scenes = all_scenarios();
         assert!(scenes.len() >= 8); // 6 built-ins + 2 bundled
         let bundled = &scenes[6];
-        assert!(bundled.name.starts_with("nuplan:"));
+        assert!(bundled.name.starts_with("ZAM_")); // CommonRoad benchmark ID
         assert!(!bundled.actors[0].trajectory.is_empty());
         let r = simulate(bundled, PlannerKind::Straight, 2.0, super::super::DT);
         assert_eq!(r.ego.len(), 21);

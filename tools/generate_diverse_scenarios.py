@@ -1,40 +1,44 @@
 #!/usr/bin/env python3
-"""Generate a large, diverse set of synthetic scenarios for the web build.
+"""Generate the repo's diverse scenario corpus as CommonRoad XML.
 
-There's no real nuPlan corpus checked into this repo (the dataset requires
-registration — see docs/USAGE.md#exporting-real-nuplan-scenarios), so the web
-build ships with an empty scenarios/web_bundle.json by default. This script
-is a stand-in: it procedurally generates scenarios spanning a wide range of
-road geometries, speeds, and agent interactions, tagged with nuPlan-style
-scenario-type names (see scenarios/nuplan/nuplan_schema.md's scenario_tag
-table), and writes them straight into scenarios/web/ for
-tools/bundle_web_scenarios.py to bundle — so the web viewer has a rich
-scenario set available immediately, with no upload required.
+Writes procedurally generated scenarios — spanning a wide range of road
+geometries, speeds, and agent interactions — into scenarios/commonroad/ in
+the CommonRoad 2020a format (https://commonroad.in.tum.de): a lanelet
+network, dynamic/static obstacles with full state trajectories, and a
+planning problem. Unlike nuPlan logs (registration-gated, no
+redistribution), these files are original to this repo and ship in it
+freely; tools/export_commonroad_scenarios.py converts them (or any real
+CommonRoad scenario) to the nanoplan JSON the viewer and batch runner load.
 
-Every actor is a fully scripted 20s/10Hz trajectory (the same replay format
-as scenarios/json/cut_in.json), computed by simulating a control profile
-(accel, curvature) through the exact kinematic step nanoplan's own physics
-uses (src/simulation/mod.rs::step) — so a "braking to a stop" or "cutting
-into the lane" actor behaves exactly as advertised, with speed clamped at
-zero rather than drifting negative the way a raw constant Control would.
+Every obstacle carries a fully scripted 20s/10Hz trajectory, computed by
+simulating a control profile (accel, curvature) through the exact kinematic
+step nanoplan's own physics uses (src/simulation/mod.rs::step) — so a
+"braking to a stop" or "cutting into the lane" obstacle behaves exactly as
+advertised, with speed clamped at zero rather than drifting negative the way
+a raw constant control would.
 
-"Environmental conditions" (wet road, night, fog, school zone) are not
-physically modeled anywhere in nanoplan (no weather/visibility/friction
-system exists) — they're approximated the only way the schema allows: a
-reduced target_speed, applied post-hoc to a random subset of scenarios
-across every category, and called out in the scenario name. Treat it as
-flavor/difficulty variation, not a claim that the viewer renders weather.
+Environmental conditions (rain, night, fog) are expressed the CommonRoad
+way — a location/environment element — plus a derated goal-velocity
+interval, applied to a random subset of scenarios. nanoplan has no
+weather/visibility model, so after conversion this surfaces only as a
+reduced target_speed and a name suffix: flavor/difficulty variation, not a
+claim that the viewer renders weather.
+
+Besides the randomized categories, two fixed "classic" scenarios
+(ZAM_BrakingLead-1_1_T-1, ZAM_CutIn-1_1_T-1) are always generated — their
+conversions are checked in as scenarios/json/*.json and compiled into the
+viewer binary.
 
 Usage:
-  python3 tools/generate_diverse_scenarios.py [--out scenarios/web] [--variations 5] [--seed 1]
+  python3 tools/generate_diverse_scenarios.py [--out scenarios/commonroad] [--variations 1] [--seed 1]
+  python3 tools/export_commonroad_scenarios.py scenarios/commonroad scenarios/web
   python3 tools/bundle_web_scenarios.py
 """
 
 import argparse
-import json
 import math
 import random
-import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 DT = 0.1
@@ -553,60 +557,384 @@ CATEGORIES = [
     gen_accelerating_from_stop,
 ]
 
-# (label, target_speed multiplier) — approximates the driving-condition axis
-# by derating the reference cruise speed; see the module docstring for why
-# this (and not literal weather) is what "environmental conditions" means
-# here.
+# --- the two fixed classics (compiled into the viewer binary) -------------
+
+
+def s_shift(start, half, c, decel_start=None, decel=0.0, min_speed=0.0):
+    """A proper S-shaped lane change: curve one way for `half` seconds, then
+    the opposite way for `half` seconds so the heading levels back out,
+    then optionally decelerate."""
+
+    def fn(t, state):
+        if start <= t < start + half:
+            cur = -c
+        elif start + half <= t < start + 2 * half:
+            cur = c
+        else:
+            cur = 0.0
+        a = -decel if (decel_start is not None and t >= decel_start and state[3] > min_speed) else 0.0
+        return (a, cur)
+
+    return fn
+
+
+def classic_braking_lead():
+    """A lead at 40 m cruising at the ego's speed, braking to a stop at
+    t=2 s — the successor of the original hand-authored braking_lead.json."""
+    centerline = Path2D().straight(450).build()
+    actor = scripted_actor(40.0, 0.0, 0.0, 8.0, brake_to_stop(2.0, 2.0))
+    return mk_scenario("braking_lead", ego_state(8.0), [actor], centerline, target_speed=10.0)
+
+
+def classic_cut_in():
+    """A faster vehicle in the left lane cutting into the ego's lane at
+    t=2 s, then slowing to 7 m/s — the successor of the original
+    hand-authored cut_in.json."""
+    centerline = Path2D().straight(450).build()
+    actor = scripted_actor(
+        25.0, 4.0, 0.0, 9.0, s_shift(2.0, 1.5, 0.022, decel_start=5.0, decel=1.0, min_speed=7.0)
+    )
+    return mk_scenario(
+        "cut_in", ego_state(8.0), [actor], centerline, target_speed=10.0, map_overrides={"divider_d": 2.0}
+    )
+
+
+CLASSICS = [("BrakingLead", classic_braking_lead), ("CutIn", classic_cut_in)]
+
+# CommonRoad location/environment for the driving-condition axis, plus a
+# goal-velocity derate; see the module docstring for what this does and
+# doesn't mean.
 CONDITIONS = [
-    ("wet_road", 0.82),
-    ("night_low_visibility", 0.75),
-    ("dense_fog", 0.68),
-    ("school_zone_caution", 0.6),
+    ({"time": "12:00:00", "timeOfDay": "day", "weather": "light_rain", "underground": "wet"}, 0.82),
+    ({"time": "23:00:00", "timeOfDay": "night", "weather": "sunny", "underground": "clean"}, 0.75),
+    ({"time": "12:00:00", "timeOfDay": "day", "weather": "fog", "underground": "clean"}, 0.68),
 ]
 
 
 def apply_condition(rng, scenario, probability=0.35):
     if rng.random() >= probability:
         return scenario
-    label, factor = rng.choice(CONDITIONS)
+    environment, factor = rng.choice(CONDITIONS)
     scenario["target_speed"] = round(scenario["target_speed"] * factor, 2)
-    scenario["name"] = f"{scenario['name']} [{label}]"
+    scenario["environment"] = environment
     return scenario
 
 
+# --- CommonRoad 2020a XML writer ------------------------------------------
+#
+# Field-name/structure reference: the official XSD, shipped in the
+# commonroad-io package (commonroad/common/xml_definition_files/
+# XML_commonRoad_XSD.xsd, BSD-3-Clause).
+
+FILE_DATE = "2026-07-06"  # fixed so regeneration is byte-identical
+LANE_HALF_DEFAULT = 1.85  # half of a standard 3.7 m lane
+
+# scenarioTags elements, in the XSD's required sequence order
+TAG_ORDER = [
+    "highway", "urban", "cut_in", "intersection", "lane_following",
+    "multi_lane", "no_oncoming_traffic", "oncoming_traffic",
+    "parallel_lanes", "simulated", "single_lane", "emergency_braking",
+]
+
+
+def _el(parent, tag, text=None, **attrs):
+    e = ET.SubElement(parent, tag, {k: str(v) for k, v in attrs.items()})
+    if text is not None:
+        e.text = str(text)
+    return e
+
+
+def _point(parent, tag, x, y):
+    p = _el(parent, tag)
+    _el(p, "x", round(x, 3))
+    _el(p, "y", round(y, 3))
+    return p
+
+
+def _exact(parent, tag, value, digits=4):
+    _el(_el(parent, tag), "exact", round(value, digits))
+
+
+def _interval(parent, tag, lo, hi, digits=4):
+    e = _el(parent, tag)
+    _el(e, "intervalStart", round(lo, digits))
+    _el(e, "intervalEnd", round(hi, digits))
+
+
+def headings(pts):
+    """Per-vertex heading of a polyline (averaged over adjacent segments)."""
+    seg = [math.atan2(b[1] - a[1], b[0] - a[0]) for a, b in zip(pts, pts[1:])]
+    out = [seg[0]]
+    for h0, h1 in zip(seg, seg[1:]):
+        d = (h1 - h0 + math.pi) % math.tau - math.pi
+        out.append(h0 + d / 2)
+    out.append(seg[-1])
+    return out
+
+
+def offset_polyline(pts, d):
+    """The polyline shifted laterally by `d` (positive = left)."""
+    return [
+        [x - d * math.sin(h), y + d * math.cos(h)]
+        for (x, y), h in zip(pts, headings(pts))
+    ]
+
+
+def _bound(parent, tag, pts, marking):
+    b = _el(parent, tag)
+    for x, y in pts:
+        _point(b, "point", x, y)
+    _el(b, "lineMarking", marking)
+
+
+def _is_opposite(actor):
+    yaw = actor["init"].get("yaw", 0.0)
+    return abs((yaw + math.pi) % math.tau - math.pi) > math.pi / 2
+
+
+def add_lanelets(root, scenario):
+    """The road as lanelets: the ego lane (id 100), one adjacent lane (101)
+    when the scenario has a divider, a crosswalk lanelet per crosswalk_s
+    (120+), and a crossing road per cross_streets (140+). Returns the ego
+    lane's half-width (for the goal region)."""
+    center = scenario["centerline"]
+    m = scenario["map"]
+    hw, div = m["road_half_width"], m["divider_d"]
+    lane_type = "highway" if hw >= 6.5 else "urban"
+
+    if div is None:
+        b = hw
+        ego = _el(root, "lanelet", id=100)
+        _bound(ego, "leftBound", offset_polyline(center, b), "solid")
+        _bound(ego, "rightBound", offset_polyline(center, -b), "solid")
+        _el(ego, "laneletType", lane_type)
+    else:
+        b = div if div >= 1.0 else LANE_HALF_DEFAULT
+        outer = max(hw, b + 3.0)
+        # the adjacent lane sits on the side its traffic starts on
+        off_lane = [a for a in scenario["actors"] if abs(a["init"]["y"]) > b]
+        side = 1 if not off_lane or off_lane[0]["init"]["y"] > 0 else -1
+        opposite = any(_is_opposite(a) for a in scenario["actors"])
+        direction = "opposite" if opposite else "same"
+
+        ego = _el(root, "lanelet", id=100)
+        near = offset_polyline(center, side * b)
+        far = offset_polyline(center, -side * b)
+        if side > 0:
+            _bound(ego, "leftBound", near, "dashed")
+            _bound(ego, "rightBound", far, "solid")
+        else:
+            _bound(ego, "leftBound", far, "solid")
+            _bound(ego, "rightBound", near, "dashed")
+        _el(ego, "adjacentLeft" if side > 0 else "adjacentRight", ref=101, drivingDir=direction)
+        _el(ego, "laneletType", lane_type)
+
+        adj = _el(root, "lanelet", id=101)
+        adj_outer = offset_polyline(center, side * outer)
+        if opposite:
+            # bounds run along the *opposite* lane's own travel direction
+            left, right = (near, adj_outer) if side > 0 else (adj_outer, near)
+            _bound(adj, "leftBound", left[::-1], "dashed" if side > 0 else "solid")
+            _bound(adj, "rightBound", right[::-1], "solid" if side > 0 else "dashed")
+            _el(adj, "adjacentLeft" if side > 0 else "adjacentRight", ref=100, drivingDir="opposite")
+        else:
+            left, right = (adj_outer, near) if side > 0 else (near, adj_outer)
+            _bound(adj, "leftBound", left, "solid" if side > 0 else "dashed")
+            _bound(adj, "rightBound", right, "dashed" if side > 0 else "solid")
+            _el(adj, "adjacentRight" if side > 0 else "adjacentLeft", ref=100, drivingDir="same")
+        _el(adj, "laneletType", lane_type)
+
+    # crosswalks and cross streets only appear on straight roads (y = 0), so
+    # a station converts to x by adding the centerline's start x
+    x0 = center[0][0]
+    span = hw + 2.0
+    for i, s in enumerate(m["crosswalk_s"]):
+        x = x0 + s
+        cw = _el(root, "lanelet", id=120 + i)
+        _bound(cw, "leftBound", [[x - 1.5, -span], [x - 1.5, 0.0], [x - 1.5, span]], "unknown")
+        _bound(cw, "rightBound", [[x + 1.5, -span], [x + 1.5, 0.0], [x + 1.5, span]], "unknown")
+        _el(cw, "laneletType", "crosswalk")
+    for i, s in enumerate(m["cross_streets"]):
+        x = x0 + s
+        ys = [y * 5.0 for y in range(-16, 17)]  # -80..80, 5 m spacing
+        street = _el(root, "lanelet", id=140 + i)
+        _bound(street, "leftBound", [[x - 3.5, y] for y in ys], "solid")
+        _bound(street, "rightBound", [[x + 3.5, y] for y in ys], "solid")
+        _el(street, "laneletType", lane_type)
+    return b
+
+
+def rolled_out(actor):
+    """Every obstacle gets a full trajectory: scripted actors already have
+    one; constant-control actors are integrated with the same kinematic
+    step (an obstacle in CommonRoad is a trajectory, not a control law)."""
+    if "trajectory" in actor:
+        return actor["trajectory"]
+    init = actor["init"]
+    control = actor.get("control", {})
+    fn = lambda t, s: (control.get("accel", 0.0), control.get("curvature", 0.0))  # noqa: E731
+    return scripted_actor(init["x"], init["y"], init.get("yaw", 0.0), init["speed"], fn)["trajectory"]
+
+
+def add_obstacles(root, scenario):
+    for i, actor in enumerate(scenario["actors"]):
+        init = actor["init"]
+        speed = init.get("speed", 0.0)
+        yaw = init.get("yaw", 0.0)
+        moving = speed > 0.0 or actor.get("control") or actor.get("trajectory")
+        pedestrian = moving and speed <= 2.0 and abs(math.sin(yaw)) > 0.7
+
+        if not moving:
+            obs = _el(root, "staticObstacle", id=200 + i)
+            _el(obs, "type", "parkedVehicle")
+            shape = _el(obs, "shape")
+            rect = _el(shape, "rectangle")
+            _el(rect, "length", 4.5)
+            _el(rect, "width", 1.8)
+        else:
+            obs = _el(root, "dynamicObstacle", id=200 + i)
+            _el(obs, "type", "pedestrian" if pedestrian else "car")
+            shape = _el(obs, "shape")
+            if pedestrian:
+                _el(_el(shape, "circle"), "radius", 0.35)
+            else:
+                rect = _el(shape, "rectangle")
+                _el(rect, "length", 4.5)
+                _el(rect, "width", 1.8)
+
+        state = _el(obs, "initialState")
+        _point(_el(state, "position"), "point", init["x"], init["y"])
+        _exact(state, "orientation", yaw)
+        _el(_el(state, "time"), "exact", 0)
+        _exact(state, "velocity", speed, 3)
+
+        if moving:
+            trajectory = _el(obs, "trajectory")
+            for wp in rolled_out(actor)[1:]:
+                st = _el(trajectory, "state")
+                _point(_el(st, "position"), "point", wp["x"], wp["y"])
+                _exact(st, "orientation", wp["yaw"])
+                _el(_el(st, "time"), "exact", round(wp["t"] / DT))
+                _exact(st, "velocity", wp["speed"], 3)
+
+
+def add_planning_problem(root, scenario, lane_half):
+    ego = scenario["ego"]
+    center = scenario["centerline"]
+    problem = _el(root, "planningProblem", id=900)
+    init = _el(problem, "initialState")
+    _point(_el(init, "position"), "point", ego["x"], ego["y"])
+    _exact(init, "velocity", ego["speed"], 3)
+    _exact(init, "orientation", ego.get("yaw", 0.0))
+    _exact(init, "yawRate", 0.0)
+    _exact(init, "slipAngle", 0.0)
+    _el(_el(init, "time"), "exact", 0)
+
+    goal = _el(problem, "goalState")
+    _interval(goal, "time", 0, N_TICKS, 0)
+    pos = _el(goal, "position")
+    rect = _el(pos, "rectangle")
+    _el(rect, "length", 20.0)
+    _el(rect, "width", round(min(2 * lane_half, 8.0), 2))
+    _el(rect, "orientation", round(headings(center)[-1], 4))
+    _point(rect, "center", *center[-1])
+    ts = scenario["target_speed"]
+    _interval(goal, "velocity", max(0.0, ts - 1.0), ts + 1.0, 2)
+
+
+def scenario_tags(scenario, category):
+    m = scenario["map"]
+    tags = {"simulated", "highway" if m["road_half_width"] >= 6.5 else "urban"}
+    tags.add("multi_lane" if m["divider_d"] is not None else "single_lane")
+    if m["divider_d"] is not None:
+        tags.add("parallel_lanes")
+    if m["cross_streets"]:
+        tags.add("intersection")
+    if any(_is_opposite(a) for a in scenario["actors"]):
+        tags.add("oncoming_traffic")
+    else:
+        tags.add("no_oncoming_traffic")
+    if "cut_in" in category or "merging" in category:
+        tags.add("cut_in")
+    if "lead" in category or "stop_and_go" in category:
+        tags.add("lane_following")
+    if "stopping" in category:
+        tags.add("emergency_braking")
+    return [t for t in TAG_ORDER if t in tags]
+
+
+def to_commonroad_xml(scenario, benchmark_id, category):
+    root = ET.Element(
+        "commonRoad",
+        commonRoadVersion="2020a",
+        benchmarkID=benchmark_id,
+        date=FILE_DATE,
+        author="nanoplan",
+        affiliation="nanoplan (https://github.com/BenGravell/nanoplan)",
+        source="synthetic (tools/generate_diverse_scenarios.py)",
+        timeStepSize=str(DT),
+    )
+    location = _el(root, "location")
+    _el(location, "geoNameId", -999)
+    _el(location, "gpsLatitude", 999)
+    _el(location, "gpsLongitude", 999)
+    if "environment" in scenario:
+        env = _el(location, "environment")
+        for tag in ("time", "timeOfDay", "weather", "underground"):
+            _el(env, tag, scenario["environment"][tag])
+    tags = _el(root, "scenarioTags")
+    for t in scenario_tags(scenario, category):
+        _el(tags, t)
+    lane_half = add_lanelets(root, scenario)
+    add_obstacles(root, scenario)
+    add_planning_problem(root, scenario, lane_half)
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space=" ")
+    return tree
+
+
+def camel(category):
+    return "".join(part.capitalize() for part in category.split("_"))
+
+
 def generate(variations, seed):
-    scenarios = []
+    """(filename, ElementTree) for every classic and category variation."""
+    out = []
+    for name, classic_fn in CLASSICS:
+        benchmark_id = f"ZAM_{name}-1_1_T-1"
+        out.append((benchmark_id, to_commonroad_xml(classic_fn(), benchmark_id, name.lower())))
     for gen_fn in CATEGORIES:
         category = gen_fn.__name__.removeprefix("gen_")
         for i in range(variations):
             rng = random.Random(f"{seed}:{category}:{i}")
-            scenario = gen_fn(rng)
-            scenario["name"] = f"nuplan: {scenario['name']}-{i:03}"
-            scenario = apply_condition(rng, scenario)
-            scenario["_filename"] = f"{category}-{i:03}.json"
-            scenarios.append(scenario)
-    return scenarios
+            scenario = apply_condition(rng, gen_fn(rng))
+            benchmark_id = f"ZAM_{camel(category)}-1_{i + 1}_T-1"
+            out.append((benchmark_id, to_commonroad_xml(scenario, benchmark_id, category)))
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", default="scenarios/web", help="output directory (default: scenarios/web)")
-    ap.add_argument("--variations", type=int, default=5, help="variations per category (default: 5)")
+    ap.add_argument("--out", default="scenarios/commonroad", help="output directory (default: scenarios/commonroad)")
+    ap.add_argument("--variations", type=int, default=1, help="variations per category (default: 1)")
     ap.add_argument("--seed", type=int, default=1, help="RNG seed (default: 1)")
-    ap.add_argument("--clean", action="store_true", help="remove the output directory first")
+    ap.add_argument("--clean", action="store_true", help="remove the output directory's *.xml files first")
     args = ap.parse_args()
 
     out = Path(args.out)
     if args.clean and out.exists():
-        shutil.rmtree(out)
+        for old in out.glob("*.xml"):
+            old.unlink()
     out.mkdir(parents=True, exist_ok=True)
 
     scenarios = generate(args.variations, args.seed)
-    for scenario in scenarios:
-        filename = scenario.pop("_filename")
-        (out / filename).write_text(json.dumps(scenario, indent=1))
+    for benchmark_id, tree in scenarios:
+        tree.write(out / f"{benchmark_id}.xml", encoding="UTF-8", xml_declaration=True)
 
-    print(f"wrote {len(scenarios)} scenarios ({len(CATEGORIES)} categories x {args.variations} variations) to {out}")
+    print(
+        f"wrote {len(scenarios)} scenarios ({len(CLASSICS)} classics + "
+        f"{len(CATEGORIES)} categories x {args.variations} variations) to {out}"
+    )
 
 
 if __name__ == "__main__":
