@@ -80,11 +80,15 @@ moves.
 - **pause** freezes the world; **new map** regenerates the street network
   with a fresh seed; **clear goal** drops the current goal.
 
-The map is a jittered grid of two-way streets with some blocks merged,
-deterministic per seed. The gray cars are basic smart actors: they wander
-the network in their own right-hand lane, hold speed with the same IDM the
-Bezier planner uses, queue behind slower traffic (including the ego), and
-brake for anything crossing their bumper. See
+The map is an *infinite* jittered grid of two-way streets — multi-lane
+arterials, one-lane locals, Perlin-noise urbanization driving density and
+lane counts — generated as a pure function of the seed and materialized in
+Minecraft-style chunks around the ego, so you can drive as far as you
+like. Traffic is mixed (cars, trucks, curb-hugging bikes, sidewalk
+pedestrians), spawned per chunk and despawned with hysteresis as chunks
+unload: actors wander the network in their own right-hand lane, hold speed
+with the same IDM the Bezier planner uses, queue behind slower traffic
+(including the ego), and brake for anything crossing their bumper. See
 [src/world/README.md](../src/world/README.md) for how it all works.
 
 ### Scenario sources

@@ -126,10 +126,15 @@ fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
 }
 
 pub(crate) fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
+    draw_agent(gizmos, s, CAR_SIZE_M, color);
+}
+
+/// A vehicle of arbitrary footprint (open-world trucks, bikes, ...).
+pub(crate) fn draw_agent(gizmos: &mut Gizmos, s: &State, size_m: Vec2, color: Color) {
     let iso = Isometry2d::new(px(s), Rot2::radians(s.yaw as f32));
-    gizmos.rect_2d(iso, CAR_SIZE_M * PX_PER_M, color);
+    gizmos.rect_2d(iso, size_m * PX_PER_M, color);
     // heading tick from center to front bumper
-    let nose = iso * Vec2::new(CAR_SIZE_M.x * PX_PER_M / 2.0, 0.0);
+    let nose = iso * Vec2::new(size_m.x * PX_PER_M / 2.0, 0.0);
     gizmos.line_2d(iso * Vec2::ZERO, nose, color);
 }
 

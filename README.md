@@ -27,7 +27,7 @@ src/
 ├── simulation/   kinematic model, closed-loop Simulator, simulate()/Rollout
 ├── metrics/      nuPlan closed-loop quality metrics, one directory per metric
 ├── scenarios/    Scenario/Actor/Path types, JSON loading, synthetic generation
-├── world/        procedural street map, IDM traffic, realtime interactive LiveWorld
+├── world/        infinite chunked procedural street world, mixed IDM traffic, realtime LiveWorld
 └── tuning/       MaxEnt IRL cost-weight autotuner over expert nuPlan trajectories
 ```
 
@@ -45,7 +45,7 @@ planning, simulation, or scoring logic itself.
 | Simulation | [src/simulation/README.md](src/simulation/README.md) | `State`/`Control`, the kinematic bicycle-free step, `Simulator`, and `simulate()`/`Rollout` |
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
-| World | [src/world/README.md](src/world/README.md) | The viewer's realtime "open world" mode: procedurally generated street map, click-to-place goal routing, basic IDM traffic actors, and the `LiveWorld` tick loop that replans and steps the ego continuously (judo/treetop style) |
+| World | [src/world/README.md](src/world/README.md) | The viewer's realtime "open world" mode: an infinite procedural street network (a pure function of the seed, chunked Minecraft-style around the ego), click-to-place goal routing with junction lane connectors, mixed IDM traffic (cars, trucks, bikes, pedestrians), and the `LiveWorld` tick loop that replans and steps the ego continuously (judo/treetop style) |
 | Tuning | [src/tuning/README.md](src/tuning/README.md) | Maximum-entropy IRL autotuning of the shared cost function's soft weights from expert human trajectories (the `tune` binary); collision and off-road stay infinite cost by fiat |
 
 A few more directories hold data rather than code:

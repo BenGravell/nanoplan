@@ -12,6 +12,9 @@ pub(crate) fn idm_accel(v: f64, target: f64, lead: Option<(f64, f64)>) -> f64 {
     const MAX_ACCEL: f64 = 1.5;
     const COMFORT_DECEL: f64 = 2.0;
     const MIN_GAP_M: f64 = 2.0;
+    // IDM assumes forward motion; the quartic free term diverges for the
+    // negative speeds a simulated overshoot can produce
+    let v = v.max(0.0);
     let free = 1.0 - (v / target.max(0.1)).powi(4);
     let interaction = match lead {
         Some((gap, lead_v)) => {
@@ -22,7 +25,9 @@ pub(crate) fn idm_accel(v: f64, target: f64, lead: Option<(f64, f64)>) -> f64 {
         }
         None => 0.0,
     };
-    MAX_ACCEL * (free - interaction)
+    // floor at an emergency brake: the gap→0 singularity would otherwise
+    // command unbounded decel and blow up the closed loop
+    (MAX_ACCEL * (free - interaction)).max(-8.0)
 }
 
 /// Nearest in-lane actor ahead of station `s0`: (gap, speed along the lane).
