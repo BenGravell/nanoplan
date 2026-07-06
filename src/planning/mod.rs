@@ -207,6 +207,7 @@ pub(crate) fn test_road(centerline: &[[f64; 2]]) -> Road {
     Road {
         centerline: centerline.to_vec(),
         target_speed: 10.0,
+        half_width: crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
         dt: 0.1,
     }
 }
@@ -230,12 +231,25 @@ pub(crate) fn test_run(
     ticks: usize,
 ) -> Vec<State> {
     let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+    test_run_on(planner, &road, ego, actors, ticks)
+}
+
+/// [`test_run`] against a caller-supplied [`Road`], so a test can vary the
+/// drivable half-width (or any other road property) the planner sees.
+#[cfg(test)]
+pub(crate) fn test_run_on(
+    planner: &mut dyn Planner,
+    road: &Road,
+    ego: State,
+    actors: &[State],
+    ticks: usize,
+) -> Vec<State> {
     let mut sim = crate::simulation::Simulator {
         state: ego,
         dt: road.dt,
     };
     (0..ticks)
-        .map(|_| sim.tick(planner, &test_ctx(&road, actors)))
+        .map(|_| sim.tick(planner, &test_ctx(road, actors)))
         .collect()
 }
 

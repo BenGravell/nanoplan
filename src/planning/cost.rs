@@ -33,7 +33,7 @@
 //! finite differences, so this function stays the single definition of
 //! "good" with no analytically-differentiated twin to drift away from it.
 
-use crate::metrics::{CAR_RADIUS_M, comfort, drivable_area, speed_limit};
+use crate::metrics::{CAR_RADIUS_M, comfort, speed_limit};
 use crate::simulation::State;
 
 /// Center-to-center clearance below which two cars are treated as collided
@@ -112,12 +112,19 @@ pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0]
 /// constant velocity and heading (`metrics::project`, the same model
 /// `metrics::ttc` uses). Each feature is already squared/hinged so the cost
 /// is *linear* in [`WEIGHTS`] — the form the IRL tuner learns.
+///
+/// `road_half_width` is the actual half-width of the road this sample sits
+/// on ([`crate::scenarios::Road::half_width`]) — the same lateral bound the
+/// `drivable_area` metric scores against — so the off-road reject and the
+/// road-edge push-back below fire at the true road edge, not a fixed
+/// default. On a narrow street that is well inside the old 5.5 m constant.
 pub(crate) fn features(
     sample: &Sample,
     target_speed: f64,
+    road_half_width: f64,
     actors: &[State],
 ) -> Option<[f64; N_FEATURES]> {
-    if sample.lateral.abs() > drivable_area::ROAD_HALF_WIDTH_M {
+    if sample.lateral.abs() > road_half_width {
         return None;
     }
     let mut proximity = 0.0;
@@ -146,7 +153,7 @@ pub(crate) fn features(
     // ever evaluate it, but PI²-DDP has no such structural bound of its
     // own — this hinge is the only thing keeping its continuous search
     // on the road, so it needs to bite hard, not softly.
-    let edge = (sample.lateral.abs() - 0.7 * drivable_area::ROAD_HALF_WIDTH_M).max(0.0);
+    let edge = (sample.lateral.abs() - 0.7 * road_half_width).max(0.0);
 
     // speed tracking, scaled by the same overspeed tolerance speed_limit
     // scores against
@@ -184,8 +191,13 @@ pub(crate) fn features(
 /// area — that a planner should reject outright rather than merely disfavor;
 /// see [`HARD_VIOLATION_PENALTY`] for callers that need a finite number
 /// instead.
-pub(crate) fn point_cost(sample: &Sample, target_speed: f64, actors: &[State]) -> f64 {
-    match features(sample, target_speed, actors) {
+pub(crate) fn point_cost(
+    sample: &Sample,
+    target_speed: f64,
+    road_half_width: f64,
+    actors: &[State],
+) -> f64 {
+    match features(sample, target_speed, road_half_width, actors) {
         None => f64::INFINITY,
         Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
     }
@@ -194,6 +206,10 @@ pub(crate) fn point_cost(sample: &Sample, target_speed: f64, actors: &[State]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Standard drivable half-width for the cost tests — the default road
+    /// width ([`crate::metrics::drivable_area::ROAD_HALF_WIDTH_M`]).
+    const HW: f64 = 5.5;
 
     #[test]
     fn rejects_collision() {
@@ -205,7 +221,7 @@ mod tests {
             x: 1.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, &[actor]).is_infinite());
+        assert!(point_cost(&s, 10.0, HW, &[actor]).is_infinite());
     }
 
     #[test]
@@ -214,7 +230,20 @@ mod tests {
             lateral: 10.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, &[]).is_infinite());
+        assert!(point_cost(&s, 10.0, HW, &[]).is_infinite());
+    }
+
+    #[test]
+    fn off_road_bound_tracks_the_road_width() {
+        // a sample 4.0 m off-center is on a wide road but off a narrow one:
+        // the reject follows the road it is given, not a fixed constant
+        let s = Sample {
+            lateral: 4.0,
+            speed: 10.0,
+            ..Default::default()
+        };
+        assert!(point_cost(&s, 10.0, 5.5, &[]).is_finite());
+        assert!(point_cost(&s, 10.0, 3.5, &[]).is_infinite());
     }
 
     #[test]
@@ -223,7 +252,7 @@ mod tests {
             speed: 10.0,
             ..Default::default()
         };
-        let c = point_cost(&s, 10.0, &[]);
+        let c = point_cost(&s, 10.0, HW, &[]);
         assert!(c.is_finite());
         assert!(c < 1.0, "cost {c}");
     }
@@ -245,10 +274,10 @@ mod tests {
             x: 5.0,
             ..Default::default()
         };
-        let f = features(&s, 10.0, &[actor]).unwrap();
+        let f = features(&s, 10.0, HW, &[actor]).unwrap();
         assert!(f.iter().all(|&x| x > 0.0), "features {f:?}");
         let dot: f64 = WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum();
-        assert_eq!(point_cost(&s, 10.0, &[actor]), dot);
+        assert_eq!(point_cost(&s, 10.0, HW, &[actor]), dot);
     }
 
     #[test]

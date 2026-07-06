@@ -341,7 +341,9 @@ impl<O: Optimizer> SamplingPlanner<O> {
             t: t as f64 * ctx.road.dt,
         };
         let c = 0.5 * d * d
-            + ctx.time("cost", || cost::point_cost(&sample, ctx.road.target_speed, ctx.actors));
+            + ctx.time("cost", || {
+                cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
+            });
         if c.is_infinite() {
             cost::HARD_VIOLATION_PENALTY
         } else {

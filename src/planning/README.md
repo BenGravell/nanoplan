@@ -193,17 +193,21 @@ own actor-prediction code, its own collision radius, and its own idea of
 "off the road" — several different, undocumented definitions of "good."
 
 `cost.rs` factors the metrics-motivated part of that formula into one
-function, `point_cost(sample, target_speed, actors)`, called by every one of
-them under the same seam name, `"cost"` (see "Latency diagnostics"
-above). It's deliberately grounded in the same quantities
+function, `point_cost(sample, target_speed, road_half_width, actors)`, called
+by every one of them under the same seam name, `"cost"` (see "Latency
+diagnostics" above). It's deliberately grounded in the same quantities
 [`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
 than inventing new ones:
 
 - **Hard collision and off-road rejection** — `f64::INFINITY` if a sampled
   point is closer than `metrics::collisions`' own threshold
   (`2 × CAR_RADIUS_M`) to any actor's predicted position, or further than
-  `metrics::drivable_area::ROAD_HALF_WIDTH_M` from the centerline. A planner
-  should reject these outright, not merely disfavor them.
+  `road_half_width` from the centerline. That bound is the road's *actual*
+  drivable half-width (`Road::half_width`, the same value `drivable_area`
+  scores against), passed in per plan rather than read from a fixed
+  constant — so on a narrow street the reject fires at the true edge, not at
+  the 5.5 m default. A planner should reject these outright, not merely
+  disfavor them.
 - **Everything else is `WEIGHTS · features`** — the soft terms below are a
   feature vector (`features()`, each term already squared/hinged) dotted
   with one `pub(crate) const WEIGHTS`, so the finite cost is *linear* in the
@@ -272,7 +276,7 @@ not what counts as a good outcome, and that no metric measures:
 - The road-edge and actor-proximity soft terms inside `point_cost` are
   weighted for PI²-DDP's benefit specifically: the lattice's sampling grid
   never reaches them and RRT* has its own tighter hard bounds
-  (`DRIVABLE_HALF_WIDTH_M`, `COLLISION_MARGIN_M`), so those two barely feel
+  (`drivable_bound`, `COLLISION_MARGIN_M`), so those two barely feel
   them, but PI²-DDP's continuous search has no hard accept/reject step at
   all — these soft terms are its *only* safety margin, so they're weighted
   to bite hard rather than softly.
@@ -714,8 +718,9 @@ time.
 
 **Feasibility and edge cost both go through the [shared cost
 function](#the-shared-cost-function).** `feasible` additionally enforces its
-own tighter margins before ever calling it — `DRIVABLE_HALF_WIDTH_M` (5.0 m,
-inside the shared function's own 5.5 m road-edge check) and
+own tighter margins before ever calling it — `drivable_bound` (the road's
+own `half_width` less `DRIVABLE_MARGIN_M` = 0.5 m, so it holds just inside
+the shared function's road-edge reject on whatever road is being driven) and
 `COLLISION_MARGIN_M` (3.0 m, ahead of the shared 2.5 m collision diameter)
 — headroom for the fact that a curve is only checked at `STEER_SAMPLES`
 discrete points, so the true closest approach between samples can dip a

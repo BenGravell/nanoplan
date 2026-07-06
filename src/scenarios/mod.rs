@@ -197,8 +197,10 @@ pub struct MapData {
 impl Default for MapData {
     fn default() -> Self {
         MapData {
-            // matches the drivable-area bound in the metrics
-            road_half_width: 5.5,
+            // the default drivable-area bound, shared with the metric and
+            // the planners' cost so an unspecified road means the same width
+            // everywhere
+            road_half_width: crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
             divider_d: None,
             crosswalk_s: vec![],
             cross_streets: vec![],
@@ -221,6 +223,14 @@ pub struct Road {
     pub centerline: Vec<[f64; 2]>,
     /// Desired cruise speed; also the speed limit for scoring.
     pub target_speed: f64,
+    /// Half-width of the drivable road surface about the centerline, in
+    /// meters: the lateral bound both the planners' cost function
+    /// ([`crate::planning`]) and the `drivable_area` metric treat as the
+    /// edge of the road. Sourced from the scenario's
+    /// [`MapData::road_half_width`] (or, in the open world, the live street
+    /// geometry), so a planner reasons about the *actual* road it is on
+    /// rather than a fixed default — the same value scoring holds it to.
+    pub half_width: f64,
     /// Tick length: the simulator step, the spacing of returned control
     /// trajectories, and the sampling interval of metric inputs.
     pub dt: f64,
@@ -255,6 +265,7 @@ impl Scenario {
         Road {
             centerline: self.centerline.clone(),
             target_speed: self.target_speed,
+            half_width: self.map.road_half_width,
             dt,
         }
     }

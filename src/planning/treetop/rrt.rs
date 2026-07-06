@@ -61,9 +61,12 @@ use crate::simulation::{Control, State, step};
 use crate::wrap_angle;
 
 /// Lateral half-width cold samples span. Inside the shared cost's hard
-/// off-road bound (`ROAD_HALF_WIDTH_M` = 5.5) so samples are not born
-/// rejected, and a little wider than RRT*'s 5.0 m drivable bound to let
-/// the optimizer pull an aggressive detour back in.
+/// off-road bound on a default-width road (`ROAD_HALF_WIDTH_M` = 5.5) so
+/// samples are not born rejected there, and wide enough to let the optimizer
+/// pull an aggressive detour back in. On a narrower road the shared cost's
+/// per-plan `road_half_width` reject still discards any sample past the true
+/// edge, so this fixed span only bounds where candidates are *drawn*, never
+/// what counts as on-road.
 const SAMPLE_LATERAL_M: f64 = 4.5;
 
 /// Cold samples' heading spread around the lane direction (rad), and their
@@ -234,7 +237,7 @@ impl Tree {
                 let sample = frenet_sample(path, &target, Control::default(), t_s);
                 if !ctx
                     .time("cost", || {
-                        cost::point_cost(&sample, ctx.road.target_speed, ctx.actors)
+                        cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
                     })
                     .is_finite()
                 {
@@ -437,7 +440,12 @@ impl Grower<'_, '_> {
             let x = &xs[i + 1];
             let sample = frenet_sample(self.path, x, *u, t0 + (i + 1) as f64 * dt);
             let shared = self.ctx.time("cost", || {
-                cost::point_cost(&sample, self.ctx.road.target_speed, self.ctx.actors)
+                cost::point_cost(
+                    &sample,
+                    self.ctx.road.target_speed,
+                    self.ctx.road.half_width,
+                    self.ctx.actors,
+                )
             });
             // treetop softLoss: magnitude of (lon, lat) acceleration
             let effort = u.accel.hypot(x.speed * x.speed * u.curvature);

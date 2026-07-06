@@ -969,9 +969,22 @@ impl LiveWorld {
             return;
         }
         self.goal = Some(*line.last().unwrap());
+        // Give the planner the road's actual half-width — the narrowest
+        // street the route runs along — instead of the fixed 5.5 m default.
+        // Most local streets are one lane (`LANE_W_M` = 3.5 m half-width),
+        // well inside that default, so a route that reported 5.5 m let the
+        // planner treat two-plus metres of sidewalk as drivable and plan
+        // off the road surface. Taking the min keeps it on even the tightest
+        // section. (A single scalar can't capture the route's rightmost-lane
+        // offset; the symmetric `Road` model is a pre-existing simplification.)
+        let half_width = line
+            .iter()
+            .map(|&q| self.map.half_width(self.map.snap(q).0))
+            .fold(f64::INFINITY, f64::min);
         self.road = Some(Road {
             centerline: line,
             target_speed: self.target_speed,
+            half_width,
             dt: self.dt,
         });
         self.route_path = Some(path);

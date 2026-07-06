@@ -328,7 +328,8 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
     let expert_states: Vec<State> = (0..=TICKS)
         .map(|i| replay(&sc.expert, i as f64 * DT))
         .collect();
-    let expert = trajectory_features(&expert_states, &path, sc.target_speed, &actors)?;
+    let expert =
+        trajectory_features(&expert_states, &path, sc.target_speed, sc.map.road_half_width, &actors)?;
 
     let (s0, d0) = path.project([sc.ego.x, sc.ego.y]);
     let mut cands = vec![expert];
@@ -336,7 +337,9 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
         let states = maneuver_states(&path, s0, d0, sc.ego.speed, &m);
         // hard-violating candidates get zero probability: out of the
         // support entirely, like the planners reject them
-        if let Some(f) = trajectory_features(&states, &path, sc.target_speed, &actors) {
+        if let Some(f) =
+            trajectory_features(&states, &path, sc.target_speed, sc.map.road_half_width, &actors)
+        {
             cands.push(f);
         }
     }
@@ -352,6 +355,7 @@ fn trajectory_features(
     states: &[State],
     path: &Path,
     target_speed: f64,
+    road_half_width: f64,
     actors: &[State],
 ) -> Option<[f64; N_FEATURES]> {
     let mut total = [0.0; N_FEATURES];
@@ -378,7 +382,7 @@ fn trajectory_features(
             accel,
             t: i as f64 * DT,
         };
-        let f = cost::features(&sample, target_speed, actors)?;
+        let f = cost::features(&sample, target_speed, road_half_width, actors)?;
         for (tot, x) in total.iter_mut().zip(f) {
             *tot += x;
         }
@@ -474,7 +478,13 @@ mod tests {
         let mut best: Option<(f64, Vec<State>)> = None;
         for m in maneuver_grid(10.0) {
             let states = maneuver_states(&path, ego.x + 20.0, d0, speed0, &m);
-            if let Some(f) = trajectory_features(&states, &path, 10.0, &[]) {
+            if let Some(f) = trajectory_features(
+                &states,
+                &path,
+                10.0,
+                crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
+                &[],
+            ) {
                 let c = dot(gt, &f);
                 if best.as_ref().is_none_or(|(b, _)| c < *b) {
                     best = Some((c, states));
