@@ -1,5 +1,5 @@
 //! The egui control panel: the scrub/open-world mode switch, scenario and
-//! planner selection, the nuPlan scenario-loading widget, sliders, and the
+//! planner selection, the scenario-loading widget, sliders, and the
 //! metrics/latency tables.
 
 use bevy::prelude::*;

@@ -41,8 +41,9 @@ impl Default for Loader {
     }
 }
 
-/// Desktop source: type a path to a nuPlan export (a `*.json` file or a
-/// directory of them) and load it live, without relaunching with CLI args.
+/// Desktop source: type a path to exported scenarios (a `*.json` file or a
+/// directory of them — CommonRoad conversions or local nuPlan exports) and
+/// load it live, without relaunching with CLI args.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct DesktopLoader {
@@ -54,7 +55,7 @@ impl ScenarioSource for DesktopLoader {
     fn widget(&mut self, ui: &mut egui::Ui) -> Option<LoadResult> {
         let mut result = None;
         ui.horizontal(|ui| {
-            ui.label("nuPlan path:");
+            ui.label("scenario path:");
             ui.text_edit_singleline(&mut self.path);
             if ui.button("Load").clicked() {
                 result = Some(

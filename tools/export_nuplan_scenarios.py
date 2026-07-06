@@ -15,7 +15,14 @@ runner and viewer can load:
   - target_speed: the expert's 85th-percentile speed over the horizon
   - expert: the expert (human) ego trajectory over the horizon, downsampled
     to the 10 Hz simulation rate — the demonstration data the cost-weight
-    autotuner (cargo run --release --bin tune) learns from
+    autotuner (cargo run --release --bin tune) learns from. This expert
+    field is the main reason to use nuPlan data at all: the shipped
+    CommonRoad corpus (scenarios/commonroad/) has no human demonstrations.
+
+Exports must stay LOCAL: the nuPlan dataset is registration-gated and its
+license does not permit redistribution — don't commit exported scenarios or
+bundle them into the deployed web build (that's what the CommonRoad corpus
+is for; see tools/export_commonroad_scenarios.py).
 
 Usage:
   python3 tools/export_nuplan_scenarios.py LOG.db OUT_DIR \

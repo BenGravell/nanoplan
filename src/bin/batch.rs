@@ -4,9 +4,10 @@
 //!   batch [--count N] [--seed S] [--dir PATH]...
 //!
 //! Scenarios come from the synthetic generator (`--count`, default 20) and/or
-//! directories of scenario JSON files (`--dir`), e.g. exported from nuPlan
-//! logs with tools/export_nuplan_scenarios.py. A per-planner mean-score
-//! summary goes to stderr.
+//! directories of scenario JSON files (`--dir`), e.g. converted from
+//! CommonRoad scenarios with tools/export_commonroad_scenarios.py or
+//! exported from nuPlan logs with tools/export_nuplan_scenarios.py. A
+//! per-planner mean-score summary goes to stderr.
 
 use nanoplan::metrics::METRICS;
 use nanoplan::{PlannerKind, scenarios, simulate};

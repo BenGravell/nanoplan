@@ -73,10 +73,10 @@ sources are:
   - `WebScenarioFetch`/`spawn_fetch`/`absorb_fetch`: fetches
     `scenarios/web_bundle.json` — a single static file, built by
     `tools/bundle_web_scenarios.py` and copied into `dist/` by Trunk — once
-    at startup via `gloo-net`. Ships with 115 procedurally generated
-    scenarios by default (see
-    [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)),
-    since there's no real nuPlan corpus checked into this repo.
+    at startup via `gloo-net`. Ships with the converted CommonRoad corpus
+    from [`scenarios/commonroad/`](../../scenarios/commonroad/) (generated
+    by [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)
+    and freely redistributable, unlike nuPlan data).
   - `WebScenarioLoader`, the web `ScenarioSource`: opens the browser's
     native file picker via `rfd::AsyncFileDialog` (wasm backend: a hidden
     `<input type="file">`, so it's automatable in tests via a filechooser
@@ -84,7 +84,7 @@ sources are:
     each picked file's bytes, and parses it as either a single `Scenario`
     or a `Vec<Scenario>`, handing the result back through `widget()`. The
     web equivalent of `DesktopLoader` — the one way a visitor to the
-    deployed site can bring their own nuPlan-exported scenarios into the
+    deployed site can bring their own converted scenarios into the
     running app, since nothing short of a page reload can add to what
     `WebScenarioFetch` grabbed at startup.
 
