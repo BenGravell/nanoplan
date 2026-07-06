@@ -8,8 +8,13 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use std::collections::HashMap;
+
 use nanoplan::PlannerKind;
-use nanoplan::world::{ActorKind, LANE_W_M, LiveWorld};
+use nanoplan::world::{
+    ActorKind, CROSSWALK_SETBACK_M, LANE_W_M, LiveWorld, POCKET_M, POCKET_TAPER_M, has_crosswalk,
+    has_pocket, has_slip,
+};
 
 use super::draw::{ACCENT, PX_PER_M, draw_agent, draw_car, ppx, px};
 use super::{DT, Mode, UiState};
@@ -139,22 +144,169 @@ pub(crate) fn draw_live(
                 na[1] + dir[1] * s + right[1] * d,
             ])
         };
-        for d in [-hw, hw] {
-            gizmos.line_2d(at(ta, d), at(len - tb, d), boundary);
+        // junction furniture on this street: turn pockets and crosswalks
+        // per approach (a→b traffic rides d > 0 and approaches the b end)
+        let (ca, cb) = (w.map.coords[a], w.map.coords[b]);
+        let d_ab = [cb[0] - ca[0], cb[1] - ca[1]];
+        let d_ba = [-d_ab[0], -d_ab[1]];
+        let long = len > 45.0;
+        let pocket_b = long && has_pocket(w.map.seed, cb, d_ab);
+        let pocket_a = long && has_pocket(w.map.seed, ca, d_ba);
+        // boundaries, stopping where a pocket flare takes over
+        let zb = len - tb - POCKET_M;
+        let za = ta + POCKET_M;
+        gizmos.line_2d(
+            at(ta, hw),
+            at(if pocket_b { zb } else { len - tb }, hw),
+            boundary,
+        );
+        gizmos.line_2d(
+            at(if pocket_a { za } else { ta }, -hw),
+            at(len - tb, -hw),
+            boundary,
+        );
+        if pocket_b {
+            // approach flares a lane wider; the freed inner lane is the pocket
+            gizmos.line_2d(at(zb, hw), at(zb + POCKET_TAPER_M, hw + LANE_W_M), boundary);
+            gizmos.line_2d(
+                at(zb + POCKET_TAPER_M, hw + LANE_W_M),
+                at(len - tb, hw + LANE_W_M),
+                boundary,
+            );
+        }
+        if pocket_a {
+            gizmos.line_2d(
+                at(za, -hw),
+                at(za - POCKET_TAPER_M, -hw - LANE_W_M),
+                boundary,
+            );
+            gizmos.line_2d(
+                at(za - POCKET_TAPER_M, -hw - LANE_W_M),
+                at(ta, -hw - LANE_W_M),
+                boundary,
+            );
         }
         // dashed lines: two-way divider down the axis, lane lines between
-        // same-direction lanes: 3 m dash, 3 m gap
-        let mut dash = |d: f64, color: Color| {
-            let mut s = ta;
-            while s + 3.0 <= len - tb {
+        // same-direction lanes, the old boundary as the pocket's lane line
+        let mut dash = |d: f64, s0: f64, s1: f64, color: Color| {
+            let mut s = s0;
+            while s + 3.0 <= s1 {
                 gizmos.line_2d(at(s, d), at(s + 3.0, d), color);
                 s += 6.0;
             }
         };
-        dash(0.0, divider);
+        dash(0.0, ta, len - tb, divider);
         for lane in 1..w.map.lanes[ei] {
-            dash(lane as f64 * LANE_W_M, lane_line);
-            dash(-(lane as f64) * LANE_W_M, lane_line);
+            dash(lane as f64 * LANE_W_M, ta, len - tb, lane_line);
+            dash(-(lane as f64) * LANE_W_M, ta, len - tb, lane_line);
+        }
+        if pocket_b {
+            dash(hw, zb + POCKET_TAPER_M, len - tb, lane_line);
+        }
+        if pocket_a {
+            dash(-hw, ta, za - POCKET_TAPER_M, lane_line);
+        }
+        // crosswalk stripes, spanning the (possibly flared) roadway
+        for (cross, s_c, near_b) in [
+            (
+                long && has_crosswalk(w.map.seed, cb, d_ab),
+                len - CROSSWALK_SETBACK_M,
+                true,
+            ),
+            (
+                long && has_crosswalk(w.map.seed, ca, d_ba),
+                CROSSWALK_SETBACK_M,
+                false,
+            ),
+        ] {
+            if !cross {
+                continue;
+            }
+            let flare = if near_b { pocket_b } else { pocket_a };
+            let (lo, hi) = if near_b {
+                (-hw, hw + if flare { LANE_W_M } else { 0.0 })
+            } else {
+                (-hw - if flare { LANE_W_M } else { 0.0 }, hw)
+            };
+            let mut d = lo + 0.5;
+            while d <= hi - 0.5 {
+                gizmos.line_2d(
+                    at(s_c - 1.2, d),
+                    at(s_c + 1.2, d),
+                    Color::srgb(0.7, 0.7, 0.7),
+                );
+                d += 1.5;
+            }
+        }
+    }
+    // slip lanes: a wide right-turn curve bypassing the junction proper
+    let idx: HashMap<[i64; 2], usize> = w
+        .map
+        .coords
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| (c, i))
+        .collect();
+    let lane_of: HashMap<[usize; 2], f64> = w
+        .map
+        .edges
+        .iter()
+        .enumerate()
+        .map(|(ei, &[a, b])| ([a.min(b), a.max(b)], w.map.half_width(ei)))
+        .collect();
+    for (ji, &jc) in w.map.coords.iter().enumerate() {
+        for d_in in [[1i64, 0], [0, 1], [-1, 0], [0, -1]] {
+            if !has_slip(w.map.seed, jc, d_in) {
+                continue;
+            }
+            let d_out = [d_in[1], -d_in[0]]; // right turn
+            let (Some(&ai), Some(&bi)) = (
+                idx.get(&[jc[0] - d_in[0], jc[1] - d_in[1]]),
+                idx.get(&[jc[0] + d_out[0], jc[1] + d_out[1]]),
+            ) else {
+                continue;
+            };
+            let (Some(&hw_in), Some(&hw_out)) = (
+                lane_of.get(&[ai.min(ji), ai.max(ji)]),
+                lane_of.get(&[bi.min(ji), bi.max(ji)]),
+            ) else {
+                continue;
+            };
+            let pj = w.map.nodes[ji];
+            let unit_to = |q: [f64; 2], p: [f64; 2]| {
+                let d = ((p[0] - q[0]).hypot(p[1] - q[1])).max(1e-9);
+                [(p[0] - q[0]) / d, (p[1] - q[1]) / d]
+            };
+            let u_in = unit_to(w.map.nodes[ai], pj);
+            let u_out = unit_to(pj, w.map.nodes[bi]);
+            let set = node_w[ji] + 8.0;
+            let p0 = [
+                pj[0] - u_in[0] * set + u_in[1] * hw_in,
+                pj[1] - u_in[1] * set - u_in[0] * hw_in,
+            ];
+            let p2 = [
+                pj[0] + u_out[0] * set + u_out[1] * hw_out,
+                pj[1] + u_out[1] * set - u_out[0] * hw_out,
+            ];
+            // control point: where the two boundary lines would meet
+            let det = u_in[0] * u_out[1] - u_in[1] * u_out[0];
+            if det.abs() < 0.2 {
+                continue; // nearly straight: no corner to slip
+            }
+            let (rx, ry) = (p2[0] - p0[0], p2[1] - p0[1]);
+            let t = (rx * u_out[1] - ry * u_out[0]) / det;
+            let c = [p0[0] + u_in[0] * t, p0[1] + u_in[1] * t];
+            gizmos.linestrip_2d(
+                (0..=8).map(|k| {
+                    let t = k as f64 / 8.0;
+                    let mt = 1.0 - t;
+                    ppx([
+                        mt * mt * p0[0] + 2.0 * mt * t * c[0] + t * t * p2[0],
+                        mt * mt * p0[1] + 2.0 * mt * t * c[1] + t * t * p2[1],
+                    ])
+                }),
+                boundary,
+            );
         }
     }
 

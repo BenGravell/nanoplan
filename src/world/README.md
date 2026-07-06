@@ -35,6 +35,16 @@ just materializations.
   demotions (1), so roads gain and lose lanes along their length and lane
   topology shifts across junctions. A street's half-width is
   `lanes × LANE_W_M`.
+- **Junction furniture**, keyed per (junction, approach direction):
+  - **Turn pockets** (`has_pocket`, more likely downtown): the last
+    `POCKET_M` of the approach flares one lane wider on the right;
+    left-turners slide into the freed innermost lane while through traffic
+    (and the flared curb's bikes and sidewalk) deflects around it.
+  - **Slip lanes** (`has_slip`): some right turns take a wide
+    `SLIP_RADIUS_M` curve that bypasses the junction proper.
+  - **Crosswalks** (`has_crosswalk`, more likely downtown): striped
+    crossings `CROSSWALK_SETBACK_M` before the node, where pedestrians
+    sometimes cross.
 
 ## `StreetMap` — the active window
 
@@ -64,7 +74,12 @@ needed), following its own right-hand corridor by `ActorKind`:
   routes; trucks are longer and slower.
 - **Bike**: hugs the curb (1 m inside the road edge), slower still.
 - **Pedestrian**: walks the sidewalk just outside the roadway at walking
-  speed.
+  speed, and occasionally crosses to the other sidewalk at a crosswalk —
+  the choice is deterministic per (pedestrian, junction), so mid-walk path
+  rebuilds never flip a planned crossing under its feet. Pedestrians have
+  right of way: they queue behind other pedestrians but never yield to
+  vehicles (which brake for them via the bumper guard) — otherwise a
+  crossing ped and the car yielding to it would deadlock at the crosswalk.
 
 Speed control is the same IDM the Bezier planner uses
 (`planning::bezier_idm::idm_accel`), against the nearer of: the closest
@@ -119,6 +134,8 @@ between overlapping windows, road width and traffic-kind variety, routes
 staying on-road and reaching the snapped goal, actors cruising at their
 target speed and stopping behind a blocker, chunk-churn hysteresis (darting
 across a chunk line neither despawns nor double-spawns traffic; leaving for
-good prunes it), a long multi-seam drive staying numerically sane, driving
-a `LiveWorld` to a clicked goal and stopping there, and the goalless
-brake-to-stop.
+good prunes it), turn pockets deflecting through traffic, slip lanes
+widening right turns, pedestrians crossing (or not) at crosswalks, dense
+mixed traffic staying free-flowing (no crosswalk deadlocks), a long
+multi-seam drive staying numerically sane, driving a `LiveWorld` to a
+clicked goal and stopping there, and the goalless brake-to-stop.
