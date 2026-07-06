@@ -9,12 +9,13 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use nanoplan::PlannerKind;
-use nanoplan::world::{LANE_OFFSET_M, LiveWorld, ROAD_HALF_WIDTH_M};
+use nanoplan::world::{ActorKind, LANE_W_M, LiveWorld};
 
-use super::draw::{ACCENT, PX_PER_M, draw_car, ppx, px};
+use super::draw::{ACCENT, PX_PER_M, draw_agent, draw_car, ppx, px};
 use super::{DT, Mode, UiState};
 
-const N_ACTORS: usize = 12;
+/// Global cap on live traffic; the per-chunk spawner fills up to this.
+const MAX_ACTORS: usize = 64;
 
 /// Ticks of realtime allowed per rendered frame: enough to catch up from a
 /// hitch, few enough that a slow planner lags gracefully instead of
@@ -35,14 +36,14 @@ pub(crate) struct Live {
 impl Live {
     pub fn regenerate(&mut self, seed: u64, planner: PlannerKind) {
         self.seed = seed;
-        self.world = LiveWorld::new(seed, planner, N_ACTORS, DT);
+        self.world = LiveWorld::new(seed, planner, MAX_ACTORS, DT);
     }
 }
 
 impl Default for Live {
     fn default() -> Self {
         Live {
-            world: LiveWorld::new(1, PlannerKind::BezierIdm, N_ACTORS, DT),
+            world: LiveWorld::new(1, PlannerKind::BezierIdm, MAX_ACTORS, DT),
             seed: 1,
             paused: false,
             zoom: 2.0,
@@ -113,28 +114,47 @@ pub(crate) fn draw_live(
 
     let boundary = Color::srgb(0.55, 0.55, 0.55);
     let divider = Color::srgb(0.65, 0.55, 0.2);
-    for &[a, b] in &w.map.edges {
+    let lane_line = Color::srgb(0.45, 0.45, 0.45);
+    // widest road entering each junction, for trimming the others back
+    let mut node_w = vec![LANE_W_M; w.map.nodes.len()];
+    for (ei, &[a, b]) in w.map.edges.iter().enumerate() {
+        node_w[a] = node_w[a].max(w.map.half_width(ei));
+        node_w[b] = node_w[b].max(w.map.half_width(ei));
+    }
+    for (ei, &[a, b]) in w.map.edges.iter().enumerate() {
         let (na, nb) = (w.map.nodes[a], w.map.nodes[b]);
         let len = (nb[0] - na[0]).hypot(nb[1] - na[1]).max(1e-9);
         let dir = [(nb[0] - na[0]) / len, (nb[1] - na[1]) / len];
         let right = [dir[1], -dir[0]];
+        let hw = w.map.half_width(ei);
         // hold the lines back from the intersections so they read as open
         // junctions instead of lines crossing through them
-        let trim = (ROAD_HALF_WIDTH_M + 2.0).min(0.45 * len);
+        let (ta, tb) = (
+            (node_w[a] + 2.0).min(0.45 * len),
+            (node_w[b] + 2.0).min(0.45 * len),
+        );
         let at = |s: f64, d: f64| {
             ppx([
                 na[0] + dir[0] * s + right[0] * d,
                 na[1] + dir[1] * s + right[1] * d,
             ])
         };
-        for d in [-ROAD_HALF_WIDTH_M, ROAD_HALF_WIDTH_M] {
-            gizmos.line_2d(at(trim, d), at(len - trim, d), boundary);
+        for d in [-hw, hw] {
+            gizmos.line_2d(at(ta, d), at(len - tb, d), boundary);
         }
-        // dashed two-way divider down the road axis: 3 m dash, 3 m gap
-        let mut s = trim;
-        while s + 3.0 <= len - trim {
-            gizmos.line_2d(at(s, 0.0), at(s + 3.0, 0.0), divider);
-            s += 6.0;
+        // dashed lines: two-way divider down the axis, lane lines between
+        // same-direction lanes: 3 m dash, 3 m gap
+        let mut dash = |d: f64, color: Color| {
+            let mut s = ta;
+            while s + 3.0 <= len - tb {
+                gizmos.line_2d(at(s, d), at(s + 3.0, d), color);
+                s += 6.0;
+            }
+        };
+        dash(0.0, divider);
+        for lane in 1..w.map.lanes[ei] {
+            dash(lane as f64 * LANE_W_M, lane_line);
+            dash(-(lane as f64) * LANE_W_M, lane_line);
         }
     }
 
@@ -157,13 +177,25 @@ pub(crate) fn draw_live(
     }
     draw_car(&mut gizmos, &w.ego, Color::WHITE);
     for actor in &w.actors {
-        draw_car(&mut gizmos, &actor.state, Color::srgb(0.6, 0.6, 0.6));
+        let color = match actor.kind {
+            ActorKind::Car => Color::srgb(0.6, 0.6, 0.6),
+            ActorKind::Truck => Color::srgb(0.6, 0.5, 0.35),
+            ActorKind::Bike => Color::srgb(0.4, 0.7, 0.7),
+            ActorKind::Pedestrian => Color::srgb(0.85, 0.7, 0.45),
+        };
+        if actor.kind == ActorKind::Pedestrian {
+            gizmos.circle_2d(px(&actor.state), 0.35 * PX_PER_M, color);
+        } else {
+            let sz = actor.kind.size_m();
+            let size = Vec2::new(sz[0] as f32, sz[1] as f32);
+            draw_agent(&mut gizmos, &actor.state, size, color);
+        }
     }
     // parked-and-waiting hint: a faint ring around the ego when goalless
     if w.goal.is_none() {
         gizmos.circle_2d(
             px(&w.ego),
-            (LANE_OFFSET_M * 2.0) as f32 * PX_PER_M,
+            (LANE_W_M * 2.0) as f32 * PX_PER_M,
             Color::srgba(1.0, 1.0, 1.0, 0.2),
         );
     }

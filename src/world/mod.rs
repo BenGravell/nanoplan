@@ -1,8 +1,12 @@
-//! The interactive open world: a procedurally generated street map, routing
-//! to a user-placed goal, basic IDM traffic actors, and the realtime
-//! closed-loop stepper ([`LiveWorld`]) the viewer's "open world" mode drives
-//! — planner and simulator run every tick, judo/treetop style, instead of
-//! precomputing a rollout.
+//! The interactive open world: an *infinite* procedurally generated street
+//! network (a pure function of the seed), materialized Minecraft-style as a
+//! 3×3 chunk window around the ego, routing to a user-placed goal, mixed IDM
+//! traffic (cars, trucks, bikes, pedestrians), and the realtime closed-loop
+//! stepper ([`LiveWorld`]) the viewer's "open world" mode drives — planner
+//! and simulator run every tick, judo/treetop style, instead of precomputing
+//! a rollout.
+
+use std::collections::HashMap;
 
 use web_time::Instant;
 
@@ -11,15 +15,32 @@ use crate::planning::{Context, Planner, PlannerKind, bezier_idm::idm_accel};
 use crate::scenarios::{Path, Road};
 use crate::simulation::{Control, State, step};
 
-/// Half-width of every street — the same drivable-area bound the metrics
-/// and the shared cost function enforce around a route centerline.
-pub const ROAD_HALF_WIDTH_M: f64 = 5.5;
+/// Standard lane width; a street's half-width is `lanes × LANE_W_M`.
+pub const LANE_W_M: f64 = 3.5;
 
-/// Right-hand traffic: lane centers sit this far right of the road axis.
-pub const LANE_OFFSET_M: f64 = 2.0;
+const GRID_SPACING_M: f64 = 100.0;
+
+/// Chunk side, in grid nodes; the active window is 3×3 chunks.
+const CHUNK_NODES: i64 = 4;
+const CHUNK_M: f64 = CHUNK_NODES as f64 * GRID_SPACING_M;
+
+/// Spatial hysteresis: the ego must get this far past the center chunk's
+/// bounds before the window recenters, so driving along a chunk line
+/// doesn't thrash regeneration.
+const RECENTER_HYST_M: f64 = 25.0;
+
+/// Temporal hysteresis: an actor outside the active bounds survives this
+/// long before despawning, so darting out of and back into a chunk doesn't
+/// flicker traffic.
+const DESPAWN_GRACE_S: f64 = 3.0;
+
+/// How far outside the active window an actor may be before the despawn
+/// grace clock starts.
+const DESPAWN_MARGIN_M: f64 = 30.0;
 
 /// Corner cut radius when a route turns at an intersection, so the lane
-/// centerline stays drivable instead of kinking 90 degrees in place.
+/// centerline stays drivable instead of kinking 90 degrees in place. Also
+/// the taper length of lane gains/losses and junction lane connectors.
 const CORNER_RADIUS_M: f64 = 12.0;
 
 /// Extra route cost for starting out against the ego's current heading —
@@ -28,63 +49,284 @@ const CORNER_RADIUS_M: f64 = 12.0;
 /// goal behind the ego unreachable.
 const U_TURN_PENALTY_M: f64 = 400.0;
 
-const CAR_LENGTH_M: f64 = 5.0;
-
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
-/// A procedurally generated street network: a jittered grid of
-/// intersections with some streets removed, every road two-way with one
-/// lane each direction. Deterministic in `seed`.
+fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+}
+
+// --- procedural generation primitives -------------------------------------
+//
+// Everything below is a pure function of (seed, grid coordinates): any part
+// of the infinite map can be queried at any time and always answers the
+// same, which is what makes chunk unloading/reloading and window seams
+// invisible.
+
+/// SplitMix64-style hash of a grid coordinate pair under a salt.
+fn hash(seed: u64, a: i64, b: i64, salt: u64) -> u64 {
+    let mut z = seed
+        ^ salt.wrapping_mul(0x9E3779B97F4A7C15)
+        ^ (a as u64).wrapping_mul(0xBF58476D1CE4E5B9)
+        ^ (b as u64).wrapping_mul(0x94D049BB133111EB);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+    z ^ (z >> 31)
+}
+
+/// Hash folded to [0, 1).
+fn unit(h: u64) -> f64 {
+    (h >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Classic 2D Perlin gradient noise, roughly in [-1, 1].
+fn perlin(seed: u64, x: f64, y: f64) -> f64 {
+    let (xi, yi) = (x.floor() as i64, y.floor() as i64);
+    let (xf, yf) = (x - x.floor(), y - y.floor());
+    let grad = |ix: i64, iy: i64, dx: f64, dy: f64| {
+        let a = unit(hash(seed, ix, iy, 0x9E1)) * std::f64::consts::TAU;
+        a.cos() * dx + a.sin() * dy
+    };
+    let fade = |t: f64| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+    let (u, v) = (fade(xf), fade(yf));
+    lerp(
+        lerp(grad(xi, yi, xf, yf), grad(xi + 1, yi, xf - 1.0, yf), u),
+        lerp(
+            grad(xi, yi + 1, xf, yf - 1.0),
+            grad(xi + 1, yi + 1, xf - 1.0, yf - 1.0),
+            u,
+        ),
+        v,
+    )
+}
+
+/// Urbanization field in [0, 1]: dense downtown blocks where high, sparse
+/// semi-rural streets where low. Drives street density, lane counts, actor
+/// density, and the traffic mix.
+fn urban(seed: u64, p: [f64; 2]) -> f64 {
+    (0.5 + 0.5 * perlin(seed ^ 0x5EED_0B5C, p[0] / 350.0, p[1] / 350.0)).clamp(0.0, 1.0)
+}
+
+/// Intersection position for grid coordinate `c`: grid spacing plus a
+/// deterministic jitter so the map doesn't read as graph paper.
+fn node_pos(seed: u64, c: [i64; 2]) -> [f64; 2] {
+    let j = 0.22 * GRID_SPACING_M;
+    [
+        c[0] as f64 * GRID_SPACING_M + (unit(hash(seed, c[0], c[1], 0xA11)) * 2.0 - 1.0) * j,
+        c[1] as f64 * GRID_SPACING_M + (unit(hash(seed, c[0], c[1], 0xA22)) * 2.0 - 1.0) * j,
+    ]
+}
+
+/// Order an adjacent grid pair canonically (lexicographically).
+fn canon(a: [i64; 2], b: [i64; 2]) -> ([i64; 2], [i64; 2]) {
+    if (a[0], a[1]) <= (b[0], b[1]) {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// Is the grid line this edge lies on an arterial? Arterials are whole
+/// rows/columns (~1 in 4), so multi-lane roads run for blocks instead of
+/// appearing edge by edge.
+fn arterial(seed: u64, a: [i64; 2], b: [i64; 2]) -> bool {
+    if a[1] == b[1] {
+        hash(seed, a[1], 0, 0xA57E).is_multiple_of(4)
+    } else {
+        hash(seed, a[0], 0, 0xA57F).is_multiple_of(4)
+    }
+}
+
+/// Does the street between adjacent grid coordinates exist? Arterials
+/// always do; every node also keeps one "parent" street (west or south,
+/// hashed) so the network stays connected without a global check; the rest
+/// survive a density draw that keeps more streets downtown than in the
+/// sticks.
+fn edge_exists(seed: u64, a: [i64; 2], b: [i64; 2]) -> bool {
+    let (a, b) = canon(a, b);
+    if arterial(seed, a, b) {
+        return true;
+    }
+    // b = a + x̂ or a + ŷ; the edge is b's parent street when the hashed
+    // parent direction (west vs south) points from b back to a
+    let parent_west = hash(seed, b[0], b[1], 0xFA7) & 1 == 0;
+    if parent_west == (b[0] > a[0]) {
+        return true;
+    }
+    let salt = if b[0] > a[0] { 0xED60 } else { 0xED61 };
+    let drop_p = 0.45 - 0.3 * urban(seed, mid(node_pos(seed, a), node_pos(seed, b)));
+    unit(hash(seed, a[0], a[1], salt)) >= drop_p
+}
+
+/// Lanes per direction on this street: locals are 1 (sometimes 2 downtown),
+/// arterials 2 — with occasional per-block promotions and demotions, so a
+/// road widens and narrows along its length and lane counts shift across
+/// junctions.
+fn edge_lanes(seed: u64, a: [i64; 2], b: [i64; 2]) -> usize {
+    let (a, b) = canon(a, b);
+    let salt = if b[0] > a[0] { 0x1A90 } else { 0x1A91 };
+    let h = hash(seed, a[0], a[1], salt);
+    if arterial(seed, a, b) {
+        match h % 8 {
+            0 => 3, // gains a lane for a block
+            1 => 1, // narrows: lane drop
+            _ => 2,
+        }
+    } else if urban(seed, mid(node_pos(seed, a), node_pos(seed, b))) > 0.55 && h.is_multiple_of(3) {
+        2
+    } else {
+        1
+    }
+}
+
+/// Grid neighbours of `c` connected by an existing street (always at least
+/// one: `c`'s own parent street).
+fn neighbors(seed: u64, c: [i64; 2]) -> impl Iterator<Item = [i64; 2]> {
+    [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .into_iter()
+        .map(move |d| [c[0] + d[0], c[1] + d[1]])
+        .filter(move |&b| edge_exists(seed, c, b))
+}
+
+/// Chunk coordinates of a world position.
+fn chunk_of(p: [f64; 2]) -> [i64; 2] {
+    [
+        (p[0] / CHUNK_M).floor() as i64,
+        (p[1] / CHUNK_M).floor() as i64,
+    ]
+}
+
+/// Extend a node walk with a random next street, avoiding an immediate
+/// backtrack when the intersection offers any other way out.
+fn random_next(seed: u64, walk: &[[i64; 2]], rng: &mut Rng) -> [i64; 2] {
+    let at = *walk.last().unwrap();
+    let back = walk.len().checked_sub(2).map(|i| walk[i]);
+    let choices: Vec<[i64; 2]> = neighbors(seed, at).filter(|&v| Some(v) != back).collect();
+    match choices.len() {
+        0 => back.unwrap(),
+        k => choices[(rng.uniform() * k as f64) as usize % k],
+    }
+}
+
+/// Per-leg lateral offsets (right of travel) for a vehicle driving `axis`
+/// with `lanes[i]` lanes per direction on leg `i`: keep right, except move
+/// to the innermost lane to approach a left turn — the turning lane.
+fn drive_offsets(axis: &[[f64; 2]], lanes: &[usize]) -> Vec<f64> {
+    (0..lanes.len())
+        .map(|i| {
+            let left_turn = i + 2 < axis.len() && {
+                let d0 = [axis[i + 1][0] - axis[i][0], axis[i + 1][1] - axis[i][1]];
+                let d1 = [
+                    axis[i + 2][0] - axis[i + 1][0],
+                    axis[i + 2][1] - axis[i + 1][1],
+                ];
+                let cross = d0[0] * d1[1] - d0[1] * d1[0];
+                cross > 0.35 * d0[0].hypot(d0[1]) * d1[0].hypot(d1[1])
+            };
+            if left_turn && lanes[i] >= 2 {
+                0.5 * LANE_W_M
+            } else {
+                (lanes[i] as f64 - 0.5) * LANE_W_M
+            }
+        })
+        .collect()
+}
+
+/// Turn a road-axis polyline into a drivable lane centerline: cut each
+/// corner with a quadratic Bezier of radius [`CORNER_RADIUS_M`], then offset
+/// each point to the right of travel by its leg's offset (`offsets[i]` for
+/// the leg `axis[i]→axis[i+1]`), blended across corners — so lane gains and
+/// losses taper smoothly and junction turns come out as lane connectors
+/// from the departure lane to the arrival lane.
+fn lane_polyline(axis: &[[f64; 2]], offsets: &[f64]) -> Vec<[f64; 2]> {
+    let mut rounded: Vec<([f64; 2], f64)> = vec![(axis[0], offsets[0])];
+    for i in 1..axis.len().saturating_sub(1) {
+        let (a, v, b) = (axis[i - 1], axis[i], axis[i + 1]);
+        let r = CORNER_RADIUS_M.min(0.4 * dist(a, v)).min(0.4 * dist(v, b));
+        let pull = |from: [f64; 2]| {
+            let d = dist(v, from).max(1e-9);
+            [
+                v[0] + (from[0] - v[0]) * r / d,
+                v[1] + (from[1] - v[1]) * r / d,
+            ]
+        };
+        let (p0, p2) = (pull(a), pull(b));
+        for k in 0..=6 {
+            let t = k as f64 / 6.0;
+            let mt = 1.0 - t;
+            rounded.push((
+                [
+                    mt * mt * p0[0] + 2.0 * mt * t * v[0] + t * t * p2[0],
+                    mt * mt * p0[1] + 2.0 * mt * t * v[1] + t * t * p2[1],
+                ],
+                offsets[i - 1] + (offsets[i] - offsets[i - 1]) * t,
+            ));
+        }
+    }
+    if axis.len() > 1 {
+        rounded.push((*axis.last().unwrap(), *offsets.last().unwrap()));
+    }
+    (0..rounded.len())
+        .map(|i| {
+            let (a, b) = (
+                rounded[i.saturating_sub(1)].0,
+                rounded[(i + 1).min(rounded.len() - 1)].0,
+            );
+            let d = dist(a, b).max(1e-9);
+            let dir = [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
+            let (p, off) = rounded[i];
+            // right normal of the direction of travel
+            [p[0] + dir[1] * off, p[1] - dir[0] * off]
+        })
+        .collect()
+}
+
+/// The materialized active window of the infinite street network: the 3×3
+/// chunks of grid nodes around the ego, instantiated for drawing, snapping,
+/// and routing. Regenerating any window over the same seed yields the same
+/// streets — the network is a pure function of the seed.
 pub struct StreetMap {
+    pub seed: u64,
+    /// Center chunk of the 3×3 window.
+    pub center: [i64; 2],
+    /// Grid coordinate of each node — its stable identity across windows.
+    pub coords: Vec<[i64; 2]>,
     /// Intersection positions.
     pub nodes: Vec<[f64; 2]>,
     /// Two-way streets between intersections, as node index pairs.
     pub edges: Vec<[usize; 2]>,
+    /// Lanes per direction of each street.
+    pub lanes: Vec<usize>,
     /// `adj[n]` = neighbours of node `n`.
     adj: Vec<Vec<usize>>,
 }
 
-const GRID_N: usize = 6;
-const GRID_SPACING_M: f64 = 100.0;
-
 impl StreetMap {
-    pub fn generate(seed: u64) -> Self {
-        let mut rng = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
-        let half = (GRID_N - 1) as f64 * GRID_SPACING_M / 2.0;
-        let nodes: Vec<[f64; 2]> = (0..GRID_N * GRID_N)
-            .map(|i| {
-                let (gx, gy) = ((i % GRID_N) as f64, (i / GRID_N) as f64);
-                let jitter = 0.22 * GRID_SPACING_M;
-                [
-                    gx * GRID_SPACING_M - half + rng.range(-jitter, jitter),
-                    gy * GRID_SPACING_M - half + rng.range(-jitter, jitter),
-                ]
-            })
-            .collect();
-        // full grid edges, then randomly drop some — keeping the graph
-        // connected — so blocks merge and the map reads as a street layout
-        // rather than graph paper
-        let mut edges: Vec<[usize; 2]> = vec![];
-        for i in 0..GRID_N * GRID_N {
-            if i % GRID_N + 1 < GRID_N {
-                edges.push([i, i + 1]);
-            }
-            if i / GRID_N + 1 < GRID_N {
-                edges.push([i, i + GRID_N]);
+    pub fn window(seed: u64, center: [i64; 2]) -> Self {
+        let lo = [(center[0] - 1) * CHUNK_NODES, (center[1] - 1) * CHUNK_NODES];
+        let side = 3 * CHUNK_NODES;
+        let mut coords = vec![];
+        let mut index = HashMap::new();
+        for gy in 0..side {
+            for gx in 0..side {
+                let c = [lo[0] + gx, lo[1] + gy];
+                index.insert(c, coords.len());
+                coords.push(c);
             }
         }
-        let mut i = 0;
-        while i < edges.len() {
-            if rng.uniform() < 0.25 {
-                let e = edges.remove(i);
-                if !connected(nodes.len(), &edges) {
-                    edges.insert(i, e);
-                    i += 1;
+        let nodes: Vec<[f64; 2]> = coords.iter().map(|&c| node_pos(seed, c)).collect();
+        let (mut edges, mut lanes) = (vec![], vec![]);
+        for (i, &c) in coords.iter().enumerate() {
+            for d in [[1, 0], [0, 1]] {
+                let b = [c[0] + d[0], c[1] + d[1]];
+                if let Some(&j) = index.get(&b)
+                    && edge_exists(seed, c, b)
+                {
+                    edges.push([i, j]);
+                    lanes.push(edge_lanes(seed, c, b));
                 }
-            } else {
-                i += 1;
             }
         }
         let mut adj = vec![vec![]; nodes.len()];
@@ -92,7 +334,20 @@ impl StreetMap {
             adj[a].push(b);
             adj[b].push(a);
         }
-        StreetMap { nodes, edges, adj }
+        StreetMap {
+            seed,
+            center,
+            coords,
+            nodes,
+            edges,
+            lanes,
+            adj,
+        }
+    }
+
+    /// Half-width of street `e`: lane count times the lane width.
+    pub fn half_width(&self, e: usize) -> f64 {
+        self.lanes[e] as f64 * LANE_W_M
     }
 
     /// Nearest point on the street network to `p`: (edge index, point).
@@ -112,14 +367,16 @@ impl StreetMap {
         (best.0, best.1)
     }
 
-    /// Shortest route from `from` (facing `yaw`) to `to`, as a
-    /// right-hand-lane centerline polyline with rounded corners — ready to
-    /// be a [`Road`] centerline. Both endpoints are snapped to the network;
-    /// routes that would start against the ego's heading pay
-    /// [`U_TURN_PENALTY_M`], so the ego prefers going around the block.
+    /// Shortest route from `from` (facing `yaw`) to `to`, as a lane
+    /// centerline polyline with rounded corners — ready to be a [`Road`]
+    /// centerline. Both endpoints are snapped to the network; routes that
+    /// would start against the ego's heading pay [`U_TURN_PENALTY_M`], so
+    /// the ego prefers going around the block. Multi-lane legs keep right,
+    /// except approaching a left turn, where the route moves into the
+    /// innermost (turning) lane.
     pub fn route(&self, from: [f64; 2], yaw: f64, to: [f64; 2]) -> Vec<[f64; 2]> {
         let (se, sp) = self.snap(from);
-        let (ge, gp) = self.snap(to);
+        let (ge, mut gp) = self.snap(to);
         let heading = [yaw.cos(), yaw.sin()];
         let seed_cost = |n: usize| {
             let d = [self.nodes[n][0] - sp[0], self.nodes[n][1] - sp[1]];
@@ -127,7 +384,7 @@ impl StreetMap {
             dist(sp, self.nodes[n]) + if behind { U_TURN_PENALTY_M } else { 0.0 }
         };
         // Dijkstra over intersections, seeded with both ends of the start
-        // edge (the graph is tiny, so the O(n^2) scan needs no heap)
+        // edge (the window is small, so the O(n^2) scan needs no heap)
         let n = self.nodes.len();
         let (mut cost, mut pred, mut done) =
             (vec![f64::INFINITY; n], vec![usize::MAX; n], vec![false; n]);
@@ -151,12 +408,21 @@ impl StreetMap {
             }
         }
         // arrive via whichever end of the goal edge is cheaper overall
-        let end = self.edges[ge]
+        let mut end = self.edges[ge]
             .into_iter()
             .min_by(|&a, &b| {
                 (cost[a] + dist(self.nodes[a], gp)).total_cmp(&(cost[b] + dist(self.nodes[b], gp)))
             })
             .unwrap();
+        if !cost[end].is_finite() {
+            // ponytail: a window seam can orphan a street from the rest of
+            // the loaded grid; drive to the nearest reachable node instead
+            end = (0..n)
+                .filter(|&i| cost[i].is_finite())
+                .min_by(|&a, &b| dist(self.nodes[a], gp).total_cmp(&dist(self.nodes[b], gp)))
+                .unwrap();
+            gp = self.nodes[end];
+        }
         let mut chain = vec![end];
         while pred[*chain.last().unwrap()] != usize::MAX {
             chain.push(pred[*chain.last().unwrap()]);
@@ -184,23 +450,12 @@ impl StreetMap {
                 *axis.last_mut().unwrap() = p;
             }
         }
-        lane_polyline(&axis)
-    }
-
-    /// Extend a node walk with a random next street, avoiding an immediate
-    /// backtrack when the intersection offers any other way out.
-    fn random_next(&self, walk: &[usize], rng: &mut Rng) -> usize {
-        let at = *walk.last().unwrap();
-        let back = walk.len().checked_sub(2).map(|i| walk[i]);
-        let choices: Vec<usize> = self.adj[at]
-            .iter()
-            .copied()
-            .filter(|&v| Some(v) != back)
+        // lane count of each leg, looked up from the street it runs along
+        let lanes: Vec<usize> = axis
+            .windows(2)
+            .map(|w| self.lanes[self.snap(mid(w[0], w[1])).0])
             .collect();
-        match choices.len() {
-            0 => back.unwrap(),
-            k => choices[(rng.uniform() * k as f64) as usize % k],
-        }
+        lane_polyline(&axis, &drive_offsets(&axis, &lanes))
     }
 }
 
@@ -212,137 +467,173 @@ fn seed_cost_direct(sp: [f64; 2], gp: [f64; 2], heading: [f64; 2]) -> f64 {
     dist(sp, gp) + if behind { U_TURN_PENALTY_M } else { 0.0 }
 }
 
-fn connected(n: usize, edges: &[[usize; 2]]) -> bool {
-    let mut adj = vec![vec![]; n];
-    for &[a, b] in edges {
-        adj[a].push(b);
-        adj[b].push(a);
-    }
-    let mut seen = vec![false; n];
-    let mut stack = vec![0];
-    seen[0] = true;
-    while let Some(u) = stack.pop() {
-        for &v in &adj[u] {
-            if !seen[v] {
-                seen[v] = true;
-                stack.push(v);
-            }
-        }
-    }
-    seen.into_iter().all(|s| s)
+/// What kind of road user a [`SmartActor`] is: sets its footprint, speed,
+/// and where in the road corridor it travels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorKind {
+    Car,
+    Truck,
+    Bike,
+    Pedestrian,
 }
 
-/// Turn a road-axis polyline into a drivable right-hand lane centerline:
-/// cut each corner with a quadratic Bezier of radius [`CORNER_RADIUS_M`],
-/// then offset the whole line [`LANE_OFFSET_M`] to the right of travel.
-fn lane_polyline(axis: &[[f64; 2]]) -> Vec<[f64; 2]> {
-    let mut rounded = vec![axis[0]];
-    for i in 1..axis.len().saturating_sub(1) {
-        let (a, v, b) = (axis[i - 1], axis[i], axis[i + 1]);
-        let r = CORNER_RADIUS_M.min(0.4 * dist(a, v)).min(0.4 * dist(v, b));
-        let pull = |from: [f64; 2]| {
-            let d = dist(v, from).max(1e-9);
-            [
-                v[0] + (from[0] - v[0]) * r / d,
-                v[1] + (from[1] - v[1]) * r / d,
-            ]
-        };
-        let (p0, p2) = (pull(a), pull(b));
-        for k in 0..=6 {
-            let t = k as f64 / 6.0;
-            let mt = 1.0 - t;
-            rounded.push([
-                mt * mt * p0[0] + 2.0 * mt * t * v[0] + t * t * p2[0],
-                mt * mt * p0[1] + 2.0 * mt * t * v[1] + t * t * p2[1],
-            ]);
+impl ActorKind {
+    /// Footprint (length, width) in meters.
+    pub fn size_m(self) -> [f64; 2] {
+        match self {
+            ActorKind::Car => [4.6, 1.9],
+            ActorKind::Truck => [9.5, 2.5],
+            ActorKind::Bike => [1.8, 0.6],
+            ActorKind::Pedestrian => [0.6, 0.6],
         }
     }
-    if axis.len() > 1 {
-        rounded.push(*axis.last().unwrap());
+
+    fn speed_range(self) -> (f64, f64) {
+        match self {
+            ActorKind::Car => (5.0, 9.0),
+            ActorKind::Truck => (4.0, 7.0),
+            ActorKind::Bike => (2.5, 4.5),
+            ActorKind::Pedestrian => (0.9, 1.6),
+        }
     }
-    (0..rounded.len())
-        .map(|i| {
-            let (a, b) = (
-                rounded[i.saturating_sub(1)],
-                rounded[(i + 1).min(rounded.len() - 1)],
-            );
-            let d = dist(a, b).max(1e-9);
-            let dir = [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
-            // right normal of the direction of travel
-            [
-                rounded[i][0] + dir[1] * LANE_OFFSET_M,
-                rounded[i][1] - dir[0] * LANE_OFFSET_M,
-            ]
+
+    /// Per-leg lateral offsets for a walk: vehicles pick lanes (turning
+    /// lane on left turns), bikes hug the curb, pedestrians take the
+    /// sidewalk just outside the roadway.
+    fn offsets(self, axis: &[[f64; 2]], lanes: &[usize]) -> Vec<f64> {
+        match self {
+            ActorKind::Car | ActorKind::Truck => drive_offsets(axis, lanes),
+            ActorKind::Bike => lanes.iter().map(|&n| n as f64 * LANE_W_M - 1.0).collect(),
+            ActorKind::Pedestrian => lanes.iter().map(|&n| n as f64 * LANE_W_M + 1.8).collect(),
+        }
+    }
+}
+
+/// A traffic actor that wanders the street network: it follows its own
+/// right-hand corridor (lane, curb, or sidewalk by [`ActorKind`]), holds
+/// speed with the same IDM the Bezier planner uses, yields behind anything
+/// ahead in its corridor, and brakes for anything about to be in front of
+/// it (crossing traffic, the ego).
+pub struct SmartActor {
+    pub kind: ActorKind,
+    pub state: State,
+    /// Chunk that spawned it; one spawn set lives per populated chunk.
+    home: [i64; 2],
+    /// World time it left the active bounds, if it has (despawn grace).
+    out_since: Option<f64>,
+    /// Node walk (grid coords) the path is built from; extended as consumed.
+    walk: Vec<[i64; 2]>,
+    path: Path,
+    s: f64,
+    target_speed: f64,
+}
+
+/// The deterministic traffic of one chunk: count and mix follow the
+/// urbanization field (downtown: more of everything, especially pedestrians;
+/// rural: sparse, more trucks). A pure function of (seed, chunk), so a
+/// despawned chunk repopulates identically when revisited.
+fn spawn_chunk(seed: u64, chunk: [i64; 2]) -> Vec<SmartActor> {
+    let mut rng = Rng(hash(seed, chunk[0], chunk[1], 0x5FA1) | 1);
+    let u = urban(
+        seed,
+        [
+            (chunk[0] as f64 + 0.5) * CHUNK_M,
+            (chunk[1] as f64 + 0.5) * CHUNK_M,
+        ],
+    );
+    let count = 2 + (u * 5.0) as usize;
+    (0..count)
+        .map(|_| {
+            let roll = rng.uniform();
+            let (ped, bike, truck) = (0.08 + 0.30 * u, 0.12, 0.25 - 0.15 * u);
+            let kind = if roll < ped {
+                ActorKind::Pedestrian
+            } else if roll < ped + bike {
+                ActorKind::Bike
+            } else if roll < ped + bike + truck {
+                ActorKind::Truck
+            } else {
+                ActorKind::Car
+            };
+            SmartActor::spawn(seed, chunk, kind, &mut rng)
         })
         .collect()
 }
 
-/// A traffic actor that wanders the street map: it follows its own
-/// right-hand lane, holds speed with the same IDM the Bezier planner uses,
-/// yields behind anything ahead in its lane, and brakes for anything about
-/// to be in front of its bumper (crossing traffic, the ego).
-pub struct SmartActor {
-    /// Node walk the lane path is built from; extended as it's consumed.
-    walk: Vec<usize>,
-    path: Path,
-    s: f64,
-    target_speed: f64,
-    pub state: State,
-}
-
 impl SmartActor {
-    fn new(map: &StreetMap, rng: &mut Rng) -> Self {
-        let e = map.edges[(rng.uniform() * map.edges.len() as f64) as usize % map.edges.len()];
-        let mut walk = if rng.uniform() < 0.5 {
-            vec![e[0], e[1]]
-        } else {
-            vec![e[1], e[0]]
-        };
+    fn spawn(seed: u64, chunk: [i64; 2], kind: ActorKind, rng: &mut Rng) -> Self {
+        // a random street with an end in this chunk
+        let c = [
+            chunk[0] * CHUNK_NODES + (rng.uniform() * CHUNK_NODES as f64) as i64,
+            chunk[1] * CHUNK_NODES + (rng.uniform() * CHUNK_NODES as f64) as i64,
+        ];
+        let nbs: Vec<_> = neighbors(seed, c).collect();
+        let mut walk = vec![
+            c,
+            nbs[(rng.uniform() * nbs.len() as f64) as usize % nbs.len()],
+        ];
         while walk.len() < 5 {
-            let next = map.random_next(&walk, rng);
+            let next = random_next(seed, &walk, rng);
             walk.push(next);
         }
-        let path = Path::new(&lane_polyline(
-            &walk.iter().map(|&i| map.nodes[i]).collect::<Vec<_>>(),
-        ));
-        let s = rng.range(0.1, 0.4) * path.length();
-        let (p, yaw) = path.pose_at(s);
-        let speed = rng.range(3.0, 6.0);
-        SmartActor {
+        let (lo, hi) = kind.speed_range();
+        let mut actor = SmartActor {
+            kind,
+            state: State::default(),
+            home: chunk,
+            out_since: None,
             walk,
-            s,
-            target_speed: rng.range(5.0, 9.0),
-            state: State {
-                x: p[0],
-                y: p[1],
-                yaw,
-                speed,
-            },
-            path,
-        }
+            path: Path::new(&[[0.0, 0.0], [1.0, 0.0]]),
+            s: 0.0,
+            target_speed: rng.range(lo, hi),
+        };
+        actor.rebuild_path(seed);
+        actor.s = rng.range(0.1, 0.4) * actor.path.length();
+        let (p, yaw) = actor.path.pose_at(actor.s);
+        actor.state = State {
+            x: p[0],
+            y: p[1],
+            yaw,
+            speed: rng.range(0.5, 1.0) * actor.target_speed,
+        };
+        actor
+    }
+
+    /// Rebuild the corridor path from the current walk.
+    fn rebuild_path(&mut self, seed: u64) {
+        let axis: Vec<[f64; 2]> = self.walk.iter().map(|&c| node_pos(seed, c)).collect();
+        let lanes: Vec<usize> = self
+            .walk
+            .windows(2)
+            .map(|w| edge_lanes(seed, w[0], w[1]))
+            .collect();
+        self.path = Path::new(&lane_polyline(&axis, &self.kind.offsets(&axis, &lanes)));
     }
 
     /// Nearest thing to follow: (gap, its speed along my direction) —
-    /// either a vehicle ahead in my lane, or anything close in front of the
-    /// bumper regardless of lane (the intersection/crossing guard).
+    /// either something ahead in my corridor, or anything close in front of
+    /// my bumper regardless of lane (the intersection/crossing guard).
     fn lead(&self, others: &[State]) -> Option<(f64, f64)> {
         let me = self.state;
+        let follow_gap = self.kind.size_m()[0] / 2.0 + 2.5;
+        // bumper guard reach scales with speed: about a stride for a
+        // walker, a car length and a half at driving speed
+        let reach = 4.0 + 1.2 * me.speed;
         others
             .iter()
             .filter_map(|o| {
                 let (so, d) = self.path.project_near([o.x, o.y], self.s + 30.0, 55.0);
                 let along = d.abs() < 2.5 && so > self.s + 0.5 && so - self.s < 80.0;
-                let mut gap = along.then_some(so - self.s - CAR_LENGTH_M);
+                let mut gap = along.then_some(so - self.s - follow_gap);
                 // bumper guard: a narrow corridor straight ahead in my own
                 // frame, so crossing traffic and corner-cutters get braked
-                // for — but *not* oncoming cars in the adjacent lane, which
-                // the old wide cone caught, gridlocking whole streets when
-                // two opposing actors each braked for the other
+                // for — but *not* oncoming traffic in the adjacent lane,
+                // which a wide cone would catch, gridlocking whole streets
                 let (dx, dy) = (o.x - me.x, o.y - me.y);
                 let ahead = dx * me.yaw.cos() + dy * me.yaw.sin();
                 let side = dy * me.yaw.cos() - dx * me.yaw.sin();
-                if (0.5..14.0).contains(&ahead) && side.abs() < 3.0 {
-                    let g = (ahead - CAR_LENGTH_M).max(0.0);
+                if (0.5..reach).contains(&ahead) && side.abs() < 3.0 {
+                    let g = (ahead - follow_gap).max(0.0);
                     gap = Some(gap.map_or(g, |x: f64| x.min(g)));
                 }
                 gap.map(|g| (g, o.speed * (o.yaw - me.yaw).cos()))
@@ -350,10 +641,10 @@ impl SmartActor {
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
-    /// Advance one tick, reacting to a snapshot of every other vehicle.
-    fn step(&mut self, map: &StreetMap, others: &[State], dt: f64, rng: &mut Rng) {
+    /// Advance one tick, reacting to a snapshot of every other road user.
+    fn step(&mut self, seed: u64, others: &[State], dt: f64, rng: &mut Rng) {
         if self.s > self.path.length() - 60.0 {
-            self.extend(map, rng);
+            self.extend(seed, rng);
         }
         let accel = idm_accel(self.state.speed, self.target_speed, self.lead(others));
         self.state.speed = (self.state.speed + accel * dt).max(0.0);
@@ -363,27 +654,27 @@ impl SmartActor {
     }
 
     /// Grow the node walk ahead and drop the streets already driven, then
-    /// rebuild the lane path and re-find our place on it.
-    fn extend(&mut self, map: &StreetMap, rng: &mut Rng) {
+    /// rebuild the corridor path and re-find our place on it.
+    fn extend(&mut self, seed: u64, rng: &mut Rng) {
         // keep the street we're on: find the walk segment nearest to us
         let pos = [self.state.x, self.state.y];
         let at = (0..self.walk.len() - 1)
             .min_by(|&i, &j| {
-                let mid = |k: usize| {
-                    let (a, b) = (map.nodes[self.walk[k]], map.nodes[self.walk[k + 1]]);
-                    [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+                let m = |k: usize| {
+                    mid(
+                        node_pos(seed, self.walk[k]),
+                        node_pos(seed, self.walk[k + 1]),
+                    )
                 };
-                dist(pos, mid(i)).total_cmp(&dist(pos, mid(j)))
+                dist(pos, m(i)).total_cmp(&dist(pos, m(j)))
             })
             .unwrap_or(0);
         self.walk.drain(..at);
         while self.walk.len() < 6 {
-            let next = map.random_next(&self.walk, rng);
+            let next = random_next(seed, &self.walk, rng);
             self.walk.push(next);
         }
-        self.path = Path::new(&lane_polyline(
-            &self.walk.iter().map(|&i| map.nodes[i]).collect::<Vec<_>>(),
-        ));
+        self.rebuild_path(seed);
         self.s = self.path.project(pos).0;
     }
 }
@@ -394,12 +685,16 @@ const PLAN_PREVIEW_TICKS: usize = 30;
 /// Comfortable decel used to taper the target speed into the goal.
 const GOAL_DECEL: f64 = 1.5;
 
-/// The realtime interactive world: the street map, the ego (replanned and
-/// stepped every tick), the traffic, and the user's current goal. The
-/// caller (the viewer's open-world mode) calls [`tick`](LiveWorld::tick) at
-/// a fixed rate and [`set_goal`](LiveWorld::set_goal) whenever the user
-/// clicks; with no goal the ego brakes to a stop and waits.
+/// The realtime interactive world: the active street window, the ego
+/// (replanned and stepped every tick), the traffic, and the user's current
+/// goal. The caller (the viewer's open-world mode) calls
+/// [`tick`](LiveWorld::tick) at a fixed rate and
+/// [`set_goal`](LiveWorld::set_goal) whenever the user clicks; with no goal
+/// the ego brakes to a stop and waits.
 pub struct LiveWorld {
+    seed: u64,
+    /// The 3×3-chunk window around the ego, recentered (with hysteresis) as
+    /// it drives — so the drivable world is effectively infinite.
     pub map: StreetMap,
     pub ego: State,
     pub actors: Vec<SmartActor>,
@@ -418,38 +713,38 @@ pub struct LiveWorld {
     planner_kind: PlannerKind,
     planner: Box<dyn Planner>,
     rng: Rng,
+    /// World clock, for the despawn grace timing.
+    t: f64,
+    /// Global cap on live actors (0 = no traffic).
+    max_actors: usize,
 }
 
 impl LiveWorld {
-    pub fn new(seed: u64, planner: PlannerKind, n_actors: usize, dt: f64) -> Self {
-        let map = StreetMap::generate(seed);
+    pub fn new(seed: u64, planner: PlannerKind, max_actors: usize, dt: f64) -> Self {
         let mut rng = Rng(seed.wrapping_mul(0x2545F4914F6CDD1D) | 1);
-        // ego at rest mid-way along a random street, in its right-hand lane
-        let e = map.edges[(rng.uniform() * map.edges.len() as f64) as usize % map.edges.len()];
-        let (a, b) = (map.nodes[e[0]], map.nodes[e[1]]);
-        let d = dist(a, b).max(1e-9);
-        let dir = [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
+        // ego at rest mid-way along a random street near the origin, in the
+        // rightmost lane
+        let c = [
+            (rng.uniform() * CHUNK_NODES as f64) as i64,
+            (rng.uniform() * CHUNK_NODES as f64) as i64,
+        ];
+        let nbs: Vec<_> = neighbors(seed, c).collect();
+        let b = nbs[(rng.uniform() * nbs.len() as f64) as usize % nbs.len()];
+        let (pa, pb) = (node_pos(seed, c), node_pos(seed, b));
+        let d = dist(pa, pb).max(1e-9);
+        let dir = [(pb[0] - pa[0]) / d, (pb[1] - pa[1]) / d];
+        let off = (edge_lanes(seed, c, b) as f64 - 0.5) * LANE_W_M;
         let ego = State {
-            x: (a[0] + b[0]) / 2.0 + dir[1] * LANE_OFFSET_M,
-            y: (a[1] + b[1]) / 2.0 - dir[0] * LANE_OFFSET_M,
+            x: (pa[0] + pb[0]) / 2.0 + dir[1] * off,
+            y: (pa[1] + pb[1]) / 2.0 - dir[0] * off,
             yaw: dir[1].atan2(dir[0]),
             speed: 0.0,
         };
-        let mut actors: Vec<SmartActor> = vec![];
-        while actors.len() < n_actors {
-            let cand = SmartActor::new(&map, &mut rng);
-            let clear = dist([cand.state.x, cand.state.y], [ego.x, ego.y]) > 30.0
-                && actors
-                    .iter()
-                    .all(|o| dist([cand.state.x, cand.state.y], [o.state.x, o.state.y]) > 15.0);
-            if clear {
-                actors.push(cand);
-            }
-        }
-        LiveWorld {
-            map,
+        let mut world = LiveWorld {
+            seed,
+            map: StreetMap::window(seed, chunk_of([ego.x, ego.y])),
             ego,
-            actors,
+            actors: vec![],
             goal: None,
             road: None,
             plan: vec![],
@@ -460,6 +755,39 @@ impl LiveWorld {
             planner_kind: planner,
             planner: planner.build(),
             rng,
+            t: 0.0,
+            max_actors,
+        };
+        world.populate();
+        world
+    }
+
+    /// Spawn the deterministic traffic of any active chunk that has no
+    /// actors of its own alive — newly loaded chunks (including the preload
+    /// buffer ring) and chunks whose traffic despawned. Chunks whose actors
+    /// are still alive (however far they've wandered) are left alone, so
+    /// re-entering a chunk never double-spawns.
+    fn populate(&mut self) {
+        let [cx, cy] = self.map.center;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let chunk = [cx + dx, cy + dy];
+                if self.actors.iter().any(|a| a.home == chunk) {
+                    continue;
+                }
+                for cand in spawn_chunk(self.seed, chunk) {
+                    let p = [cand.state.x, cand.state.y];
+                    let clear = self.actors.len() < self.max_actors
+                        && dist(p, [self.ego.x, self.ego.y]) > 25.0
+                        && self
+                            .actors
+                            .iter()
+                            .all(|o| dist(p, [o.state.x, o.state.y]) > 10.0);
+                    if clear {
+                        self.actors.push(cand);
+                    }
+                }
+            }
         }
     }
 
@@ -502,10 +830,42 @@ impl LiveWorld {
         }
     }
 
-    /// Advance the whole world one tick: every actor reacts to a snapshot
-    /// of the traffic (ego included), then the ego replans and steps —
-    /// or brakes to a stop if there's no goal.
+    /// Advance the whole world one tick: recenter the chunk window if the
+    /// ego has left it, spawn/despawn traffic at the edges, step every
+    /// actor against a snapshot of the traffic (ego included), then replan
+    /// and step the ego — or brake to a stop if there's no goal.
     pub fn tick(&mut self) {
+        self.t += self.dt;
+        // recenter once the ego is decisively outside the center chunk
+        let [cx, cy] = self.map.center;
+        let outside = self.ego.x < cx as f64 * CHUNK_M - RECENTER_HYST_M
+            || self.ego.x > (cx + 1) as f64 * CHUNK_M + RECENTER_HYST_M
+            || self.ego.y < cy as f64 * CHUNK_M - RECENTER_HYST_M
+            || self.ego.y > (cy + 1) as f64 * CHUNK_M + RECENTER_HYST_M;
+        if outside {
+            self.map = StreetMap::window(self.seed, chunk_of([self.ego.x, self.ego.y]));
+            self.populate();
+        }
+        // despawn actors that stay outside the active bounds past the grace
+        let [cx, cy] = self.map.center;
+        let lo = [
+            (cx - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
+            (cy - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
+        ];
+        let hi = [
+            (cx + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
+            (cy + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
+        ];
+        let t = self.t;
+        self.actors.retain_mut(|a| {
+            let inside = (lo[0]..hi[0]).contains(&a.state.x) && (lo[1]..hi[1]).contains(&a.state.y);
+            if inside {
+                a.out_since = None;
+                true
+            } else {
+                t - *a.out_since.get_or_insert(t) < DESPAWN_GRACE_S
+            }
+        });
         let snapshot: Vec<State> = std::iter::once(self.ego)
             .chain(self.actors.iter().map(|a| a.state))
             .collect();
@@ -515,7 +875,7 @@ impl LiveWorld {
                 .enumerate()
                 .filter_map(|(j, &s)| (j != i + 1).then_some(s))
                 .collect();
-            actor.step(&self.map, &others, self.dt, &mut self.rng);
+            actor.step(self.seed, &others, self.dt, &mut self.rng);
         }
         let actor_states: Vec<State> = self.actors.iter().map(|a| a.state).collect();
         let Some(road) = &mut self.road else {
@@ -572,44 +932,81 @@ impl LiveWorld {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
-    fn street_map_is_deterministic_and_connected() {
-        let (a, b) = (StreetMap::generate(7), StreetMap::generate(7));
+    fn windows_are_deterministic_and_seamless() {
+        let (a, b) = (StreetMap::window(7, [0, 0]), StreetMap::window(7, [0, 0]));
         assert_eq!(a.nodes, b.nodes);
         assert_eq!(a.edges, b.edges);
-        assert!(connected(a.nodes.len(), &a.edges));
-        // enough streets survived the pruning to be an interesting map
-        assert!(a.edges.len() >= a.nodes.len() - 1);
+        assert_eq!(a.lanes, b.lanes);
+        // enough streets to be an interesting map
+        assert!(a.edges.len() > a.nodes.len() / 2);
+        // a shifted window agrees street for street where they overlap:
+        // the map is a pure function of the seed, not of the window
+        let shifted = StreetMap::window(7, [1, 0]);
+        let streets = |m: &StreetMap| -> HashSet<([i64; 2], [i64; 2], usize)> {
+            m.edges
+                .iter()
+                .zip(&m.lanes)
+                .map(|(&[i, j], &n)| (m.coords[i], m.coords[j], n))
+                .collect()
+        };
+        let in_overlap =
+            |c: [i64; 2]| (0..8).contains(&c[0]) && (-CHUNK_NODES..2 * CHUNK_NODES).contains(&c[1]);
+        let (sa, sb) = (streets(&a), streets(&shifted));
+        let mut overlapping = 0;
+        for e in &sb {
+            if in_overlap(e.0) && in_overlap(e.1) {
+                assert!(sa.contains(e), "seam mismatch on street {e:?}");
+                overlapping += 1;
+            }
+        }
+        assert!(overlapping > 20, "only {overlapping} streets in overlap");
+    }
+
+    #[test]
+    fn roads_vary_in_width_and_traffic_in_kind() {
+        let map = StreetMap::window(11, [0, 0]);
+        assert!(map.lanes.iter().any(|&n| n == 1));
+        assert!(map.lanes.iter().any(|&n| n >= 2));
+        let kinds: Vec<ActorKind> = (-3..3)
+            .flat_map(|i| spawn_chunk(11, [i, -i]))
+            .map(|a| a.kind)
+            .collect();
+        assert!(kinds.contains(&ActorKind::Car));
+        assert!(kinds.iter().any(|&k| k != ActorKind::Car));
     }
 
     #[test]
     fn routes_stay_on_the_road_and_reach_the_goal() {
-        let map = StreetMap::generate(3);
-        let (from, to) = ([-180.0, -190.0], [200.0, 180.0]);
+        let map = StreetMap::window(3, [0, 0]);
+        let (from, to) = ([-180.0, -190.0], [520.0, 610.0]);
         let line = map.route(from, 0.0, to);
         let (_, goal) = map.snap(to);
-        assert!(dist(*line.last().unwrap(), goal) < 2.0 * LANE_OFFSET_M + 1e-6);
-        // every point of the lane polyline is within the drivable half-width
-        // of some street axis
+        assert!(dist(*line.last().unwrap(), goal) < 3.0 * LANE_W_M + 1e-6);
+        // every point of the lane polyline stays within the local street's
+        // half-width (plus corner-cut slack at junctions)
         for &p in &line {
-            let (_, q) = map.snap(p);
+            let (e, q) = map.snap(p);
             assert!(
-                dist(p, q) <= ROAD_HALF_WIDTH_M,
-                "{p:?} is {} m off-road",
-                dist(p, q)
+                dist(p, q) <= map.half_width(e) + 0.5 * CORNER_RADIUS_M,
+                "{p:?} is {} m off a {}-lane road",
+                dist(p, q),
+                map.lanes[e]
             );
         }
     }
 
     #[test]
-    fn smart_actor_cruises_alone_and_stops_behind_a_blocker() {
-        let map = StreetMap::generate(5);
+    fn actors_cruise_alone_and_stop_behind_a_blocker() {
+        let seed = 5;
         let mut rng = Rng(9);
-        let mut free = SmartActor::new(&map, &mut rng);
-        for _ in 0..300 {
-            free.step(&map, &[], 0.1, &mut rng);
+        let mut free = spawn_chunk(seed, [0, 0]).remove(0);
+        for _ in 0..600 {
+            free.step(seed, &[], 0.1, &mut rng);
         }
         assert!(
             (free.state.speed - free.target_speed).abs() < 0.5,
@@ -617,8 +1014,8 @@ mod tests {
             free.state.speed
         );
 
-        // park a blocker 30 m ahead in the actor's own lane
-        let mut actor = SmartActor::new(&map, &mut rng);
+        // park a blocker 30 m ahead on the actor's own corridor
+        let mut actor = spawn_chunk(seed, [1, 1]).remove(0);
         let (p, yaw) = actor.path.pose_at(actor.s + 30.0);
         let blocker = State {
             x: p[0],
@@ -626,12 +1023,51 @@ mod tests {
             yaw,
             speed: 0.0,
         };
-        for _ in 0..300 {
-            actor.step(&map, &[blocker], 0.1, &mut rng);
+        for _ in 0..600 {
+            actor.step(seed, &[blocker], 0.1, &mut rng);
         }
         assert!(actor.state.speed < 0.3, "speed {}", actor.state.speed);
         let gap = dist([actor.state.x, actor.state.y], [blocker.x, blocker.y]);
-        assert!(gap > CAR_LENGTH_M * 0.8, "gap {gap}");
+        assert!(gap > 2.0, "gap {gap}");
+    }
+
+    #[test]
+    fn chunk_churn_keeps_actors_stable_then_prunes_them() {
+        let mut w = LiveWorld::new(4, PlannerKind::Straight, 64, 0.1);
+        assert!(!w.actors.is_empty());
+        let n0 = w.actors.len();
+        let start = w.ego;
+        let homes: HashSet<[i64; 2]> = w.actors.iter().map(|a| a.home).collect();
+        // dart two chunks over and straight back: the despawn grace keeps
+        // every original actor alive, and home tracking prevents re-spawns
+        w.ego.x += 2.0 * CHUNK_M;
+        w.tick();
+        w.ego = start;
+        w.tick();
+        assert_eq!(
+            w.actors.iter().filter(|a| homes.contains(&a.home)).count(),
+            n0,
+            "chunk-line dithering flickered the original traffic"
+        );
+        // stay away past the grace period: far traffic is dropped
+        w.ego.x += 2.0 * CHUNK_M;
+        for _ in 0..50 {
+            w.tick();
+        }
+        let [cx, cy] = w.map.center;
+        for a in &w.actors {
+            // grace lets a despawning actor coast a bit past the margin,
+            // never chunks away
+            assert!(
+                a.state.x > (cx - 1) as f64 * CHUNK_M - 70.0
+                    && a.state.x < (cx + 2) as f64 * CHUNK_M + 70.0
+                    && a.state.y > (cy - 1) as f64 * CHUNK_M - 70.0
+                    && a.state.y < (cy + 2) as f64 * CHUNK_M + 70.0,
+                "actor left behind at ({}, {})",
+                a.state.x,
+                a.state.y
+            );
+        }
     }
 
     #[test]
@@ -654,10 +1090,37 @@ mod tests {
         assert!(w.ego.speed < 0.5, "still moving at {}", w.ego.speed);
         let snapped = w.map.snap(goal).1;
         assert!(
-            dist([w.ego.x, w.ego.y], snapped) < 8.0,
+            dist([w.ego.x, w.ego.y], snapped) < 12.0,
             "stopped {} m from the goal",
             dist([w.ego.x, w.ego.y], snapped)
         );
+    }
+
+    #[test]
+    fn ego_drives_across_chunk_seams_indefinitely() {
+        // chase a moving goal eastward through live traffic: the window
+        // must recenter repeatedly and the closed loop must stay sane
+        let mut w = LiveWorld::new(8, PlannerKind::BezierIdm, 64, 0.1);
+        let (mut recenters, mut center) = (0, w.map.center);
+        for _ in 0..4 {
+            w.set_goal([w.ego.x + 300.0, w.ego.y + 60.0]);
+            for _ in 0..1200 {
+                w.tick();
+                if w.map.center != center {
+                    (recenters, center) = (recenters + 1, w.map.center);
+                }
+                if w.goal.is_none() {
+                    break;
+                }
+            }
+            assert!(
+                w.ego.speed.is_finite() && w.ego.speed.abs() < 30.0,
+                "closed loop diverged: speed {}",
+                w.ego.speed
+            );
+        }
+        assert!(recenters >= 2, "never crossed a chunk seam");
+        assert!(!w.actors.is_empty(), "the world went empty");
     }
 
     #[test]

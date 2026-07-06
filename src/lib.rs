@@ -5,7 +5,7 @@
 //! - [`simulation`]: the kinematic model and closed-loop simulator
 //! - [`metrics`]: nuPlan closed-loop quality metrics, one module per metric
 //! - [`scenarios`]: scenario data, road geometry, loading, and generation
-//! - [`world`]: procedural street map, traffic actors, realtime interactive world
+//! - [`world`]: infinite chunked procedural street world, mixed traffic, realtime interactive world
 
 pub mod metrics;
 pub mod planning;
