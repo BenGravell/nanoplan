@@ -2,7 +2,7 @@
 
 Ultra minimalist motion planner for car-like vehicles, written in Rust.
 
-Eight planners share one kinematic model, one closed-loop simulator, and one
+Eleven planners share one kinematic model, one closed-loop simulator, and one
 set of nuPlan-derived quality metrics, so they can be scrubbed side by side
 in an interactive [Bevy](https://bevy.org) viewer or swept over hundreds of
 scenarios from the command line.
@@ -41,7 +41,7 @@ planning, simulation, or scoring logic itself.
 
 | Component | README | What it owns |
 |---|---|---|
-| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, the shared QMC sampler, and the eight planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP, RRT*, and the judo-derived predictive sampling, CEM, and MPPI |
+| Planning | [src/planning/README.md](src/planning/README.md) | The `Planner` trait, `PlannerKind` registry, latency diagnostics, the shared QMC sampler, and the eleven planners: strawman, Bezier+IDM, Frenet lattice, PI²-DDP, RRT*, the judo-derived predictive sampling, CEM, and MPPI, and the treetop-derived RRT, iLQR, and treetop (RRT+iLQR) |
 | Simulation | [src/simulation/README.md](src/simulation/README.md) | `State`/`Control`, the kinematic bicycle-free step, `Simulator`, and `simulate()`/`Rollout` |
 | Metrics | [src/metrics/README.md](src/metrics/README.md) | Tickwise nuPlan closed-loop quality metrics, one module per metric, with their aggregation rules |
 | Scenarios | [src/scenarios/README.md](src/scenarios/README.md) | `Scenario`/`Actor`/`Waypoint` data model, the Frenet `Path`, JSON loading, trajectory replay, synthetic generation |
@@ -73,6 +73,9 @@ A few more directories hold data rather than code:
 | Predictive sampling (judo) | Fixed-sigma sampling around a nominal, take the best rollout | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
 | CEM (judo) | Cross-entropy method: refit an adaptive per-node Gaussian to the elite rollouts | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
 | MPPI (judo) | Model Predictive Path Integral: Boltzmann reward-weighted average of the rollouts | [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo) |
+| RRT (treetop) | Time-layered motion sampling tree; steers in action space via cubic flat outputs, projected onto the actuation limits | [src/planning/README.md#rrt-treetop-tree](src/planning/README.md#rrt-treetop-tree) |
+| iLQR (treetop) | Iterative LQR trajectory optimization, with every cost and dynamics derivative taken by finite differences | [src/planning/README.md#ilqr-treetop-finite-differences](src/planning/README.md#ilqr-treetop-finite-differences) |
+| treetop (RRT+iLQR) | The tree seeds iLQR with collision-free path candidates; the optimized solution warm-starts the tree next tick | [src/planning/README.md#treetop-rrt--ilqr](src/planning/README.md#treetop-rrt--ilqr) |
 
 ## Provenance
 
@@ -83,6 +86,13 @@ A few more directories hold data rather than code:
   keeping its `Optimizer` sample/update interface and adapting the rollout to
   nanoplan's shared cost, road-model base policy, and QMC sampler — see
   [src/planning/README.md#sampling-mpc-judo](src/planning/README.md#sampling-mpc-judo).
+- **RRT / iLQR / treetop**: ported from
+  [treetop](https://github.com/BenGravell/treetop), a tree-initialized
+  trajectory-optimizing planner (ego motion sampling tree + iLQR), split
+  into its two halves plus the coordinator so each is comparable on its
+  own; the iLQR port takes all cost and dynamics derivatives by finite
+  differences since nanoplan deliberately provides no analytic ones — see
+  [src/planning/README.md#treetop-rrt--ilqr](src/planning/README.md#treetop-rrt--ilqr).
 - **Frenet lattice**: the EM-planner family (Apollo, and the lattice planners
   surveyed in the sampling-based-DDP literature).
 - **RRT***: Karaman & Frazzoli, "Sampling-based Algorithms for Optimal Motion

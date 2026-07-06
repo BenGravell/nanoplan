@@ -18,16 +18,20 @@
 //! maximum-entropy IRL, on the assumption that the human demonstrations were
 //! drawn from a well-tuned cost of exactly this form.
 //!
-//! Every planner in this codebase finds trajectories by sampling candidates
-//! and comparing their scalar cost, never by differentiating cost or
-//! dynamics — a deliberate design choice. This module's interface enforces
-//! it structurally: [`point_cost`] takes already-known numbers (position,
-//! speed, curvature, accel) and returns a plain `f64`. Those numbers may
-//! come from a closed-form fact about an already-*fixed* candidate curve
-//! (RRT*'s differential-flatness steering evaluates its own curvature), or
-//! from a purely numerical estimate off sampled points ([`curvature_of`],
-//! below) — but nothing here, or in any planner, differentiates cost or
-//! dynamics with respect to a search variable to decide where to look next.
+//! nanoplan provides no analytic derivatives of its cost or dynamics — a
+//! deliberate design choice this module's interface enforces structurally:
+//! [`point_cost`] takes already-known numbers (position, speed, curvature,
+//! accel) and returns a plain `f64`, and nothing may demand a gradient of
+//! it. Most planners find trajectories by sampling candidates and comparing
+//! this scalar, never differentiating anything; where one needs curvature
+//! as an input it evaluates a closed-form fact about an already-*fixed*
+//! candidate curve (RRT*'s differential-flatness steering) or estimates it
+//! numerically off sampled points ([`curvature_of`], below). The one
+//! genuine optimizer — the treetop-derived iLQR
+//! ([`crate::planning::treetop::ilqr`]) — respects the same interface: it
+//! consumes this exact black-box scalar and differentiates it by central
+//! finite differences, so this function stays the single definition of
+//! "good" with no analytically-differentiated twin to drift away from it.
 
 use crate::metrics::{CAR_RADIUS_M, comfort, drivable_area, speed_limit};
 use crate::simulation::State;

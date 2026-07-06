@@ -10,6 +10,7 @@ pub mod rrt_star;
 pub(crate) mod sampling;
 pub mod sampling_mpc;
 pub mod straight;
+pub mod treetop;
 
 pub use bezier_idm::BezierIdmPlanner;
 pub use diagnostics::{Diagnostics, DiagnosticsData};
@@ -19,6 +20,7 @@ pub use pi2ddp::Pi2DdpPlanner;
 pub use rrt_star::RrtStarPlanner;
 pub use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub use straight::StraightPlanner;
+pub use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
 
 use crate::scenarios::Road;
 use crate::simulation::{Control, State};
@@ -77,6 +79,9 @@ pub enum PlannerKind {
     PredictiveSampling,
     Cem,
     Mppi,
+    Rrt,
+    Ilqr,
+    Treetop,
 }
 
 /// One planner, whole: the registry metadata behind a [`PlannerKind`]
@@ -94,7 +99,7 @@ pub struct PlannerSpec {
 }
 
 /// The planner registry, indexed by `PlannerKind as usize`.
-const SPECS: [PlannerSpec; 8] = [
+const SPECS: [PlannerSpec; 11] = [
     PlannerSpec {
         kind: PlannerKind::Straight,
         name: "straight (strawman)",
@@ -143,10 +148,28 @@ const SPECS: [PlannerSpec; 8] = [
         build: || Box::new(SamplingPlanner::<Mppi>::default()),
         has_diagnostics: true,
     },
+    PlannerSpec {
+        kind: PlannerKind::Rrt,
+        name: "RRT (treetop tree)",
+        build: || Box::new(RrtPlanner::default()),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Ilqr,
+        name: "iLQR (finite diff)",
+        build: || Box::new(IlqrPlanner::default()),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Treetop,
+        name: "treetop (RRT+iLQR)",
+        build: || Box::new(TreetopPlanner::default()),
+        has_diagnostics: true,
+    },
 ];
 
 impl PlannerKind {
-    pub const ALL: [PlannerKind; 8] = [
+    pub const ALL: [PlannerKind; 11] = [
         PlannerKind::Straight,
         PlannerKind::BezierIdm,
         PlannerKind::Lattice,
@@ -155,6 +178,9 @@ impl PlannerKind {
         PlannerKind::PredictiveSampling,
         PlannerKind::Cem,
         PlannerKind::Mppi,
+        PlannerKind::Rrt,
+        PlannerKind::Ilqr,
+        PlannerKind::Treetop,
     ];
 
     /// This planner's registry row.
