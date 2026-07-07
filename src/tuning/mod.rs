@@ -382,7 +382,7 @@ fn trajectory_features(
             accel,
             t: i as f64 * DT,
         };
-        let f = cost::features(&sample, target_speed, road_half_width, actors)?;
+        let f = cost::features(&sample, target_speed, road_half_width, actors, Some(path))?;
         for (tot, x) in total.iter_mut().zip(f) {
             *tot += x;
         }

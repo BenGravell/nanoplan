@@ -98,10 +98,10 @@ one `const`), so "applying" a tune is a one-line, reviewable diff.
   something no feature measures (e.g. centerline-hugging — deliberately not
   a shared-cost term), the fit can't express it.
 - **Model-consistent, not reality-consistent.** Features price actors via
-  the same constant-velocity projection the planners use. An expert who
-  avoided a car that *actually* swerved may look unmotivated (or
-  hard-violating) under the projection; such scenarios are skipped rather
-  than half-learned.
+  the same `metrics::predict` model the planners use (lane-following where an
+  actor drives the route, constant-velocity otherwise). An expert who avoided
+  a car that *actually* swerved may look unmotivated (or hard-violating)
+  under the prediction; such scenarios are skipped rather than half-learned.
 - **The candidate grid is coarse.** MaxEnt IRL only learns from cost
   *contrasts* among candidates; preferences the grid can't express (e.g.
   double lane changes) generate no signal. Enrich the grids in `mod.rs` if

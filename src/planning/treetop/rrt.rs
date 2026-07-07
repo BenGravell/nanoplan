@@ -237,7 +237,13 @@ impl Tree {
                 let sample = frenet_sample(path, &target, Control::default(), t_s);
                 if !ctx
                     .time("cost", || {
-                        cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
+                        cost::point_cost(
+                            &sample,
+                            ctx.road.target_speed,
+                            ctx.road.half_width,
+                            ctx.actors,
+                            Some(path),
+                        )
                     })
                     .is_finite()
                 {
@@ -445,6 +451,7 @@ impl Grower<'_, '_> {
                     self.ctx.road.target_speed,
                     self.ctx.road.half_width,
                     self.ctx.actors,
+                    Some(self.path),
                 )
             });
             // treetop softLoss: magnitude of (lon, lat) acceleration

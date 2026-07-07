@@ -4,10 +4,16 @@
 //! same quantities [`crate::metrics`] scores scenario quality by — the
 //! hard-collision threshold, the drivable-area bound, the overspeed
 //! tolerance, and the comfort accel bounds — plus a prediction of actors
-//! that reuses [`crate::metrics::project`], the same constant-velocity
-//! model `metrics::ttc` scores against. A planner disagreeing with the
-//! metrics about what "good" means would be optimizing for the wrong
-//! thing.
+//! via [`crate::metrics::predict`]. That is the lane-aware kinematic model:
+//! an actor travelling along the route is rolled forward following the
+//! lane's curve and eased back toward its center, so on a bend the planner
+//! prices it where it will actually be rather than off on the straight
+//! tangent the constant-velocity `metrics::ttc` model assumes. An actor not
+//! associated with the lane (oncoming, crossing) still falls back to that
+//! same constant-velocity projection. The planner predicting more accurately
+//! than the deliberately-simple TTC metric is the point — the ground-truth
+//! `metrics::collisions` score over the real actor traces is what a better
+//! prediction ultimately has to improve.
 //!
 //! The cost splits into two parts with different standing. Hard rules —
 //! collision and leaving the drivable area — are infinitely bad by fiat
@@ -34,6 +40,7 @@
 //! "good" with no analytically-differentiated twin to drift away from it.
 
 use crate::metrics::{CAR_RADIUS_M, comfort, speed_limit};
+use crate::scenarios::Path;
 use crate::simulation::State;
 
 /// Center-to-center clearance below which two cars are treated as collided
@@ -108,10 +115,12 @@ pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0]
 
 /// Soft feature vector of one sample, or `None` for a hard violation —
 /// collision with an actor's predicted position, or off the drivable area —
-/// which is infinitely bad by fiat, not by any weight. Actor prediction is
-/// constant velocity and heading (`metrics::project`, the same model
-/// `metrics::ttc` uses). Each feature is already squared/hinged so the cost
-/// is *linear* in [`WEIGHTS`] — the form the IRL tuner learns.
+/// which is infinitely bad by fiat, not by any weight. Actors are predicted
+/// with [`crate::metrics::predict`] against `lane`: one travelling along the
+/// route follows the lane's curve back toward its center, while oncoming or
+/// crossing traffic (or a `None` lane) falls back to the constant-velocity
+/// projection `metrics::ttc` uses. Each feature is already squared/hinged so
+/// the cost is *linear* in [`WEIGHTS`] — the form the IRL tuner learns.
 ///
 /// `road_half_width` is the actual half-width of the road this sample sits
 /// on ([`crate::scenarios::Road::half_width`]) — the same lateral bound the
@@ -123,13 +132,14 @@ pub(crate) fn features(
     target_speed: f64,
     road_half_width: f64,
     actors: &[State],
+    lane: Option<&Path>,
 ) -> Option<[f64; N_FEATURES]> {
     if sample.lateral.abs() > road_half_width {
         return None;
     }
     let mut proximity = 0.0;
     for a in actors {
-        let predicted = crate::metrics::project(a, sample.t);
+        let predicted = crate::metrics::predict(a, lane, sample.t);
         let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
         if gap < COLLISION_DIAMETER_M {
             return None;
@@ -196,8 +206,9 @@ pub(crate) fn point_cost(
     target_speed: f64,
     road_half_width: f64,
     actors: &[State],
+    lane: Option<&Path>,
 ) -> f64 {
-    match features(sample, target_speed, road_half_width, actors) {
+    match features(sample, target_speed, road_half_width, actors, lane) {
         None => f64::INFINITY,
         Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
     }
@@ -221,7 +232,7 @@ mod tests {
             x: 1.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, HW, &[actor]).is_infinite());
+        assert!(point_cost(&s, 10.0, HW, &[actor], None).is_infinite());
     }
 
     #[test]
@@ -230,7 +241,7 @@ mod tests {
             lateral: 10.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, HW, &[]).is_infinite());
+        assert!(point_cost(&s, 10.0, HW, &[], None).is_infinite());
     }
 
     #[test]
@@ -242,8 +253,8 @@ mod tests {
             speed: 10.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, 5.5, &[]).is_finite());
-        assert!(point_cost(&s, 10.0, 3.5, &[]).is_infinite());
+        assert!(point_cost(&s, 10.0, 5.5, &[], None).is_finite());
+        assert!(point_cost(&s, 10.0, 3.5, &[], None).is_infinite());
     }
 
     #[test]
@@ -252,7 +263,7 @@ mod tests {
             speed: 10.0,
             ..Default::default()
         };
-        let c = point_cost(&s, 10.0, HW, &[]);
+        let c = point_cost(&s, 10.0, HW, &[], None);
         assert!(c.is_finite());
         assert!(c < 1.0, "cost {c}");
     }
@@ -274,10 +285,37 @@ mod tests {
             x: 5.0,
             ..Default::default()
         };
-        let f = features(&s, 10.0, HW, &[actor]).unwrap();
+        let f = features(&s, 10.0, HW, &[actor], None).unwrap();
         assert!(f.iter().all(|&x| x > 0.0), "features {f:?}");
         let dot: f64 = WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum();
-        assert_eq!(point_cost(&s, 10.0, HW, &[actor]), dot);
+        assert_eq!(point_cost(&s, 10.0, HW, &[actor], None), dot);
+    }
+
+    #[test]
+    fn lane_association_predicts_actors_around_a_bend() {
+        // a lane running east then turning north at (50, 0)
+        let lane = Path::new(&[[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]);
+        // an actor on the eastbound leg, driving along the lane at 10 m/s
+        let actor = State {
+            x: 40.0,
+            y: 0.0,
+            yaw: 0.0,
+            speed: 10.0,
+        };
+        // a sample sitting 20 m of arc length ahead of the actor — up on the
+        // *northbound* leg, at (50, 10). Two seconds out the actor reaches it.
+        let s = Sample {
+            xy: [50.0, 10.0],
+            lateral: 0.0,
+            t: 2.0,
+            ..Default::default()
+        };
+        // straight-line prediction sends the actor to (60, 0), nowhere near
+        // the sample: no collision.
+        assert!(point_cost(&s, 10.0, HW, &[actor], None).is_finite());
+        // lane-aware prediction follows the bend to (50, 10), right on top of
+        // the sample: a collision the straight-line model misses.
+        assert!(point_cost(&s, 10.0, HW, &[actor], Some(&lane)).is_infinite());
     }
 
     #[test]
