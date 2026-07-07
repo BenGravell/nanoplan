@@ -198,18 +198,16 @@ impl Ocp<'_, '_> {
             t: t as f64 * self.ctx.road.dt,
         };
         let target = self.ctx.road.target_speed;
-        let mut shared = cost::point_cost(
+        // shared cost with a hard violation's escape slope (see the module
+        // doc); the depth-scaled penalty lives in `cost::soft_point_cost`,
+        // shared with the judo samplers and PI²-DDP.
+        let shared = cost::soft_point_cost(
             &sample,
             target,
             self.ctx.road.half_width,
             self.ctx.actors,
             Some(self.path),
         );
-        if !shared.is_finite() {
-            // hard violation with an escape slope (see the module doc)
-            shared =
-                cost::HARD_VIOLATION_PENALTY * (1.0 + violation_depth(&sample, self.ctx, self.path));
-        }
         let dv = x.speed - target;
         let structural = CENTER_W * d * d
             + SPEED_W * dv * dv
@@ -234,24 +232,6 @@ impl Ocp<'_, '_> {
             .sum::<f64>()
             + self.terminal_cost(xs.last().unwrap())
     }
-}
-
-/// How far inside a hard violation a sample sits, in meters: off-road
-/// depth past the drivable bound plus collision depth inside the collision
-/// diameter against each predicted actor. Zero exactly at the violation
-/// boundary, so the escape-slope penalty is continuous with the flat
-/// [`cost::HARD_VIOLATION_PENALTY`] there.
-fn violation_depth(sample: &cost::Sample, ctx: &Context, lane: &Path) -> f64 {
-    // measured against the road's own drivable half-width, the same bound
-    // `cost::point_cost` rejects on — so the escape slope stays continuous
-    // with the flat penalty exactly at the true road edge, not a fixed 5.5 m
-    let mut depth = (sample.lateral.abs() - ctx.road.half_width).max(0.0);
-    for a in ctx.actors {
-        let p = crate::metrics::predict(a, Some(lane), sample.t);
-        let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
-        depth += (cost::COLLISION_DIAMETER_M - gap).max(0.0);
-    }
-    depth
 }
 
 // ---- Finite-difference derivatives ----------------------------------------

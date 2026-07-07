@@ -38,22 +38,113 @@ pub fn step(s: State, u: Control, dt: f64) -> State {
     }
 }
 
+// The plant's actuation limits. The *longitudinal* bounds (accel, jerk) are
+// the `comfort` metric's own empirical nuPlan values — a normal controller's
+// throttle/brake authority — reused so the plant can't produce longitudinal
+// motion the metric would then score as uncomfortable. The *lateral* bounds
+// are physical **capability** (tyre grip, steering geometry), deliberately
+// looser than the comfort lateral-accel value: the plant must let the car
+// physically hold an aggressive bend — the `comfort` metric scores the
+// resulting discomfort — because a comfort-level lateral cap the planners
+// don't anticipate would make them understeer off the road on a legitimately
+// tight curve rather than merely score badly.
+
+pub(crate) use crate::metrics::comfort::{MAX_ABS_LON_JERK, MAX_LON_ACCEL, MIN_LON_ACCEL};
+
+/// Tightest steer the plant will execute — a ~5 m turning radius. Also the
+/// absolute curvature the judo samplers clamp their sampled controls to.
+pub const MAX_ABS_CURVATURE: f64 = 0.2;
+/// Lateral-acceleration (tyre-grip) limit, ~0.9 g: the curvature a car can
+/// actually hold at a given speed is `MAX_ABS_LAT_ACCEL / speed²`. Well above
+/// the comfort metric's lateral bound on purpose (see the note above).
+pub const MAX_ABS_LAT_ACCEL: f64 = 9.0;
+
+/// Fastest the plant can change curvature, in 1/(m·s): the steering-rate
+/// (steering-wheel rate) limit. It stops a planner from flipping the wheel
+/// lock-to-lock within a tick — the actuation signature of the wild spin a
+/// degenerate end-of-route reference provokes.
+///
+/// It is set permissively on purpose. The planners model curvature as an
+/// *instantaneous* control (it is not part of the kinematic [`State`] they
+/// roll out), so a tight steering rate the plant enforces but the planners
+/// don't anticipate makes their instant-steer plans unexecutable and
+/// destabilizes the closed loop. A properly tight steering rate would mean
+/// promoting curvature to a vehicle state so the planners can plan the ramp —
+/// a larger model change left as future work. Until then this cap only forbids
+/// the most violent reversals.
+pub const MAX_ABS_CURVATURE_RATE: f64 = 3.0;
+
+/// Clamp a commanded [`Control`] to the vehicle's physical actuation
+/// capability, given the control applied the previous tick (`prev`) and the
+/// current `speed`. The plant applies this before integrating, so no planner —
+/// however wild its commanded plan — can drive the car harder than a real
+/// vehicle:
+///
+/// - **longitudinal acceleration** held within `MIN_LON_ACCEL..=MAX_LON_ACCEL`;
+/// - **longitudinal jerk** (accel rate of change) held within
+///   `MAX_ABS_LON_JERK`, so throttle/brake can't step instantly;
+/// - **steering angle** (absolute curvature) held within `MAX_ABS_CURVATURE`;
+/// - **lateral acceleration** (`speed² · curvature`) held within the grip
+///   limit `MAX_ABS_LAT_ACCEL`, which tightens the curvature limit as speed
+///   rises (a car can't hold a hairpin at highway speed);
+/// - **steering rate** (curvature rate of change) held within
+///   `MAX_ABS_CURVATURE_RATE`.
+///
+/// The accel/jerk pair and the curvature/lat-accel/rate trio each clamp the
+/// absolute value first, then rate-limit the change from `prev`, so the result
+/// stays inside every bound at once.
+pub fn apply_limits(prev: Control, cmd: Control, speed: f64, dt: f64) -> Control {
+    // longitudinal: accel bounds, then jerk-limit the change since last tick
+    let accel = cmd.accel.clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+    let max_da = MAX_ABS_LON_JERK * dt;
+    let accel = prev.accel + (accel - prev.accel).clamp(-max_da, max_da);
+
+    // steering: absolute curvature, then the lateral-accel (grip) cap
+    // (|v²·κ| ≤ bound; no cap at a standstill, where any curvature is zero
+    // lateral accel), then rate-limit the change since last tick
+    let mut curvature = cmd.curvature.clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE);
+    let v2 = speed * speed;
+    if v2 > 1e-6 {
+        let kappa_lat = MAX_ABS_LAT_ACCEL / v2;
+        curvature = curvature.clamp(-kappa_lat, kappa_lat);
+    }
+    let max_dk = MAX_ABS_CURVATURE_RATE * dt;
+    let curvature = prev.curvature + (curvature - prev.curvature).clamp(-max_dk, max_dk);
+
+    Control { accel, curvature }
+}
+
 /// Ego vehicle simulator.
 pub struct Simulator {
     pub state: State,
     pub dt: f64,
+    /// Control actually applied last tick, so the plant can rate-limit jerk
+    /// and steering rate (see [`apply_limits`]).
+    prev_control: Control,
 }
 
 impl Simulator {
-    /// Replan from the current state, apply the first planned control,
-    /// and advance one tick. Returns the new state.
+    /// A simulator starting at rest w.r.t. actuation (no control applied yet).
+    pub fn new(state: State, dt: f64) -> Self {
+        Simulator {
+            state,
+            dt,
+            prev_control: Control::default(),
+        }
+    }
+
+    /// Replan from the current state, apply the first planned control
+    /// (clamped to the vehicle's physical actuation limits, see
+    /// [`apply_limits`]), and advance one tick. Returns the new state.
     /// An empty plan coasts (zero control).
     pub fn tick(&mut self, planner: &mut dyn Planner, ctx: &Context) -> State {
-        let u = ctx
+        let cmd = ctx
             .time("total", || planner.plan(self.state, ctx))
             .first()
             .copied()
             .unwrap_or_default();
+        let u = apply_limits(self.prev_control, cmd, self.state.speed, self.dt);
+        self.prev_control = u;
         self.state = step(self.state, u, self.dt);
         self.state
     }
@@ -105,7 +196,7 @@ impl IncrementalSim {
         IncrementalSim {
             actors: sc.actors.iter().map(|a| a.trace(steps_total, dt)).collect(),
             road: sc.road(dt),
-            sim: Simulator { state: sc.ego, dt },
+            sim: Simulator::new(sc.ego, dt),
             planner: kind.build(),
             recorder: Latency::default(),
             latency: LatencyStats::default(),
@@ -230,5 +321,79 @@ mod tests {
         };
         let s1 = step(s0, u, 0.1);
         assert!(s1.yaw > 0.0);
+    }
+
+    #[test]
+    fn limits_clamp_accel_and_jerk() {
+        // a wild command from rest (prev = 0): jerk holds the first-tick accel
+        // change to MAX_ABS_LON_JERK · dt, well inside the accel bound
+        let u = apply_limits(Control::default(), Control { accel: 100.0, curvature: 0.0 }, 5.0, 0.1);
+        assert!((u.accel - MAX_ABS_LON_JERK * 0.1).abs() < 1e-9, "accel {}", u.accel);
+        // once ramped up, accel saturates at the capability bound, not beyond
+        let mut prev = Control::default();
+        for _ in 0..100 {
+            prev = apply_limits(prev, Control { accel: 100.0, curvature: 0.0 }, 5.0, 0.1);
+        }
+        assert!((prev.accel - MAX_LON_ACCEL).abs() < 1e-9, "accel {}", prev.accel);
+        // hard braking clamps to the (larger) deceleration bound
+        let brake = apply_limits(
+            Control { accel: MIN_LON_ACCEL, ..Default::default() },
+            Control { accel: -100.0, curvature: 0.0 },
+            5.0,
+            0.1,
+        );
+        assert!(brake.accel >= MIN_LON_ACCEL - 1e-9);
+    }
+
+    #[test]
+    fn limits_cap_curvature_rate_and_lateral_accel() {
+        // steering rate: a full-lock reversal (Δκ = 0.4) can't happen in one
+        // tick — at a low speed where lateral accel doesn't bind, the wheel
+        // moves only MAX_ABS_CURVATURE_RATE · dt from where it was
+        let slow = 3.0;
+        assert!(MAX_ABS_LAT_ACCEL / (slow * slow) > MAX_ABS_CURVATURE);
+        let u = apply_limits(
+            Control { accel: 0.0, curvature: MAX_ABS_CURVATURE },
+            Control { accel: 0.0, curvature: -MAX_ABS_CURVATURE },
+            slow,
+            0.1,
+        );
+        let expected = MAX_ABS_CURVATURE - MAX_ABS_CURVATURE_RATE * 0.1;
+        assert!((u.curvature - expected).abs() < 1e-9, "curv {}", u.curvature);
+
+        // lateral-accel (grip) cap: at speed, sustained max steering saturates
+        // at the curvature giving MAX_ABS_LAT_ACCEL, tighter than the absolute
+        // cap
+        let fast = 25.0;
+        let kappa_lat = MAX_ABS_LAT_ACCEL / (fast * fast);
+        assert!(kappa_lat < MAX_ABS_CURVATURE, "test speed too low to bind lat accel");
+        let mut prev = Control::default();
+        for _ in 0..100 {
+            prev = apply_limits(prev, Control { accel: 0.0, curvature: 1.0 }, fast, 0.1);
+        }
+        assert!((prev.curvature - kappa_lat).abs() < 1e-9, "curv {}", prev.curvature);
+        assert!((prev.curvature * fast * fast - MAX_ABS_LAT_ACCEL).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_wild_plan_cannot_spin_the_car() {
+        // a planner slamming the wheel lock-to-lock every tick at speed: the
+        // plant holds curvature, lateral accel, and per-tick steering change to
+        // the capability bounds regardless
+        let mut sim = Simulator::new(State { speed: 8.0, ..Default::default() }, 0.1);
+        let mut prev = Control::default();
+        for k in 0..200 {
+            let cmd = Control { accel: 0.0, curvature: if k % 2 == 0 { 5.0 } else { -5.0 } };
+            let u = apply_limits(prev, cmd, sim.state.speed, sim.dt);
+            let prev_yaw = sim.state.yaw;
+            let dk = (u.curvature - prev.curvature).abs();
+            sim.state = step(sim.state, u, sim.dt);
+            prev = u;
+            let yaw_rate = crate::wrap_angle(sim.state.yaw - prev_yaw) / sim.dt;
+            let lat_accel = yaw_rate * sim.state.speed;
+            assert!(u.curvature.abs() <= MAX_ABS_CURVATURE + 1e-9);
+            assert!(dk <= MAX_ABS_CURVATURE_RATE * sim.dt + 1e-9, "steer step {dk}");
+            assert!(lat_accel.abs() <= MAX_ABS_LAT_ACCEL + 1e-6, "lat accel {lat_accel}");
+        }
     }
 }

@@ -340,21 +340,21 @@ impl<O: Optimizer> SamplingPlanner<O> {
             accel: u[0],
             t: t as f64 * ctx.road.dt,
         };
-        let c = 0.5 * d * d
+        // The shared cost with hard violations made finite by a depth-scaled
+        // escape slope (`soft_point_cost`): a flat penalty plateau leaves
+        // CEM's and MPPI's reward-weighted averages no gradient back onto the
+        // road once every sampled rollout is briefly off it, so they can
+        // settle off-road; the depth slope pulls them back in.
+        0.5 * d * d
             + ctx.time("cost", || {
-                cost::point_cost(
+                cost::soft_point_cost(
                     &sample,
                     ctx.road.target_speed,
                     ctx.road.half_width,
                     ctx.actors,
                     Some(path),
                 )
-            });
-        if c.is_infinite() {
-            cost::HARD_VIOLATION_PENALTY
-        } else {
-            c
-        }
+            })
     }
 
     /// Roll a knot-set out from the ego over the full horizon, applying each

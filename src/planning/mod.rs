@@ -244,10 +244,7 @@ pub(crate) fn test_run_on(
     actors: &[State],
     ticks: usize,
 ) -> Vec<State> {
-    let mut sim = crate::simulation::Simulator {
-        state: ego,
-        dt: road.dt,
-    };
+    let mut sim = crate::simulation::Simulator::new(ego, road.dt);
     (0..ticks)
         .map(|_| sim.tick(planner, &test_ctx(road, actors)))
         .collect()
