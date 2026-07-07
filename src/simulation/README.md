@@ -62,26 +62,33 @@ viewer's future-preview overlay rolls a plan forward into positions with it.
 `step()` integrates whatever control it's handed, but the **plant** (the
 ego `Simulator`, and the open world's ego) never hands it a raw planner
 command directly — it passes it through `apply_limits(prev, cmd, speed, dt)`
-first, clamping it to what a real vehicle could actually do:
+first, clamping it to the physical **capability** of a dry-road passenger
+car. These are capability limits, *not* comfort limits: the simulator models
+what the car can physically do, and how gently it *ought* to be driven is a
+separate concern the `comfort` metric and the planners' cost express. Each
+bound is tuned to published passenger-car test data and cited in the source:
 
-- **longitudinal acceleration and jerk** within the `comfort` metric's own
-  empirical bounds — a normal controller's throttle/brake authority and rate;
-- **steering angle** (`MAX_ABS_CURVATURE`, a ~5 m turning radius);
-- **lateral acceleration** within a ~0.9 g tyre-**grip** limit
-  (`MAX_ABS_LAT_ACCEL`), which tightens the curvature limit as speed rises —
-  set at grip rather than comfort level so the car can physically hold an
-  aggressive bend (the metric scores the discomfort) instead of understeering
-  off the road;
-- **steering rate** (`MAX_ABS_CURVATURE_RATE`), which forbids flipping the
-  wheel lock-to-lock within a tick — the actuation signature of the wild spin
-  a degenerate past-the-route-end reference used to provoke.
+- **longitudinal acceleration** `MAX_LON_ACCEL = 4.0` m/s² (~0.41 g,
+  traction/engine limited — 0–100 km/h in ~7–11 s) and **braking**
+  `MIN_LON_ACCEL = -9.0` m/s² (~0.9 g, dry-asphalt ABS grip);
+- **longitudinal jerk** `MAX_ABS_LON_JERK = 20.0` m/s³ (actuator force-rate
+  capability, far above the ~4 m/s³ the comfort metric calls smooth);
+- **steering angle** `MAX_ABS_CURVATURE = 0.2` /m (a ~5 m turning radius);
+- **lateral acceleration** `MAX_ABS_LAT_ACCEL = 9.0` m/s² (~0.9 g skidpad
+  grip), which tightens the curvature limit as speed rises so the car can't
+  hold a hairpin at highway speed;
+- **steering rate** `MAX_ABS_CURVATURE_RATE = 3.0` /(m·s), which forbids
+  flipping the wheel lock-to-lock within a tick — the actuation signature of
+  the wild spin a degenerate past-the-route-end reference used to provoke.
 
 The jerk and steering-rate caps need the previously applied control, so the
-`Simulator` carries it as state. The steering-rate cap is deliberately
-permissive because the planners treat curvature as an *instantaneous* control
-(it isn't in `State`), so a tight rate they can't anticipate would make their
-plans unexecutable; a fully realistic steering rate would mean promoting
-curvature to a vehicle state — noted as future work.
+`Simulator` carries it as state. The steering-rate cap is the one bound held
+*above* its physically faithful value (a fast hand is nearer ~0.2–0.4
+/(m·s)): the planners treat curvature as an *instantaneous* control (it isn't
+in `State`), so a tight rate they can't anticipate would make their
+instant-steer plans unexecutable and destabilize the closed loop. A faithful
+steering rate would mean promoting curvature to a vehicle state — noted as
+future work.
 
 ## `Simulator`
 

@@ -38,40 +38,58 @@ pub fn step(s: State, u: Control, dt: f64) -> State {
     }
 }
 
-// The plant's actuation limits. The *longitudinal* bounds (accel, jerk) are
-// the `comfort` metric's own empirical nuPlan values — a normal controller's
-// throttle/brake authority — reused so the plant can't produce longitudinal
-// motion the metric would then score as uncomfortable. The *lateral* bounds
-// are physical **capability** (tyre grip, steering geometry), deliberately
-// looser than the comfort lateral-accel value: the plant must let the car
-// physically hold an aggressive bend — the `comfort` metric scores the
-// resulting discomfort — because a comfort-level lateral cap the planners
-// don't anticipate would make them understeer off the road on a legitimately
-// tight curve rather than merely score badly.
+// The plant's actuation limits are the physical **capability** of a typical
+// dry-road passenger car — what it *can* do, not what is comfortable. Comfort
+// is a separate concern the `comfort` metric and the planners' cost express;
+// the simulator only models physics, so these bounds sit at grip/traction/
+// actuator capability, well outside the comfort envelope. Values are tuned to
+// published passenger-car test data (skidpad, braking, 0–100 km/h, and
+// steering-geometry figures) and cited per constant below.
 
-pub(crate) use crate::metrics::comfort::{MAX_ABS_LON_JERK, MAX_LON_ACCEL, MIN_LON_ACCEL};
+/// Strongest forward acceleration, m/s². Traction/engine limited: a typical
+/// passenger car reaches 100 km/h (27.8 m/s) in ~7–11 s — a ~2.5–4 m/s²
+/// average — with a higher launch peak; 4.0 (~0.41 g) is a representative
+/// peak for a brisk passenger car (cf. Bosch Automotive Handbook 0–100 km/h
+/// figures). Real accel falls with speed; a single peak cap is a conservative
+/// simplification.
+pub const MAX_LON_ACCEL: f64 = 4.0;
+/// Hardest braking deceleration, m/s². Tyre-grip limited on dry asphalt with
+/// ABS: consumer/industry 100–0 km/h tests stop in ~34–38 m, i.e. ~10–11
+/// m/s² (~1.0–1.1 g); −9.0 (~0.9 g) is a conservative dry-road capability,
+/// consistent with the lateral grip limit (friction ellipse).
+pub const MIN_LON_ACCEL: f64 = -9.0;
+/// Longitudinal jerk capability, m/s³: how fast the powertrain/brakes can
+/// change force. Emergency brake onset builds ~0.9 g in ~0.3–0.5 s (~20–30
+/// m/s³); 20 is a conservative actuator-rate capability, far above the ~4
+/// m/s³ the comfort metric calls smooth.
+pub const MAX_ABS_LON_JERK: f64 = 20.0;
 
-/// Tightest steer the plant will execute — a ~5 m turning radius. Also the
-/// absolute curvature the judo samplers clamp their sampled controls to.
+/// Tightest steer the plant will execute — a ~5 m turning radius
+/// (κ = 1/R = 0.2 /m), matching a compact passenger car's minimum turning
+/// circle. Also the absolute curvature the judo samplers clamp to. Only binds
+/// at low speed; above it the lateral-grip cap is tighter.
 pub const MAX_ABS_CURVATURE: f64 = 0.2;
-/// Lateral-acceleration (tyre-grip) limit, ~0.9 g: the curvature a car can
-/// actually hold at a given speed is `MAX_ABS_LAT_ACCEL / speed²`. Well above
-/// the comfort metric's lateral bound on purpose (see the note above).
+/// Lateral-acceleration (tyre-grip) limit, m/s². Passenger-car skidpad tests
+/// sustain ~0.85–0.95 g on dry asphalt; 9.0 (~0.9 g) is a representative
+/// grip capability. The curvature a car can actually hold at a given speed is
+/// `MAX_ABS_LAT_ACCEL / speed²`, so this tightens the steer as speed rises
+/// (no hairpins at highway speed).
 pub const MAX_ABS_LAT_ACCEL: f64 = 9.0;
 
 /// Fastest the plant can change curvature, in 1/(m·s): the steering-rate
-/// (steering-wheel rate) limit. It stops a planner from flipping the wheel
-/// lock-to-lock within a tick — the actuation signature of the wild spin a
-/// degenerate end-of-route reference provokes.
+/// (steering-wheel rate) limit. A fast hand can spin the wheel ~500–700 °/s;
+/// through a ~15:1 steering ratio and a ~2.7 m wheelbase that is a curvature
+/// rate of very roughly 0.2–0.4 /(m·s) at small angles — but it is held here
+/// well above that, at 3.0, on purpose.
 ///
-/// It is set permissively on purpose. The planners model curvature as an
-/// *instantaneous* control (it is not part of the kinematic [`State`] they
-/// roll out), so a tight steering rate the plant enforces but the planners
-/// don't anticipate makes their instant-steer plans unexecutable and
-/// destabilizes the closed loop. A properly tight steering rate would mean
-/// promoting curvature to a vehicle state so the planners can plan the ramp —
-/// a larger model change left as future work. Until then this cap only forbids
-/// the most violent reversals.
+/// The planners model curvature as an *instantaneous* control (it is not part
+/// of the kinematic [`State`] they roll out), so a tight, physically faithful
+/// steering rate the plant enforces but the planners don't anticipate makes
+/// their instant-steer plans unexecutable and destabilizes the closed loop.
+/// A faithful steering rate would mean promoting curvature to a vehicle state
+/// so the planners can plan the ramp — a larger model change left as future
+/// work. Until then this cap only forbids the most violent lock-to-lock
+/// reversals; the tighter absolute-curvature and lateral-grip caps do the rest.
 pub const MAX_ABS_CURVATURE_RATE: f64 = 3.0;
 
 /// Clamp a commanded [`Control`] to the vehicle's physical actuation

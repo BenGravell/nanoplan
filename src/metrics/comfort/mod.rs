@@ -21,9 +21,7 @@ pub(crate) const MAX_LON_ACCEL: f64 = 2.40;
 pub(crate) const MAX_ABS_LAT_ACCEL: f64 = 4.89;
 const MAX_ABS_YAW_ACCEL: f64 = 1.93;
 const MAX_ABS_YAW_RATE: f64 = 0.95;
-// also the simulator's longitudinal-jerk actuation limit (see
-// `simulation::apply_limits`): a real throttle/brake can't step instantly
-pub(crate) const MAX_ABS_LON_JERK: f64 = 4.13;
+const MAX_ABS_LON_JERK: f64 = 4.13;
 const MAX_ABS_MAG_JERK: f64 = 8.37;
 
 /// Forward difference, padded by repeating the last value so the result has
