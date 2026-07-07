@@ -77,20 +77,21 @@ pub const MAX_ABS_CURVATURE: f64 = 0.2;
 pub const MAX_ABS_LAT_ACCEL: f64 = 9.0;
 
 /// Fastest the plant can change curvature, in 1/(m·s): the steering-rate
-/// (steering-wheel rate) limit. A fast hand can spin the wheel ~500–700 °/s;
+/// (steering-wheel rate) limit. A fast hand spins the wheel ~500–700 °/s;
 /// through a ~15:1 steering ratio and a ~2.7 m wheelbase that is a curvature
-/// rate of very roughly 0.2–0.4 /(m·s) at small angles — but it is held here
-/// well above that, at 3.0, on purpose.
+/// rate of roughly 0.2–0.4 /(m·s) at small angles. At 0.4 the whole steering
+/// range (`±MAX_ABS_CURVATURE`) takes about a second to traverse — a quick
+/// emergency steer, not an instant one.
 ///
-/// The planners model curvature as an *instantaneous* control (it is not part
-/// of the kinematic [`State`] they roll out), so a tight, physically faithful
-/// steering rate the plant enforces but the planners don't anticipate makes
-/// their instant-steer plans unexecutable and destabilizes the closed loop.
-/// A faithful steering rate would mean promoting curvature to a vehicle state
-/// so the planners can plan the ramp — a larger model change left as future
-/// work. Until then this cap only forbids the most violent lock-to-lock
-/// reversals; the tighter absolute-curvature and lateral-grip caps do the rest.
-pub const MAX_ABS_CURVATURE_RATE: f64 = 3.0;
+/// This is the steering analogue of the longitudinal jerk limit, and enforced
+/// just as faithfully: curvature is a control action, not a [`State`] field,
+/// exactly like acceleration, so the rate is priced against the *previously
+/// applied* control. That only works because planners roll their candidates
+/// out through the same forward model the plant advances with ([`drive`]),
+/// seeded with the ego's current control ([`Context::ego_control`](crate::planning::Context)),
+/// so they plan the steering *ramp* rather than a step the plant clips out
+/// from under them.
+pub const MAX_ABS_CURVATURE_RATE: f64 = 0.4;
 
 /// Clamp a commanded [`Control`] to the vehicle's physical actuation
 /// capability, given the control applied the previous tick (`prev`) and the
@@ -132,6 +133,25 @@ pub fn apply_limits(prev: Control, cmd: Control, speed: f64, dt: f64) -> Control
     Control { accel, curvature }
 }
 
+/// The one forward vehicle model the plant advances with and every planner
+/// rolls out through: clamp `cmd` to the actuation limits given the control
+/// applied the previous tick ([`apply_limits`]), integrate one [`step`], and
+/// return the new state together with the control **actually applied** — which
+/// the next call takes back as `prev`.
+///
+/// Threading the applied control back through is what makes the jerk and
+/// steering-rate limits real to a planner rather than a surprise the plant
+/// springs afterwards: rolling a candidate out through `drive` predicts the
+/// same clipped motion the plant will produce, so the planner plans a *ramp*
+/// that fits within the rate limits instead of a step the plant clips out from
+/// under it. Because those limits are per-tick differences from `prev`, a
+/// planner's first rollout step must seed `prev` with the ego's current
+/// applied control — carried on the planning [`Context`](crate::planning::Context).
+pub fn drive(state: State, prev: Control, cmd: Control, dt: f64) -> (State, Control) {
+    let u = apply_limits(prev, cmd, state.speed, dt);
+    (step(state, u, dt), u)
+}
+
 /// Ego vehicle simulator.
 pub struct Simulator {
     pub state: State,
@@ -151,19 +171,26 @@ impl Simulator {
         }
     }
 
-    /// Replan from the current state, apply the first planned control
-    /// (clamped to the vehicle's physical actuation limits, see
-    /// [`apply_limits`]), and advance one tick. Returns the new state.
-    /// An empty plan coasts (zero control).
+    /// The control actually applied to the ego last tick — seed a planner's
+    /// rollout with this (via [`Context::ego_control`]) so its jerk and
+    /// steering-rate limiting starts from the same place the plant's will.
+    pub fn prev_control(&self) -> Control {
+        self.prev_control
+    }
+
+    /// Replan from the current state, advance one tick through the shared
+    /// forward model ([`drive`], which clamps the first planned control to the
+    /// vehicle's actuation limits), and return the new state. An empty plan
+    /// coasts (zero control).
     pub fn tick(&mut self, planner: &mut dyn Planner, ctx: &Context) -> State {
         let cmd = ctx
             .time("total", || planner.plan(self.state, ctx))
             .first()
             .copied()
             .unwrap_or_default();
-        let u = apply_limits(self.prev_control, cmd, self.state.speed, self.dt);
+        let (state, u) = drive(self.state, self.prev_control, cmd, self.dt);
         self.prev_control = u;
-        self.state = step(self.state, u, self.dt);
+        self.state = state;
         self.state
     }
 }
@@ -266,6 +293,7 @@ impl IncrementalSim {
         let ctx = Context {
             road: &self.road,
             actors: &current,
+            ego_control: self.sim.prev_control(),
             horizon: 1,
             latency: Some(&self.recorder),
             diagnostics: None,
@@ -362,6 +390,24 @@ mod tests {
         assert!(end.speed < 1.0, "never stopped, speed {}", end.speed);
         // and it stayed on its road the whole way (no spin off the end)
         assert_eq!(r.metrics.aggregate[1], 1.0, "left the drivable area");
+    }
+
+    #[test]
+    fn drive_applies_the_limits_and_returns_the_applied_control() {
+        // drive is step ∘ apply_limits: the returned control is exactly what
+        // the limits produce, and the new state is that control integrated —
+        // so a planner rolling out through drive sees the same clipped motion
+        // the plant will
+        let s = State { speed: 12.0, ..Default::default() };
+        let prev = Control { accel: 1.0, curvature: 0.05 };
+        let cmd = Control { accel: 100.0, curvature: 100.0 }; // wild command
+        let (ns, u) = drive(s, prev, cmd, 0.1);
+        assert_eq!(u, apply_limits(prev, cmd, s.speed, 0.1));
+        assert_eq!(ns, step(s, u, 0.1));
+        // the wild command was actually clipped — steering rate holds it near
+        // the previous curvature, not at the demanded lock
+        assert!((u.curvature - prev.curvature).abs() <= MAX_ABS_CURVATURE_RATE * 0.1 + 1e-9);
+        assert!(u.curvature < MAX_ABS_CURVATURE);
     }
 
     #[test]

@@ -25,6 +25,7 @@ fn ctx<'a>(
     Context {
         road,
         actors,
+        ego_control: Control::default(),
         horizon,
         latency: None,
         diagnostics,
