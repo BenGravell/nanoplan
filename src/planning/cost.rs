@@ -39,7 +39,7 @@
 //! finite differences, so this function stays the single definition of
 //! "good" with no analytically-differentiated twin to drift away from it.
 
-use crate::metrics::{CAR_RADIUS_M, comfort, speed_limit};
+use crate::metrics::{CAR_RADIUS_M, comfort, lane_keeping, speed_limit};
 use crate::scenarios::Path;
 use crate::simulation::State;
 
@@ -94,7 +94,7 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
 
 /// Number of soft cost features; the length of [`WEIGHTS`], [`FEATURE_NAMES`],
 /// and the array [`features`] returns.
-pub(crate) const N_FEATURES: usize = 6;
+pub(crate) const N_FEATURES: usize = 7;
 
 /// Display names of the soft features, index-aligned with [`WEIGHTS`].
 pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
@@ -104,6 +104,7 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
     "heading_err",
     "lon_accel_over",
     "lat_accel_over",
+    "lane_keeping",
 ];
 
 /// Weights of the soft features: `point_cost = WEIGHTS · features`. Hand-set
@@ -111,7 +112,12 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
 /// trajectories with maximum-entropy IRL (see [`crate::tuning`]) and prints a
 /// replacement for this line. The hard collision/off-road rejection is *not*
 /// in here — it is a fixed rule of [`features`], never a learned weight.
-pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0];
+///
+/// `lane_keeping` is weighted well below the collision/road-edge terms so it
+/// pulls the car to its lane center on an open road without ever fighting an
+/// obstacle swerve that has to leave the lane (which is priced against the
+/// far larger `actor_proximity`/off-road terms).
+pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0, 3.0];
 
 /// Soft feature vector of one sample, or `None` for a hard violation —
 /// collision with an actor's predicted position, or off the drivable area —
@@ -185,6 +191,18 @@ pub(crate) fn features(
     let lat_over =
         (lat_accel.abs() - comfort::MAX_ABS_LAT_ACCEL).max(0.0) / comfort::MAX_ABS_LAT_ACCEL;
 
+    // lane keeping: a hinge on straddling the lane line into the next lane —
+    // zero anywhere inside the ego's own lane, growing once the offset passes
+    // a lane half-width, normalized so being a full lane width off costs ~1
+    // before the weight. Hinged at the lane edge (not at center) on purpose:
+    // it must not fight the planners' own centerline pulls or perturb normal
+    // in-lane driving — that would, among other things, destabilize iLQR's
+    // finite-difference search, whose trajectories live near center. The
+    // within-lane *bias* the `lane_keeping` metric also scores is left to
+    // those centerline pulls; a per-sample cost has no window to measure it.
+    let lane_over =
+        (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0) / lane_keeping::LANE_HALF_WIDTH_M;
+
     Some([
         proximity,
         edge * edge,
@@ -192,6 +210,7 @@ pub(crate) fn features(
         sample.heading_err * sample.heading_err,
         lon_over * lon_over,
         lat_over * lat_over,
+        lane_over * lane_over,
     ])
 }
 
@@ -211,6 +230,55 @@ pub(crate) fn point_cost(
     match features(sample, target_speed, road_half_width, actors, lane) {
         None => f64::INFINITY,
         Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
+    }
+}
+
+/// How far *inside* a hard violation `sample` sits, in meters: how far past
+/// `road_half_width` it is off-road, plus how far inside
+/// [`COLLISION_DIAMETER_M`] it is of each predicted actor. Zero exactly at
+/// the violation boundary. This is the depth the escape slope in
+/// [`soft_point_cost`] scales, so that penalty is continuous with the flat
+/// one at the edge.
+pub(crate) fn violation_depth(
+    sample: &Sample,
+    road_half_width: f64,
+    actors: &[State],
+    lane: Option<&Path>,
+) -> f64 {
+    let mut depth = (sample.lateral.abs() - road_half_width).max(0.0);
+    for a in actors {
+        let p = crate::metrics::predict(a, lane, sample.t);
+        let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
+        depth += (COLLISION_DIAMETER_M - gap).max(0.0);
+    }
+    depth
+}
+
+/// [`point_cost`] with hard violations made finite by a *depth-scaled escape
+/// slope*: `HARD_VIOLATION_PENALTY · (1 + `[`violation_depth`]`)` instead of
+/// `f64::INFINITY`, for the continuous, sampling-based optimizers (the judo
+/// samplers, PI²-DDP, iLQR) whose reward statistics can't absorb an infinity.
+///
+/// The escape slope matters as much as the finiteness: a *flat*
+/// `HARD_VIOLATION_PENALTY` plateau gives those optimizers no gradient once
+/// their rollouts are all in violation — on a tight bend where every sampled
+/// candidate briefly clips the road edge, or once the closed loop has already
+/// drifted off-road, a reward-weighted average (CEM, MPPI) then has nothing
+/// pulling it back onto the road and can settle there. Making the penalty
+/// grow with depth restores that gradient, so "less off-road" always scores
+/// better than "more off-road" and the search climbs back in.
+pub(crate) fn soft_point_cost(
+    sample: &Sample,
+    target_speed: f64,
+    road_half_width: f64,
+    actors: &[State],
+    lane: Option<&Path>,
+) -> f64 {
+    let c = point_cost(sample, target_speed, road_half_width, actors, lane);
+    if c.is_finite() {
+        c
+    } else {
+        HARD_VIOLATION_PENALTY * (1.0 + violation_depth(sample, road_half_width, actors, lane))
     }
 }
 
@@ -255,6 +323,56 @@ mod tests {
         };
         assert!(point_cost(&s, 10.0, 5.5, &[], None).is_finite());
         assert!(point_cost(&s, 10.0, 3.5, &[], None).is_infinite());
+    }
+
+    #[test]
+    fn lane_keeping_feature_is_zero_in_lane_and_grows_when_straddling() {
+        let feat = |lateral: f64| features(
+            &Sample { lateral, speed: 10.0, ..Default::default() },
+            10.0,
+            HW,
+            &[],
+            None,
+        )
+        .unwrap()[6];
+        // centered and anywhere inside the ego's own lane: no lane-keeping cost
+        assert_eq!(feat(0.0), 0.0);
+        assert_eq!(feat(lane_keeping::LANE_HALF_WIDTH_M - 0.01), 0.0);
+        // straddling into the next lane costs, and more the further across
+        assert!(feat(lane_keeping::LANE_HALF_WIDTH_M + 0.5) > 0.0);
+        assert!(feat(3.5) > feat(2.5));
+    }
+
+    #[test]
+    fn soft_cost_matches_point_cost_when_feasible() {
+        let s = Sample {
+            speed: 10.0,
+            ..Default::default()
+        };
+        let hard = point_cost(&s, 10.0, HW, &[], None);
+        assert!(hard.is_finite());
+        assert_eq!(soft_point_cost(&s, 10.0, HW, &[], None), hard);
+    }
+
+    #[test]
+    fn soft_cost_escape_slope_deepens_with_the_violation() {
+        // two off-road samples, one further out than the other: both are hard
+        // violations (infinite under point_cost) but soft_point_cost prices
+        // the deeper one higher, giving a sampling optimizer a gradient back
+        // toward the road instead of a flat penalty plateau.
+        let near = Sample { lateral: HW + 0.5, ..Default::default() };
+        let far = Sample { lateral: HW + 3.0, ..Default::default() };
+        assert!(point_cost(&near, 10.0, HW, &[], None).is_infinite());
+        assert!(point_cost(&far, 10.0, HW, &[], None).is_infinite());
+        let c_near = soft_point_cost(&near, 10.0, HW, &[], None);
+        let c_far = soft_point_cost(&far, 10.0, HW, &[], None);
+        assert!(c_near.is_finite() && c_far.is_finite());
+        assert!(c_far > c_near, "escape slope not monotonic: {c_near} vs {c_far}");
+        // continuous with the flat penalty exactly at the edge (zero depth)
+        let edge = Sample { lateral: HW, speed: 10.0, ..Default::default() };
+        assert!((soft_point_cost(&edge, 10.0, HW, &[], None)
+            - point_cost(&edge, 10.0, HW, &[], None))
+        .abs() < 1e-9);
     }
 
     #[test]

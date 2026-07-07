@@ -19,15 +19,15 @@ mod tests {
 
     #[test]
     fn holds_heading_and_speed() {
-        let mut sim = Simulator {
-            state: State {
+        let mut sim = Simulator::new(
+            State {
                 x: 1.0,
                 y: 2.0,
                 yaw: 0.5,
                 speed: 3.0,
             },
-            dt: 0.1,
-        };
+            0.1,
+        );
         let road = test_road(&[[0.0, 0.0], [100.0, 0.0]]);
         let ctx = test_ctx(&road, &[]);
         let mut planner = StraightPlanner;

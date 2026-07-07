@@ -25,6 +25,7 @@ pub mod collisions;
 pub mod comfort;
 pub mod drivable_area;
 pub mod driving_direction;
+pub mod lane_keeping;
 pub mod making_progress;
 pub mod progress;
 pub mod speed_limit;
@@ -81,7 +82,7 @@ pub struct MetricSpec {
 }
 
 /// The metric registry: row order defines score-array order everywhere.
-pub const METRICS: [MetricSpec; 8] = [
+pub const METRICS: [MetricSpec; 9] = [
     MetricSpec {
         label: "no at-fault collisions",
         score: collisions::score,
@@ -127,6 +128,12 @@ pub const METRICS: [MetricSpec; 8] = [
     MetricSpec {
         label: "comfort",
         score: comfort::score,
+        aggregate: agg::avg,
+        role: CompositeRole::Weighted(2.0),
+    },
+    MetricSpec {
+        label: "lane keeping",
+        score: lane_keeping::score,
         aggregate: agg::avg,
         role: CompositeRole::Weighted(2.0),
     },
@@ -473,6 +480,29 @@ mod tests {
         assert_eq!(m.at(51).0[1], 1.0);
         assert_eq!(m.aggregate[1], 0.0); // min aggregation: one bad tick
         assert_eq!(m.score, 0.0);
+    }
+
+    #[test]
+    fn lane_keeping_penalizes_sustained_bias_and_straddling() {
+        let biased = |offset: f64| -> Vec<State> {
+            (0..=200)
+                .map(|i| State {
+                    x: 10.0 * DT * i as f64,
+                    y: offset,
+                    speed: 10.0,
+                    ..Default::default()
+                })
+                .collect()
+        };
+        let lk = |ego: &[State]| evaluate(ego, &[], &road()).aggregate[8];
+        // a centered cruise keeps its lane perfectly
+        assert_eq!(lk(&cruise(10.0, 200)), 1.0);
+        // sustained one-sided bias scores below a full 1 …
+        let bias = lk(&biased(1.2));
+        assert!(bias > 0.0 && bias < 0.8, "biased lane keeping {bias}");
+        // … and straddling the lane line the whole way scores worse still
+        let straddle = lk(&biased(1.7));
+        assert!(straddle < bias, "straddle {straddle} not worse than bias {bias}");
     }
 
     #[test]

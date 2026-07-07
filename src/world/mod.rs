@@ -13,7 +13,7 @@ use web_time::Instant;
 use crate::Rng;
 use crate::planning::{Context, Planner, PlannerKind, bezier_idm::idm_accel};
 use crate::scenarios::{Path, Road};
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State, apply_limits, step};
 
 /// Standard lane width; a street's half-width is `lanes × LANE_W_M`.
 pub const LANE_W_M: f64 = 3.5;
@@ -880,6 +880,10 @@ pub struct LiveWorld {
     route_path: Option<Path>,
     planner_kind: PlannerKind,
     planner: Box<dyn Planner>,
+    /// Control actually applied to the ego last tick, so its motion is held
+    /// to the same physical actuation limits the batch simulator enforces
+    /// (see [`crate::simulation::apply_limits`]).
+    ego_control: Control,
     rng: Rng,
     /// World clock, for the despawn grace timing.
     t: f64,
@@ -922,6 +926,7 @@ impl LiveWorld {
             route_path: None,
             planner_kind: planner,
             planner: planner.build(),
+            ego_control: Control::default(),
             rng,
             t: 0.0,
             max_actors,
@@ -1062,14 +1067,17 @@ impl LiveWorld {
         let Some(road) = &mut self.road else {
             // goalless: brake smoothly to a stop and wait for a click
             let accel = (-2.0f64).max(-self.ego.speed / self.dt);
-            self.ego = step(
-                self.ego,
+            let u = apply_limits(
+                self.ego_control,
                 Control {
                     accel,
                     curvature: 0.0,
                 },
+                self.ego.speed,
                 self.dt,
             );
+            self.ego_control = u;
+            self.ego = step(self.ego, u, self.dt);
             self.plan.clear();
             return;
         };
@@ -1099,11 +1107,14 @@ impl LiveWorld {
                 s
             })
             .collect();
-        self.ego = step(
-            self.ego,
+        let u = apply_limits(
+            self.ego_control,
             controls.first().copied().unwrap_or_default(),
+            self.ego.speed,
             self.dt,
         );
+        self.ego_control = u;
+        self.ego = step(self.ego, u, self.dt);
         if remaining < 4.0 && self.ego.speed < 0.5 {
             (self.goal, self.road, self.route_path) = (None, None, None);
             self.plan.clear();

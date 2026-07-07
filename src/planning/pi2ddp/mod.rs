@@ -188,12 +188,14 @@ impl Planner for Pi2DdpPlanner {
         // shared cost). `curvature`/`accel` are exactly the control just
         // applied: this kinematic model defines them as the instantaneous
         // curvature and acceleration, so there's nothing to estimate. A hard
-        // violation (collision, or off the drivable area) becomes
-        // `cost::HARD_VIOLATION_PENALTY`, a large but finite number, rather
-        // than `f64::INFINITY` — the min/max-normalized rollout weighting
-        // below (eq. 12) can't divide by an infinite range. The terminal
-        // call (no control has been applied yet) passes zero for both, so it
-        // prices position/speed but not comfort.
+        // violation (collision, or off the drivable area) becomes a large but
+        // finite `cost::HARD_VIOLATION_PENALTY · (1 + depth)` via
+        // `cost::soft_point_cost` rather than `f64::INFINITY` — the
+        // min/max-normalized rollout weighting below (eq. 12) can't divide by
+        // an infinite range, and the depth-scaled escape slope gives the
+        // rollout average a gradient back onto the road (see that function).
+        // The terminal call (no control has been applied yet) passes zero for
+        // both, so it prices position/speed but not comfort.
         let state_cost = |x: &State, curvature: f64, accel: f64, j: usize| {
             let (s, d) = path.project([x.x, x.y]);
             let (_, lane_yaw) = path.pose_at(s);
@@ -206,21 +208,16 @@ impl Planner for Pi2DdpPlanner {
                 accel,
                 t: j as f64 * ctx.road.dt,
             };
-            let c = 0.5 * d * d
+            0.5 * d * d
                 + ctx.time("cost", || {
-                    cost::point_cost(
+                    cost::soft_point_cost(
                         &sample,
                         ctx.road.target_speed,
                         ctx.road.half_width,
                         ctx.actors,
                         Some(&path),
                     )
-                });
-            if c.is_infinite() {
-                cost::HARD_VIOLATION_PENALTY
-            } else {
-                c
-            }
+                })
         };
         let running = |x: &State, u: &V2, j: usize| {
             state_cost(x, u[1], u[0], j) + 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1])
