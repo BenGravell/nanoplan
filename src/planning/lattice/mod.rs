@@ -174,7 +174,13 @@ impl Planner for LatticePlanner {
                     ..Default::default()
                 };
                 let point = ctx.time("cost", || {
-                    cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
+                    cost::point_cost(
+                        &sample,
+                        ctx.road.target_speed,
+                        ctx.road.half_width,
+                        ctx.actors,
+                        Some(&path),
+                    )
                 });
                 if point.is_infinite() {
                     return f64::INFINITY;

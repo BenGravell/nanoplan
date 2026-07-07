@@ -208,7 +208,13 @@ impl Planner for Pi2DdpPlanner {
             };
             let c = 0.5 * d * d
                 + ctx.time("cost", || {
-                    cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
+                    cost::point_cost(
+                        &sample,
+                        ctx.road.target_speed,
+                        ctx.road.half_width,
+                        ctx.actors,
+                        Some(&path),
+                    )
                 });
             if c.is_infinite() {
                 cost::HARD_VIOLATION_PENALTY

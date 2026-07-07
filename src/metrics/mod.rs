@@ -182,6 +182,67 @@ pub(crate) fn project(s: &State, t: f64) -> State {
     }
 }
 
+/// Heading alignment within which an actor counts as travelling *along* the
+/// lane, so [`predict`] rolls it forward following the lane's curve. Beyond
+/// it — oncoming traffic (~π off) or a crossing vehicle (~π/2 off) — the lane
+/// says nothing about where the actor is headed, so the prediction falls back
+/// to the straight-line [`project`].
+const LANE_ASSOC_HEADING_RAD: f64 = std::f64::consts::FRAC_PI_4; // 45°
+
+/// Largest lateral offset at which an actor is still associated with the
+/// lane. Past about a lane width it is on a *different* lane, and easing its
+/// offset toward this centerline would be a fiction that steers the
+/// prediction into the ego's path.
+const LANE_ASSOC_LATERAL_M: f64 = 4.0;
+
+/// Time constant of the exponential return to lane center: an associated
+/// actor sitting `d` off-center is predicted `d·e^(−t/τ)` off it at time `t`,
+/// so it eases back toward the centerline over a couple of seconds — a real
+/// driver holds their lane rather than freezing whatever offset they happen
+/// to have.
+const LANE_RETURN_TAU_S: f64 = 2.0;
+
+/// Kinematic actor prediction with lane association — a better forward model
+/// than the straight-line [`project`] for actors travelling along a known
+/// lane. When `lane` is `Some` and the actor is moving along it (heading
+/// within [`LANE_ASSOC_HEADING_RAD`] of the lane and no further than
+/// [`LANE_ASSOC_LATERAL_M`] off it), the actor is rolled forward *along the
+/// lane's curve* at constant speed, its lateral offset decaying toward the
+/// centerline ([`LANE_RETURN_TAU_S`]) — so on a bend it is predicted to
+/// follow the road and settle into the lane, not to fly off on the tangent a
+/// constant-heading model would. An actor not associated with the lane (no
+/// lane given, oncoming, or crossing traffic) falls back to [`project`], the
+/// constant-velocity model [`ttc`] scores against.
+///
+/// ponytail: longitudinal motion is constant speed. An actor's acceleration
+/// isn't observable from the single [`State`] snapshot a planner is handed, so
+/// the constant-acceleration kinematic model degenerates to its zero-accel
+/// (constant-velocity) case along the lane; the lane's curvature is the
+/// model's genuine non-straight-line content.
+pub(crate) fn predict(s: &State, lane: Option<&Path>, t: f64) -> State {
+    let Some(path) = lane else {
+        return project(s, t);
+    };
+    let (s0, d0) = path.project([s.x, s.y]);
+    let (_, lane_yaw) = path.pose_at(s0);
+    // only follow the lane for an actor actually driving along it and near it
+    if crate::wrap_angle(s.yaw - lane_yaw).abs() > LANE_ASSOC_HEADING_RAD
+        || d0.abs() > LANE_ASSOC_LATERAL_M
+    {
+        return project(s, t);
+    }
+    let s_t = s0 + s.speed * t;
+    let d_t = d0 * (-t / LANE_RETURN_TAU_S).exp();
+    let (_, yaw_t) = path.pose_at(s_t);
+    let xy = path.frenet_to_xy(s_t, d_t);
+    State {
+        x: xy[0],
+        y: xy[1],
+        yaw: yaw_t,
+        ..*s
+    }
+}
+
 /// The nuPlan composite: the product of every [`CompositeRole::Multiplier`]
 /// metric times the weighted average of the [`CompositeRole::Weighted`]
 /// ones, both read straight from the [`METRICS`] table.
@@ -249,6 +310,74 @@ mod tests {
 
     const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
     const DT: f64 = 0.1;
+
+    #[test]
+    fn predict_without_a_lane_is_the_straight_line_projection() {
+        let a = State {
+            x: 10.0,
+            y: 3.0,
+            yaw: 0.5,
+            speed: 8.0,
+        };
+        assert_eq!(predict(&a, None, 2.0), project(&a, 2.0));
+    }
+
+    #[test]
+    fn predict_ignores_the_lane_for_crossing_and_oncoming_traffic() {
+        let lane = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        // crossing (heading north) and oncoming (heading west) are not
+        // travelling along the eastbound lane, so neither is bent onto it
+        let crossing = State {
+            x: 40.0,
+            y: 0.0,
+            yaw: std::f64::consts::FRAC_PI_2,
+            speed: 6.0,
+        };
+        let oncoming = State {
+            x: 40.0,
+            y: 2.0,
+            yaw: std::f64::consts::PI,
+            speed: 6.0,
+        };
+        for a in [crossing, oncoming] {
+            assert_eq!(predict(&a, Some(&lane), 1.5), project(&a, 1.5));
+        }
+    }
+
+    #[test]
+    fn predict_returns_an_aligned_actor_toward_the_lane_center() {
+        let lane = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        // 2 m left of center, driving straight along the lane
+        let a = State {
+            x: 20.0,
+            y: 2.0,
+            yaw: 0.0,
+            speed: 10.0,
+        };
+        let p = predict(&a, Some(&lane), 2.0);
+        // advanced ~speed·t along the lane and eased back toward the center
+        assert!((p.x - 40.0).abs() < 1e-6, "x {}", p.x);
+        assert!(p.y > 0.0 && p.y < a.y, "y {} not between 0 and {}", p.y, a.y);
+        assert!((p.y - 2.0 * (-1.0f64).exp()).abs() < 1e-6, "y {}", p.y);
+    }
+
+    #[test]
+    fn predict_follows_the_lane_around_a_bend() {
+        // a lane that turns north at (50, 0)
+        let lane = Path::new(&[[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]);
+        let a = State {
+            x: 40.0,
+            y: 0.0,
+            yaw: 0.0,
+            speed: 10.0,
+        };
+        let curved = predict(&a, Some(&lane), 2.0);
+        let straight = project(&a, 2.0);
+        // the straight-line projection leaves the road at the corner; the
+        // lane-aware prediction rounds it and stays on the centerline
+        assert!(lane.project([curved.x, curved.y]).1.abs() < 0.5);
+        assert!(lane.project([straight.x, straight.y]).1.abs() > 5.0);
+    }
 
     fn road() -> Road {
         Road {

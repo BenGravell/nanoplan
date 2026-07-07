@@ -286,9 +286,11 @@ struct Node {
 /// same points, doubling the hot-loop work; merging them halves it with no
 /// change to which edges are feasible or what they cost.
 ///
-/// Feasible means every point clears every actor's constant-velocity-
-/// predicted position (with this planner's own `COLLISION_MARGIN_M` headroom
-/// on top of the shared cost's hard-collision check), stays on the drivable
+/// Feasible means every point clears every actor's lane-aware predicted
+/// position ([`crate::metrics::predict`], with this planner's own
+/// `COLLISION_MARGIN_M` headroom on top of the shared cost's hard-collision
+/// check — an actor driving the route is predicted along its curve), stays on
+/// the drivable
 /// road, and keeps the curve's curvature within what's actually drivable.
 /// The edge cost is arc length (RRT*'s cost-to-come, what the "star"
 /// rewiring minimizes) plus a lateral-offset pull toward the lane center,
@@ -334,7 +336,7 @@ fn steer_cost(
         }
         let t = (s - s0) / v;
         for a in ctx.actors {
-            let predicted = crate::metrics::project(a, t);
+            let predicted = crate::metrics::predict(a, Some(path), t);
             if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
                 return None;
             }
@@ -348,7 +350,13 @@ fn steer_cost(
             ..Default::default()
         };
         let point = ctx.time("cost", || {
-            cost::point_cost(&sample, ctx.road.target_speed, ctx.road.half_width, ctx.actors)
+            cost::point_cost(
+                &sample,
+                ctx.road.target_speed,
+                ctx.road.half_width,
+                ctx.actors,
+                Some(path),
+            )
         });
         if point.is_infinite() {
             return None;

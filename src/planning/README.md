@@ -60,10 +60,13 @@ Everything a planner needs besides its own state and the ego pose. Notably:
   `ctx.road.centerline`, `ctx.road.target_speed`, and `ctx.road.dt`.
 - **`actors` is current-tick only.** Planners see no future information
   about other vehicles — if they want a prediction, they compute one
-  themselves (every existing planner does simple constant-velocity
-  extrapolation inline; see [`src/scenarios/README.md`](../scenarios/README.md#trajectory-replay)
-  for why the *simulated* actors can be smarter than that even though the
-  planner's view of them isn't).
+  themselves. They all go through the shared `metrics::predict`: an actor
+  driving along the route is rolled forward following the lane's curve and
+  eased back toward its center (constant-speed, lane-associated kinematics),
+  while oncoming or crossing traffic falls back to constant-velocity
+  extrapolation. See [`src/scenarios/README.md`](../scenarios/README.md#trajectory-replay)
+  for why the *simulated* actors can still be smarter than any prediction of
+  them.
 - **`horizon` is a request, not a contract.** A planner may return more or
   fewer controls; the simulator only ever consumes the first one during
   closed-loop simulation. The viewer's future-preview feature asks for a
@@ -193,8 +196,8 @@ own actor-prediction code, its own collision radius, and its own idea of
 "off the road" — several different, undocumented definitions of "good."
 
 `cost.rs` factors the metrics-motivated part of that formula into one
-function, `point_cost(sample, target_speed, road_half_width, actors)`, called
-by every one of them under the same seam name, `"cost"` (see "Latency
+function, `point_cost(sample, target_speed, road_half_width, actors, lane)`,
+called by every one of them under the same seam name, `"cost"` (see "Latency
 diagnostics" above). It's deliberately grounded in the same quantities
 [`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
 than inventing new ones:
@@ -217,9 +220,16 @@ than inventing new ones:
   printing a replacement `WEIGHTS` line to paste back here. The hard
   rejection above is a fixed rule of `features()` (it returns `None`), never
   a learned weight.
-- **Actor prediction** reuses `metrics::project` — the same constant-
-  velocity, constant-heading model `metrics::ttc` scores against — instead
-  of each planner reimplementing the same three lines independently.
+- **Actor prediction** goes through `metrics::predict` — the lane-aware
+  kinematic model — instead of each planner reimplementing prediction
+  independently. An actor travelling along the route is rolled forward along
+  the lane's curve and eased back toward its center, so on a bend it is
+  priced where it will actually be rather than off on the straight tangent;
+  oncoming and crossing traffic fall back to `metrics::project`, the
+  constant-velocity model `metrics::ttc` scores against. The planner
+  predicting more accurately than the deliberately-simple TTC metric is the
+  point — the ground-truth `metrics::collisions` score over the real traces
+  is the bar a better prediction has to clear.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
   the hard collision radius), road-edge proximity, speed tracked against
   `speed_limit::MAX_OVERSPEED_MS`, and comfort (longitudinal and lateral

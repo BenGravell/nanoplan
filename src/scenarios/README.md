@@ -239,15 +239,15 @@ Three regimes, in order:
    (`wrap_angle(b.yaw - a.yaw) * u`, not a naive linear blend, which would
    go the long way around when a heading crosses ±π).
 3. **After the log ends** (`t >= trajectory.last().t`): constant-velocity
-   extrapolation from the last waypoint's state — the same model the
-   planners themselves use to predict actors.
+   extrapolation from the last waypoint's state.
 
 This is why trajectory replay is worth having at all, rather than just
 constant-velocity extrapolation everywhere: an actor can **brake, swerve, or
 cut in** exactly as logged, while a *planner's own prediction* of that actor
-(built only from `Context::actors`, the current-tick state) is still just
-constant-velocity — so a replayed scenario can genuinely test how a planner
-degrades when reality diverges from its prediction. The bundled
+(built only from `Context::actors`, the current-tick state, via
+`metrics::predict`) at best follows the lane and eases back to its center —
+so a replayed scenario can genuinely test how a planner degrades when reality
+diverges from its prediction. The bundled
 [`cut_in.json`](../../scenarios/json/cut_in.json) scenario and the future
 preview's dimmer "predicted" ghost car in the viewer make this gap visible.
 
