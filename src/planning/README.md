@@ -232,8 +232,11 @@ than inventing new ones:
   is the bar a better prediction has to clear.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
   the hard collision radius), road-edge proximity, speed tracked against
-  `speed_limit::MAX_OVERSPEED_MS`, and comfort (longitudinal and lateral
-  accel) tracked against `comfort`'s own empirical bounds. Lateral accel is
+  `speed_limit::MAX_OVERSPEED_MS`, comfort (longitudinal and lateral
+  accel) tracked against `comfort`'s own empirical bounds, and lane keeping —
+  a hinge on straddling the lane line into the next lane, aligned with the
+  `lane_keeping` metric and weighted well below the collision/off-road terms
+  so it never fights an obstacle swerve. Lateral accel is
   `speed² × curvature` — algebraically the same quantity
   `comfort::Kinematics` measures as `yaw_rate × speed`, since the kinematic
   model defines `yaw_rate = speed × curvature`.

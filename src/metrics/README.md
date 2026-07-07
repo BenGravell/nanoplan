@@ -116,8 +116,9 @@ reports).
 | 5 | Progress ratio | `progress` | average | Station rate at this tick relative to driving at the speed limit, clamped to `[0, 1]`. | — (no expert trajectory available, so the speed limit stands in for it — see the `ponytail:` comment in `progress/mod.rs`) |
 | 6 | Speed limit | `speed_limit` | average | Overspeed above the limit, normalized. | `MAX_OVERSPEED_MS = 2.23` |
 | 7 | Comfort | `comfort` | average | Longitudinal accel, lateral accel, yaw rate, yaw accel, longitudinal jerk, and jerk magnitude all within nuPlan's empirically-derived expert bounds. | see `comfort/mod.rs` — seven separate bounds |
+| 8 | Lane keeping | `lane_keeping` | average | Ego holds the center of its lane: penalizes a *sustained* one-sided bias (mean offset over a trailing window) and *instantaneous* straddling of the lane line into the next lane. | `LANE_HALF_WIDTH_M = 1.75`, `CENTER_TOLERANCE_M = 0.5` |
 
-The `METRICS` table holds the same eight rows in this order — its `label`
+The `METRICS` table holds the same nine rows in this order — its `label`
 strings are what the viewer's table and the batch CSV header display; index
 `i` into `per_tick[tick]` and `aggregate` always means the metric in row `i`
 above.

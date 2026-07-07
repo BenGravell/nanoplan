@@ -39,7 +39,7 @@
 //! finite differences, so this function stays the single definition of
 //! "good" with no analytically-differentiated twin to drift away from it.
 
-use crate::metrics::{CAR_RADIUS_M, comfort, speed_limit};
+use crate::metrics::{CAR_RADIUS_M, comfort, lane_keeping, speed_limit};
 use crate::scenarios::Path;
 use crate::simulation::State;
 
@@ -94,7 +94,7 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
 
 /// Number of soft cost features; the length of [`WEIGHTS`], [`FEATURE_NAMES`],
 /// and the array [`features`] returns.
-pub(crate) const N_FEATURES: usize = 6;
+pub(crate) const N_FEATURES: usize = 7;
 
 /// Display names of the soft features, index-aligned with [`WEIGHTS`].
 pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
@@ -104,6 +104,7 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
     "heading_err",
     "lon_accel_over",
     "lat_accel_over",
+    "lane_keeping",
 ];
 
 /// Weights of the soft features: `point_cost = WEIGHTS · features`. Hand-set
@@ -111,7 +112,12 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
 /// trajectories with maximum-entropy IRL (see [`crate::tuning`]) and prints a
 /// replacement for this line. The hard collision/off-road rejection is *not*
 /// in here — it is a fixed rule of [`features`], never a learned weight.
-pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0];
+///
+/// `lane_keeping` is weighted well below the collision/road-edge terms so it
+/// pulls the car to its lane center on an open road without ever fighting an
+/// obstacle swerve that has to leave the lane (which is priced against the
+/// far larger `actor_proximity`/off-road terms).
+pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0, 3.0];
 
 /// Soft feature vector of one sample, or `None` for a hard violation —
 /// collision with an actor's predicted position, or off the drivable area —
@@ -185,6 +191,18 @@ pub(crate) fn features(
     let lat_over =
         (lat_accel.abs() - comfort::MAX_ABS_LAT_ACCEL).max(0.0) / comfort::MAX_ABS_LAT_ACCEL;
 
+    // lane keeping: a hinge on straddling the lane line into the next lane —
+    // zero anywhere inside the ego's own lane, growing once the offset passes
+    // a lane half-width, normalized so being a full lane width off costs ~1
+    // before the weight. Hinged at the lane edge (not at center) on purpose:
+    // it must not fight the planners' own centerline pulls or perturb normal
+    // in-lane driving — that would, among other things, destabilize iLQR's
+    // finite-difference search, whose trajectories live near center. The
+    // within-lane *bias* the `lane_keeping` metric also scores is left to
+    // those centerline pulls; a per-sample cost has no window to measure it.
+    let lane_over =
+        (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0) / lane_keeping::LANE_HALF_WIDTH_M;
+
     Some([
         proximity,
         edge * edge,
@@ -192,6 +210,7 @@ pub(crate) fn features(
         sample.heading_err * sample.heading_err,
         lon_over * lon_over,
         lat_over * lat_over,
+        lane_over * lane_over,
     ])
 }
 
@@ -304,6 +323,24 @@ mod tests {
         };
         assert!(point_cost(&s, 10.0, 5.5, &[], None).is_finite());
         assert!(point_cost(&s, 10.0, 3.5, &[], None).is_infinite());
+    }
+
+    #[test]
+    fn lane_keeping_feature_is_zero_in_lane_and_grows_when_straddling() {
+        let feat = |lateral: f64| features(
+            &Sample { lateral, speed: 10.0, ..Default::default() },
+            10.0,
+            HW,
+            &[],
+            None,
+        )
+        .unwrap()[6];
+        // centered and anywhere inside the ego's own lane: no lane-keeping cost
+        assert_eq!(feat(0.0), 0.0);
+        assert_eq!(feat(lane_keeping::LANE_HALF_WIDTH_M - 0.01), 0.0);
+        // straddling into the next lane costs, and more the further across
+        assert!(feat(lane_keeping::LANE_HALF_WIDTH_M + 0.5) > 0.0);
+        assert!(feat(3.5) > feat(2.5));
     }
 
     #[test]
