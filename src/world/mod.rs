@@ -1091,6 +1091,7 @@ impl LiveWorld {
         let ctx = Context {
             road,
             actors: &actor_states,
+            ego_control: self.ego_control,
             horizon: PLAN_PREVIEW_TICKS,
             latency: None,
             diagnostics: None,

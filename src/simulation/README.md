@@ -77,18 +77,36 @@ bound is tuned to published passenger-car test data and cited in the source:
 - **lateral acceleration** `MAX_ABS_LAT_ACCEL = 9.0` m/s² (~0.9 g skidpad
   grip), which tightens the curvature limit as speed rises so the car can't
   hold a hairpin at highway speed;
-- **steering rate** `MAX_ABS_CURVATURE_RATE = 3.0` /(m·s), which forbids
-  flipping the wheel lock-to-lock within a tick — the actuation signature of
-  the wild spin a degenerate past-the-route-end reference used to provoke.
+- **steering rate** `MAX_ABS_CURVATURE_RATE = 0.4` /(m·s), a quick emergency
+  steer (the whole steering range in ~1 s) — the steering analogue of the
+  jerk limit.
 
-The jerk and steering-rate caps need the previously applied control, so the
-`Simulator` carries it as state. The steering-rate cap is the one bound held
-*above* its physically faithful value (a fast hand is nearer ~0.2–0.4
-/(m·s)): the planners treat curvature as an *instantaneous* control (it isn't
-in `State`), so a tight rate they can't anticipate would make their
-instant-steer plans unexecutable and destabilize the closed loop. A faithful
-steering rate would mean promoting curvature to a vehicle state — noted as
-future work.
+The jerk and steering-rate caps are per-tick differences from the previously
+applied control, so the `Simulator` carries that control as state.
+
+### One forward model, used everywhere
+
+`apply_limits` and `step` are wrapped together in
+`drive(state, prev, cmd, dt) → (State, applied)`: clamp the command to the
+limits given the previous applied control, integrate one tick, and return the
+new state **and the control actually applied**. This is the single forward
+model — the plant advances the ego with it, and planners roll their candidate
+trajectories out through the *same* function.
+
+That is the point of routing everything through `drive` rather than a bare
+`step`: jerk and steering rate are limits on a *control*, not on a `State`
+field, so they only become real to a planner if its rollout carries the
+previously applied control and prices each candidate on what the car would
+actually do. A planner that forward-simulates through `drive` plans the
+throttle and steering *ramp* the limits require, instead of a step the plant
+would silently clip out from under it. The first rollout step seeds `prev`
+with the ego's current applied control, carried on the planning
+[`Context::ego_control`](../planning/README.md). The sampling planners
+(`sampling_mpc`) roll out through `drive` today; the delicate
+feedback/finite-difference planners (`pi2ddp`, `treetop`) still search on the
+bare model and rely on the plant's `drive` to enforce the limits on their
+output — bringing their internal rollouts onto `drive` needs their gains
+retuned and is left as follow-on.
 
 ## `Simulator`
 
