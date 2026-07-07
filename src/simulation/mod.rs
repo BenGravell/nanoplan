@@ -5,7 +5,7 @@ use web_time::Instant;
 
 use crate::metrics::{self, Metrics};
 use crate::planning::{Context, Latency, LatencyStats, Planner, PlannerKind};
-use crate::scenarios::{Road, Scenario};
+use crate::scenarios::{Path, Road, Scenario};
 
 /// Ego state: position, yaw, and speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -182,6 +182,11 @@ pub fn simulate(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> R
 pub struct IncrementalSim {
     actors: Vec<Vec<State>>,
     road: Road,
+    /// The route as a path, for tapering the target speed into its end.
+    route: Path,
+    /// The scenario's own target speed, restored for scoring after each tick's
+    /// goal taper.
+    base_target_speed: f64,
     sim: Simulator,
     planner: Box<dyn Planner>,
     recorder: Latency,
@@ -190,12 +195,23 @@ pub struct IncrementalSim {
     steps_total: usize,
 }
 
+/// Comfortable deceleration the target speed is tapered by into the route end,
+/// so the ego arrives stopped at the goal instead of sailing off the end of
+/// its reference — where the degenerate past-the-end geometry otherwise
+/// provokes a wild spin. Matches the open world's own goal taper.
+const GOAL_DECEL_MS2: f64 = 1.5;
+
 impl IncrementalSim {
     pub fn start(sc: &Scenario, kind: PlannerKind, duration_s: f64, dt: f64) -> Self {
         let steps_total = (duration_s / dt) as usize;
+        let road = sc.road(dt);
+        let route = Path::new(&road.centerline);
+        let base_target_speed = road.target_speed;
         IncrementalSim {
             actors: sc.actors.iter().map(|a| a.trace(steps_total, dt)).collect(),
-            road: sc.road(dt),
+            road,
+            route,
+            base_target_speed,
             sim: Simulator::new(sc.ego, dt),
             planner: kind.build(),
             recorder: Latency::default(),
@@ -217,6 +233,18 @@ impl IncrementalSim {
     fn tick_once(&mut self) {
         let i = self.ego.len() - 1;
         let current: Vec<State> = self.actors.iter().map(|t| t[i]).collect();
+        // taper the target speed the planner sees into a comfortable stop at
+        // the route end, so it arrives and holds the goal pose instead of
+        // driving off the end of its reference and spinning. Scoring keeps the
+        // scenario's own speed limit (`base_target_speed`, restored in
+        // `finish`); this only shapes planning near the goal, and where the
+        // route outlasts the horizon (the ego never nears its end) it never
+        // binds.
+        let ego = self.sim.state;
+        let remaining = self.route.length() - self.route.project([ego.x, ego.y]).0;
+        self.road.target_speed = self
+            .base_target_speed
+            .min((2.0 * GOAL_DECEL_MS2 * remaining.max(0.0)).sqrt());
         let ctx = Context {
             road: &self.road,
             actors: &current,
@@ -243,6 +271,9 @@ impl IncrementalSim {
         while !self.is_done() {
             self.tick_once();
         }
+        // score against the scenario's own speed limit, not the last tick's
+        // goal-tapered value
+        self.road.target_speed = self.base_target_speed;
         let metrics = metrics::evaluate(&self.ego, &self.actors, &self.road);
         Rollout {
             ego: self.ego,
@@ -290,6 +321,29 @@ mod tests {
         let r = job.finish();
         assert_eq!(r.ego, expected.ego);
         assert_eq!(r.metrics.score, expected.metrics.score);
+    }
+
+    #[test]
+    fn tapers_to_a_stop_at_the_route_end() {
+        use crate::scenarios::{MapData, Scenario};
+        // a route much shorter than 20 s of travel: without the goal taper the
+        // ego reaches the end at speed and drives off it; with it, it arrives
+        // stopped and holds the end pose.
+        let sc = Scenario {
+            name: "short-route".into(),
+            ego: State { x: 0.0, y: 0.0, yaw: 0.0, speed: 10.0 },
+            actors: vec![],
+            centerline: vec![[-5.0, 0.0], [60.0, 0.0]],
+            target_speed: 10.0,
+            map: MapData::default(),
+            expert: vec![],
+        };
+        let r = simulate(&sc, PlannerKind::BezierIdm, 20.0, 0.1);
+        let end = r.ego.last().unwrap();
+        assert!(end.x > 54.0 && end.x < 64.0, "ended at x {}", end.x);
+        assert!(end.speed < 1.0, "never stopped, speed {}", end.speed);
+        // and it stayed on its road the whole way (no spin off the end)
+        assert_eq!(r.metrics.aggregate[1], 1.0, "left the drivable area");
     }
 
     #[test]

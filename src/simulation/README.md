@@ -57,6 +57,32 @@ trajectory integrate under a constant `Control` this same way (see
 [`src/scenarios/README.md`](../scenarios/README.md#actor-motion)), and the
 viewer's future-preview overlay rolls a plan forward into positions with it.
 
+### Actuation limits
+
+`step()` integrates whatever control it's handed, but the **plant** (the
+ego `Simulator`, and the open world's ego) never hands it a raw planner
+command directly — it passes it through `apply_limits(prev, cmd, speed, dt)`
+first, clamping it to what a real vehicle could actually do:
+
+- **longitudinal acceleration and jerk** within the `comfort` metric's own
+  empirical bounds — a normal controller's throttle/brake authority and rate;
+- **steering angle** (`MAX_ABS_CURVATURE`, a ~5 m turning radius);
+- **lateral acceleration** within a ~0.9 g tyre-**grip** limit
+  (`MAX_ABS_LAT_ACCEL`), which tightens the curvature limit as speed rises —
+  set at grip rather than comfort level so the car can physically hold an
+  aggressive bend (the metric scores the discomfort) instead of understeering
+  off the road;
+- **steering rate** (`MAX_ABS_CURVATURE_RATE`), which forbids flipping the
+  wheel lock-to-lock within a tick — the actuation signature of the wild spin
+  a degenerate past-the-route-end reference used to provoke.
+
+The jerk and steering-rate caps need the previously applied control, so the
+`Simulator` carries it as state. The steering-rate cap is deliberately
+permissive because the planners treat curvature as an *instantaneous* control
+(it isn't in `State`), so a tight rate they can't anticipate would make their
+plans unexecutable; a fully realistic steering rate would mean promoting
+curvature to a vehicle state — noted as future work.
+
 ## `Simulator`
 
 ```rust
@@ -108,7 +134,12 @@ This is the seam between all four components. In order:
 3. Step `duration_s / dt` ticks. Each tick builds a `Context` over that
    `Road` with the actors' states *at that tick* (sliced from their
    precomputed traces), calls `sim.tick(...)`, and drains the tick's latency
-   spans into a running `LatencyStats` via `LatencyStats::absorb`.
+   spans into a running `LatencyStats` via `LatencyStats::absorb`. The target
+   speed the planner sees is tapered into a comfortable stop at the route end
+   (`GOAL_DECEL_MS2`), so the ego arrives and holds the goal pose rather than
+   sailing off the end of its reference and spinning about it; where the route
+   outlasts the horizon this never binds. Scoring in step 4 uses the
+   scenario's own speed limit, not the tapered value.
 4. Once the full ego trace exists, call
    [`metrics::evaluate`](../metrics/README.md) once over the whole thing
    (the finished traces plus the same `Road`) — metrics are a pure post-hoc
