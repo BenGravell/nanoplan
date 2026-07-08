@@ -34,7 +34,7 @@ use crate::planning::search_tree::{
 use crate::planning::steering::QuinticSteer;
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, MAX_ABS_CURVATURE, State};
 use crate::wrap_angle;
 
 /// A tree node's position tagged with its index in `nodes`, stored in the
@@ -93,8 +93,6 @@ const NEIGHBOR_RADIUS_M: f64 = 12.0;
 // exactly the `k` nearest cheap.
 const K_NEIGHBORS: usize = 24;
 const LATERAL_BOUND_M: f64 = 4.5;
-// curvature a steer is rejected past
-const MAX_CURVATURE: f64 = 0.35;
 const STEER_SAMPLES: usize = 16;
 // Arc-length half-window for the Frenet projection of a steer segment's
 // sampled points (`Path::project_near`). A segment is at most `STEP_MAX_M`
@@ -156,12 +154,12 @@ fn drivable_bound(ctx: &Context) -> f64 {
 }
 
 /// Largest heading change worth proposing for a hop of length `step_len`.
-/// The actual quintic edge is still checked against `MAX_CURVATURE`; this
+/// The actual quintic edge is still checked against `MAX_ABS_CURVATURE`; this
 /// limit just avoids spending the hot loop on obviously over-bent edges
 /// while giving the smoother quintic tracker enough lateral authority to
 /// build an obstacle bypass before the warm-start replay falls behind.
 fn max_yaw_change(step_len: f64) -> f64 {
-    (MAX_CURVATURE * step_len / 20.0).min(0.3)
+    (MAX_ABS_CURVATURE * step_len / 20.0).min(0.3)
 }
 
 struct Node {
@@ -237,7 +235,7 @@ fn steer_cost(
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
-        if curvature.abs() > MAX_CURVATURE {
+        if curvature.abs() > MAX_ABS_CURVATURE {
             return None;
         }
         let (s, d) = path.project_near(p, sa + (sb - sa) * u, PROJECT_WINDOW_M);

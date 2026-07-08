@@ -648,7 +648,7 @@ need far more curvature than any real car has, and nearly every candidate
 steer failed the curvature check. `max_yaw_change(step_len)` caps how far a
 new edge's direction may turn away from its parent's own heading before the
 quintic is even built; the finished edge is still checked against
-`MAX_CURVATURE`. A real swerve is therefore built from several small,
+`MAX_ABS_CURVATURE`. A real swerve is therefore built from several small,
 individually gentle turns rather than one edge trying to do it all.
 
 **Every edge moves forward in Frenet station.** Nearest-neighbor search,
