@@ -2,14 +2,24 @@
 
 ## Business logic and design
 
-Handle hard constraints in a more uniform way across all planners.
-Use a constraint class/interface.
 
-Factor out single sources of truth for the constraints, not just in treetop.
-ACCEL_LON_MAX
-ACCEL_LAT_MAX
-CURVATURE_MAX
+--
+Coalesce similar planners
 
+- src/planning/lattice is very similar to src/planning/treetop/rrt and src/planning/rrt_star
+  - they are all sampling-based trees, so they can share a common base
+
+- src/planning/pi2ddp and src/planning/treetop/ilqr
+  - they are both ilqr/ddp variants, mostly different in the way that derivatives are approximated/handled (sampling vs finite differencing), so they can share a common base
+
+
+
+--
+Factor out shared types and helpers across planners in src/planning
+
+--
+src/planning/treetop/rrt.rs
+ACCEL_LAT_MAX is referenced but does not exist
 
 
 --
