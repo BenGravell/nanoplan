@@ -200,10 +200,14 @@ Flags:
 ```sh
 cargo run --release --bin profile_latency -- --count 20
 cargo run --release --bin profile_latency -- --count 0 --dir DIR
+cargo run --release --bin profile_latency -- --mode world --duration 30
 ```
 
-Runs the same planner/scenario sweep as `batch`, but aggregates the existing
-`simulate()` latency diagnostics instead of metric scores.
+By default, runs the same planner/scenario sweep as `batch`, but aggregates
+the existing `simulate()` latency diagnostics instead of metric scores.
+`--mode world` instead runs the procedural `LiveWorld` loop offline with the
+viewer defaults: seed `1`, `64` traffic actors, `0.1 s` ticks, and a
+deterministic clicked-style route goal ahead of the ego.
 
 - **stdout**: one CSV row per `(planner, seam)` across the whole batch:
 
@@ -217,8 +221,15 @@ Runs the same planner/scenario sweep as `batch`, but aggregates the existing
 - **stderr**: a compact mean `total` latency summary per planner, useful for
   quick comparisons.
 
-Flags are the same as [Batch evaluation](#batch-evaluation): `--count`,
-`--seed`, and repeatable `--dir`.
+Scenario-mode flags are the same as [Batch evaluation](#batch-evaluation):
+`--count`, `--seed`, and repeatable `--dir`. Shared/world flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--mode scenarios\|world` | `scenarios` | Profile scenario rollouts or the procedural live world. |
+| `--duration S` | `20` | Simulated seconds per scenario or world run. |
+| `--world-seed S` | `1` | Procedural world seed, matching the viewer's default. |
+| `--max-actors N` | `64` | Live traffic cap for `--mode world`, matching the viewer's default. |
 
 ## Converting CommonRoad scenarios
 

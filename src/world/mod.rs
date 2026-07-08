@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::Rng;
-use crate::planning::{Context, Planner, PlannerKind, bezier_idm::idm_accel};
+use crate::planning::{Context, Latency, Planner, PlannerKind, bezier_idm::idm_accel};
 use crate::scenarios::{Path, Road};
 use crate::simulation::{Control, State, apply_limits, step};
 
@@ -1021,6 +1021,16 @@ impl LiveWorld {
     /// actor against a snapshot of the traffic (ego included), then replan
     /// and step the ego — or brake to a stop if there's no goal.
     pub fn tick(&mut self) {
+        self.tick_with_latency(None);
+    }
+
+    /// [`tick`](Self::tick), but records planner latency seams for offline
+    /// profiling of the live procedural-world loop.
+    pub fn tick_recording_latency(&mut self, latency: &Latency) {
+        self.tick_with_latency(Some(latency));
+    }
+
+    fn tick_with_latency(&mut self, latency: Option<&Latency>) {
         self.t += self.dt;
         // recenter once the ego is decisively outside the center chunk
         let [cx, cy] = self.map.center;
@@ -1093,11 +1103,14 @@ impl LiveWorld {
             actors: &actor_states,
             ego_control: self.ego_control,
             horizon: PLAN_PREVIEW_TICKS,
-            latency: None,
+            latency,
             diagnostics: None,
         };
         let t0 = Instant::now();
-        let controls = self.planner.plan(self.ego, &ctx);
+        let controls = match latency {
+            Some(latency) => latency.time("total", || self.planner.plan(self.ego, &ctx)),
+            None => self.planner.plan(self.ego, &ctx),
+        };
         self.last_plan_ms = t0.elapsed().as_secs_f64() * 1e3;
         let mut s = self.ego;
         self.plan = controls
@@ -1163,7 +1176,7 @@ mod tests {
     #[test]
     fn roads_vary_in_width_and_traffic_in_kind() {
         let map = StreetMap::window(11, [0, 0]);
-        assert!(map.lanes.iter().any(|&n| n == 1));
+        assert!(map.lanes.contains(&1));
         assert!(map.lanes.iter().any(|&n| n >= 2));
         let kinds: Vec<ActorKind> = (-3..3)
             .flat_map(|i| spawn_chunk(11, [i, -i]))

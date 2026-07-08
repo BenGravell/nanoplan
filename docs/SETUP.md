@@ -29,6 +29,21 @@
 No other language toolchains are required. There is no JavaScript build step
 outside of what [Trunk](#web-wasm-build) drives.
 
+## Code quality hooks
+
+The repo uses [pre-commit](https://pre-commit.com/) to run the same Rust
+quality gates locally before a commit:
+
+```sh
+pipx install pre-commit   # or use your package manager
+pre-commit install
+pre-commit run --all-files
+```
+
+The hooks are intentionally just `cargo fmt --all -- --check` and
+`cargo clippy --all-targets --all-features -- -D warnings`. `rust-toolchain.toml`
+installs `rustfmt` and `clippy` with the pinned toolchain.
+
 ## Native build
 
 ```sh
@@ -183,8 +198,8 @@ for details and flags.
 ## Verifying the setup
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 cargo check --bin nanoplan --target wasm32-unknown-unknown
 ```
