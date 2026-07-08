@@ -2,6 +2,7 @@
 
 mod linalg;
 mod matrix;
+mod trajectory_cost;
 mod vector;
 
 use crate::planning::cost;
@@ -11,6 +12,7 @@ use crate::wrap_angle;
 
 pub(crate) use linalg::{dot, mat_add, mat_mul, mat_vec, transpose, vec_add};
 pub(crate) use matrix::{M2, M4, M6, M22, M24, M26, M62, M66};
+pub(crate) use trajectory_cost::{TrajectoryCost, TrajectoryCostWeights};
 pub(crate) use vector::{V2, V6};
 
 pub(crate) fn clamp_u(u: V2) -> V2 {

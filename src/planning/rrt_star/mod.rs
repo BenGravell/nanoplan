@@ -10,13 +10,11 @@
 //! not a seeded-RNG rollout.
 //!
 //! The step connecting any two poses — the "steering function" — is a
-//! cubic polynomial in each of `x` and `y`, chosen via differential
-//! flatness: a unicycle/bicycle's heading (`atan2(y', x')`) and curvature
-//! (`(x'y'' - y'x'') / |·|^3`) are both determined by the flat outputs
-//! `(x, y)` and their derivatives alone, so matching position and heading
-//! (via derivative *direction*) at both endpoints is enough to guarantee a
-//! kinematically smooth connection, without solving for heading or
-//! curvature directly.
+//! shared quintic polynomial in each of `x` and `y`, chosen via
+//! differential flatness: heading, acceleration, and curvature are
+//! determined by the flat outputs `(x, y)` and their derivatives, so the
+//! connection matches position, tangent direction, and curvature boundary
+//! conditions without a planner-local steering implementation.
 //!
 //! The three neighbor queries every new node runs — nearest node behind it,
 //! candidate parents, rewire targets — go through an [`rstar`] R*-tree
@@ -31,11 +29,12 @@ use rstar::primitives::GeomWithData;
 use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{
-    dist, parent_chain, record_diagnostics, signed_max, xy_to_controls,
+    RoadFrame, brake_controls, dist, parent_chain, path_to_controls, record_diagnostics, signed_max,
 };
-use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
+use crate::planning::steering::QuinticSteer;
+use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State};
 use crate::wrap_angle;
 
 /// A tree node's position tagged with its index in `nodes`, stored in the
@@ -67,10 +66,10 @@ const GRID_BUDGET: usize = GRID_STATIONS * GRID_LATERALS;
 // GRID_BUDGET for the ~50/50 split.
 const QMC_BUDGET: usize = GRID_BUDGET;
 const STEP_MAX_M: f64 = 6.0;
-// Warm-starting re-fits a fresh `CubicSteer` at every `STEER_SAMPLES`
+// Warm-starting re-fits a fresh `QuinticSteer` at every `STEER_SAMPLES`
 // sub-point of the previous winning path, not just at tree-node boundaries
-// (see `plan`'s warm-start block). `CubicSteer`'s tangent magnitude is
-// `step_len / 3`, and curvature's denominator is that tangent magnitude
+// (see `plan`'s warm-start block). `QuinticSteer`'s tangent magnitude is
+// `step_len / 2`, and curvature's denominator is that tangent magnitude
 // cubed — for a sub-meter `step_len` between two adjacent sub-points, tiny
 // positional noise in `p` (the executed trajectory rarely lands exactly on
 // the previously planned polyline) turns into a wildly amplified, often
@@ -96,7 +95,7 @@ const K_NEIGHBORS: usize = 24;
 const LATERAL_BOUND_M: f64 = 4.5;
 // curvature a steer is rejected past
 const MAX_CURVATURE: f64 = 0.35;
-const STEER_SAMPLES: usize = 8;
+const STEER_SAMPLES: usize = 16;
 // Arc-length half-window for the Frenet projection of a steer segment's
 // sampled points (`Path::project_near`). A segment is at most `STEP_MAX_M`
 // of travel, roughly along the road, so a point's true station is within a
@@ -118,11 +117,10 @@ const PROGRESS_TOLERANCE_M: f64 = 3.0;
 // How far (in metres of Frenet station) the committed warm-started path may
 // fall behind the furthest progress any leaf reaches this tick before goal
 // selection abandons it for a fresh node. Deliberately several times the
-// tick-to-tick jitter in the furthest fresh leaf's reach, so that jitter
-// stops flipping the goal (the chattering the old one-bucket margin caused);
-// only a genuine loss of progress — a stale or freshly-blocked committed
-// path — crosses it. See the goal-selection comment in `plan`.
-const WARM_VIABLE_BAND_M: f64 = 15.0;
+// tick-to-tick jitter in the furthest fresh leaf's reach, but tight enough
+// that a stale or under-tracked warm replay gives way to a fresh detour
+// before an obstacle. See the goal-selection comment in `plan`.
+const WARM_VIABLE_BAND_M: f64 = 5.0;
 // Weight on the goal-selection continuity bias, in effective *metres of
 // progress* discounted per m² that a candidate's detour side
 // (`Node::peak_lateral`) disagrees with the plan the ego is committed to
@@ -157,89 +155,19 @@ fn drivable_bound(ctx: &Context) -> f64 {
     (ctx.road.half_width - DRIVABLE_MARGIN_M).max(0.5)
 }
 
-/// Largest heading change worth attempting for a hop of length `step_len`,
-/// so the resulting `CubicSteer` (tangent magnitude `step_len/3`, see
-/// below) stays within `MAX_CURVATURE`. A Hermite curve whose start tangent
-/// misses the chord direction by `dyaw` and whose end tangent matches it
-/// exactly peaks at curvature ≈ `48 * dyaw / step_len` for that tangent
-/// magnitude (measured empirically with this module's own diagnostic
-/// instrumentation — see the git history for the throwaway script); solving
-/// for `dyaw` at the curvature limit, with a safety factor for the
-/// difference between this approximation and `feasible`'s actual discrete
-/// sampling, and a sane upper cap so a very long hop can't claim an
-/// unrealistically sharp turn is fine. Scaling with `step_len` matters: a
-/// *short* hop can afford only a tiny heading change before curvature blows
-/// up, exactly backwards from the fixed-angle-per-hop guess this module
-/// started with, which mostly rejected long hops needlessly while still
-/// letting short, sharp ones slip past the initial curvature check.
+/// Largest heading change worth proposing for a hop of length `step_len`.
+/// The actual quintic edge is still checked against `MAX_CURVATURE`; this
+/// limit just avoids spending the hot loop on obviously over-bent edges
+/// while giving the smoother quintic tracker enough lateral authority to
+/// build an obstacle bypass before the warm-start replay falls behind.
 fn max_yaw_change(step_len: f64) -> f64 {
-    (MAX_CURVATURE * step_len / 55.0).min(0.3)
-}
-
-/// Cubic-in-`s` connector between two oriented points: `x(s)` and `y(s)`
-/// are each independently cubic, matching position and heading (tangent
-/// direction) at `s=0` and `s=1` — the differential-flatness steering
-/// function described in the module doc.
-struct CubicSteer {
-    cx: [f64; 4],
-    cy: [f64; 4],
-}
-
-impl CubicSteer {
-    fn new(p0: [f64; 2], yaw0: f64, p1: [f64; 2], yaw1: f64) -> Self {
-        // tangent magnitude: a third of the chord length, the same
-        // heuristic bezier_idm uses for its lane-return curve
-        let k = (dist(p0, p1) / 3.0).max(1e-3);
-        let hermite = |a0: f64, m0: f64, a1: f64, m1: f64| {
-            [
-                a0,
-                m0,
-                3.0 * (a1 - a0) - 2.0 * m0 - m1,
-                2.0 * (a0 - a1) + m0 + m1,
-            ]
-        };
-        CubicSteer {
-            cx: hermite(p0[0], k * yaw0.cos(), p1[0], k * yaw1.cos()),
-            cy: hermite(p0[1], k * yaw0.sin(), p1[1], k * yaw1.sin()),
-        }
-    }
-
-    fn eval(c: &[f64; 4], s: f64) -> f64 {
-        c[0] + s * (c[1] + s * (c[2] + s * c[3]))
-    }
-
-    fn eval_d1(c: &[f64; 4], s: f64) -> f64 {
-        c[1] + s * (2.0 * c[2] + s * 3.0 * c[3])
-    }
-
-    fn eval_d2(c: &[f64; 4], s: f64) -> f64 {
-        2.0 * c[2] + 6.0 * s * c[3]
-    }
-
-    fn point(&self, s: f64) -> [f64; 2] {
-        [Self::eval(&self.cx, s), Self::eval(&self.cy, s)]
-    }
-
-    /// Curvature at `s`, via the flat-output formula
-    /// `(x'y'' - y'x'') / (x'^2+y'^2)^1.5`.
-    fn curvature(&self, s: f64) -> f64 {
-        let (dx, dy) = (Self::eval_d1(&self.cx, s), Self::eval_d1(&self.cy, s));
-        let (ddx, ddy) = (Self::eval_d2(&self.cx, s), Self::eval_d2(&self.cy, s));
-        let speed = dx.hypot(dy).max(1e-6);
-        (dx * ddy - dy * ddx) / speed.powi(3)
-    }
-
-    /// Sample `n` points from `s=0` to `s=1` inclusive.
-    fn sample(&self, n: usize) -> Vec<[f64; 2]> {
-        (0..n)
-            .map(|i| self.point(i as f64 / (n - 1) as f64))
-            .collect()
-    }
+    (MAX_CURVATURE * step_len / 20.0).min(0.3)
 }
 
 struct Node {
     pos: [f64; 2],
     yaw: f64,
+    curvature: f64,
     /// Frenet station of `pos`, cached at creation. Used to keep every
     /// edge a step *forward* along the lane — see the module note on
     /// monotonic stations in `plan`.
@@ -294,7 +222,7 @@ struct Node {
 /// does; `sa`/`sb` are the segment endpoints' stations, hinting the
 /// windowed projection.
 fn steer_cost(
-    curve: &CubicSteer,
+    curve: &QuinticSteer,
     segment: &[[f64; 2]],
     path: &Path,
     s0: f64,
@@ -422,7 +350,14 @@ fn try_extend(
     let best = parent_candidates
         .iter()
         .filter_map(|&j| {
-            let curve = CubicSteer::new(nodes[j].pos, nodes[j].yaw, new_pos, new_yaw);
+            let curve = QuinticSteer::from_poses(
+                nodes[j].pos,
+                nodes[j].yaw,
+                nodes[j].curvature,
+                new_pos,
+                new_yaw,
+                0.0,
+            );
             let segment = curve.sample(STEER_SAMPLES);
             steer_cost(
                 &curve,
@@ -445,6 +380,7 @@ fn try_extend(
     nodes.push(Node {
         pos: new_pos,
         yaw: new_yaw,
+        curvature: 0.0,
         station: new_s,
         lateral: new_d,
         peak_lateral,
@@ -466,7 +402,14 @@ fn try_extend(
         .take(K_NEIGHBORS)
         .collect();
     for j in rewire_candidates {
-        let curve = CubicSteer::new(new_pos, new_yaw, nodes[j].pos, nodes[j].yaw);
+        let curve = QuinticSteer::from_poses(
+            new_pos,
+            new_yaw,
+            nodes[new_idx].curvature,
+            nodes[j].pos,
+            nodes[j].yaw,
+            nodes[j].curvature,
+        );
         let segment = curve.sample(STEER_SAMPLES);
         let Some(ec) = steer_cost(
             &curve,
@@ -510,17 +453,18 @@ pub struct RrtStarPlanner {
 
 impl Planner for RrtStarPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let (path, s0, d0) = ctx.time("route", || {
-            let path = Path::new(&ctx.road.centerline);
-            let (s0, d0) = path.project([ego.x, ego.y]);
-            (path, s0, d0)
-        });
-        let v = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
-        let s_max = v * PLANNING_HORIZON_S;
+        let RoadFrame {
+            path,
+            s0,
+            d0,
+            speed: v,
+            horizon_m: s_max,
+        } = ctx.time("route", || RoadFrame::new(ego, ctx));
 
         let mut nodes = vec![Node {
             pos: [ego.x, ego.y],
             yaw: ego.yaw,
+            curvature: ego.curvature,
             station: s0,
             lateral: d0,
             peak_lateral: d0,
@@ -560,7 +504,8 @@ impl Planner for RrtStarPlanner {
                 let chord_yaw = (p[1] - parent.pos[1]).atan2(p[0] - parent.pos[0]);
                 let dyaw = wrap_angle(chord_yaw - parent.yaw).clamp(-limit, limit);
                 let yaw = wrap_angle(parent.yaw + dyaw);
-                let curve = CubicSteer::new(parent.pos, parent.yaw, p, yaw);
+                let curve =
+                    QuinticSteer::from_poses(parent.pos, parent.yaw, parent.curvature, p, yaw, 0.0);
                 let segment = curve.sample(STEER_SAMPLES);
                 let Some(ec) = steer_cost(
                     &curve,
@@ -579,6 +524,7 @@ impl Planner for RrtStarPlanner {
                 nodes.push(Node {
                     pos: p,
                     yaw,
+                    curvature: 0.0,
                     station,
                     lateral,
                     peak_lateral,
@@ -751,15 +697,7 @@ impl Planner for RrtStarPlanner {
             // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
             self.committed_bias = 0.0; // no plan to be committed to
-            let accel = (-ego.speed / ctx.road.dt).max(-4.0);
-            let mut x = ego;
-            return (0..ctx.horizon)
-                .map(|_| {
-                    let u = action_toward(x, accel, 0.0, ctx.road.dt);
-                    x = step(x, u, ctx.road.dt);
-                    u
-                })
-                .collect();
+            return brake_controls(ego, ctx, (-ego.speed / ctx.road.dt).max(-4.0));
         };
 
         // Smooth `committed_bias` toward the chosen path's side. As the ego
@@ -777,14 +715,7 @@ impl Planner for RrtStarPlanner {
 
         let controls = ctx.time("extract", || {
             let final_path = Path::new(&winning_path);
-            let total_len = final_path.length();
-            let pts: Vec<[f64; 2]> = (1..=ctx.horizon)
-                .map(|i| {
-                    let s = (v * ctx.road.dt * i as f64).min(total_len);
-                    final_path.pose_at(s).0
-                })
-                .collect();
-            xy_to_controls(ego, &pts, ctx.road.dt)
+            path_to_controls(ego, &final_path, v, ctx)
         });
         self.prev_path = winning_path;
         controls

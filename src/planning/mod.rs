@@ -11,6 +11,7 @@ pub mod rrt_star;
 pub(crate) mod sampling;
 pub mod sampling_mpc;
 pub(crate) mod search_tree;
+pub(crate) mod steering;
 pub mod straight;
 pub mod treetop;
 

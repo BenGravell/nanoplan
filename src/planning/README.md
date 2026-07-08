@@ -14,7 +14,7 @@ planning/
 ├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-├── rrt_star/      RRT*, cubic-polynomial (differential-flatness) steering
+├── rrt_star/      RRT*, quintic differential-flatness steering
 ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
 └── treetop/       treetop-derived: RRT motion sampling tree, finite-difference iLQR, and the RRT+iLQR treetop planner
 ```
@@ -259,7 +259,7 @@ drift away from it. Where a planner needs curvature as an input, it gets it
 one of two ways, both compatible with that constraint:
 
 - **A closed-form fact about an already-*fixed* candidate curve.** RRT*'s
-  `CubicSteer::curvature` evaluates the curvature of a specific Hermite
+  `QuinticSteer::curvature` evaluates the curvature of a specific flat-output
   polynomial it already committed to — a geometric property of one
   candidate, not a gradient used to choose the next one.
 - **A purely numerical estimate off sampled points.** `cost::curvature_of`
@@ -635,26 +635,20 @@ existing node instead of failing for lack of one.
 **The steering function is differential flatness, not a straight line or an
 arc.** A unicycle/bicycle's heading (`atan2(y', x')`) and curvature
 (`(x'y'' - y'x'') / |·|^3`) are both fully determined by its flat outputs
-`(x, y)` and their derivatives — so `CubicSteer` fits an independent cubic
-polynomial to `x(s)` and `y(s)` (Hermite form, tangent magnitude
-`chord / 3`, the same heuristic [Bezier + IDM](#bezier--idm) uses) matching
-position and heading *direction* at both ends, and the connection is
-guaranteed kinematically smooth without ever solving for heading or
-curvature directly.
+`(x, y)` and their derivatives — so `QuinticSteer` fits independent quintic
+polynomials to `x(s)` and `y(s)`, matching position, heading direction, and
+curvature boundary conditions. The connection is guaranteed kinematically
+smooth without ever solving for heading or curvature directly.
 
 **Steering-angle limiting, not post-hoc curvature rejection, is what makes
 the tree grow at all.** Early on, this module aimed each new edge straight
 at its sample (or matched every node's heading to the lane); either way, two
-independently-chosen directions connected by a *short* Hermite tangent needs
-far more curvature than any real car has, and nearly every candidate steer
-failed the curvature check — measured by instrumenting `feasible`'s own
-rejections, under 10 of 300 samples per tick were passing, even on an empty
-road. `max_yaw_change(step_len)` inverts this: it caps how
-far a new edge's direction may turn away from its parent's *own* heading,
-scaled so the resulting curve's peak curvature (`≈ 48 * dyaw / step_len` for
-this tangent magnitude, found empirically) stays within `MAX_CURVATURE`.
-Both of a new edge's tangents then point the same way — a straight hop, zero
-curvature by construction — so a real swerve is built from several small,
+independently-chosen directions connected by a short flat-output curve can
+need far more curvature than any real car has, and nearly every candidate
+steer failed the curvature check. `max_yaw_change(step_len)` caps how far a
+new edge's direction may turn away from its parent's own heading before the
+quintic is even built; the finished edge is still checked against
+`MAX_CURVATURE`. A real swerve is therefore built from several small,
 individually gentle turns rather than one edge trying to do it all.
 
 **Every edge moves forward in Frenet station.** Nearest-neighbor search,
@@ -711,8 +705,10 @@ test caught (realized clearance well under any individual plan's own
 takes its deepest node directly — as long as the replay still reaches within
 `WARM_VIABLE_BAND_M` of the furthest progress any leaf makes, so a good
 detour, once found, isn't abandoned for a marginally-cheaper alternative next
-tick. (This band replaced an older one-`PROGRESS_TOLERANCE_M`-bucket margin
-that the per-tick progress jitter kept crossing.)
+tick, while a stale replay that has fallen behind gives way to the fresh
+tree before an obstacle. (This band replaced an older
+one-`PROGRESS_TOLERANCE_M`-bucket margin that the per-tick progress jitter
+kept crossing.)
 
 **Deterministic bypass seeding is what makes a good detour reliably
 *findable* in the first place.** Before the grid/Halton loop runs, every
@@ -739,7 +735,7 @@ discrete points, so the true closest approach between samples can dip a
 little further than what gets tested. `edge_cost` keeps its own arc-length
 accumulation (the actual quantity the "star" rewiring minimizes) and
 lateral-offset pull, adding the shared cost per sampled point on top;
-curvature comes from `CubicSteer::curvature`, a closed-form fact about the
+curvature comes from `QuinticSteer::curvature`, a closed-form fact about the
 already-fixed candidate curve, not a search gradient.
 
 **Effective progress — not raw distance, and biased toward the side already
@@ -836,16 +832,16 @@ optimizer — rather than by asymptotic optimality (contrast
   `TICKS` controls — precisely the input the iLQR pass wants. Moving
   obstacles come free: a layer's states have a known absolute time, so
   collision checks price actors where they *will be*.
-- **Steering in action space.** `steer_actions` fits independent cubics
-  `x(t)`, `y(t)` between two states' position+velocity boundary conditions
-  (velocity = speed along heading), reads acceleration and curvature off
+- **Steering in action space.** `steer_actions` fits the shared quintic
+  flat-output connector between two states' position, velocity, and
+  acceleration boundary conditions, reads acceleration and curvature off
   the polynomial derivatives — the same differential-flatness idea as
-  RRT*'s `CubicSteer` — then converts those targets into jerk/curvature-rate
-  actions and realizes them through the shared rollout. A secant
-  against the start heading infers forward/reverse. The steer executes
-  only its first segment; goal-directed samples steer along a cubic
-  spanning the whole remaining horizon and keep just the first second
-  of it.
+  RRT*'s `QuinticSteer` — then converts those targets into
+  jerk/curvature-rate actions and realizes them through the shared rollout.
+  A secant against the start heading infers forward/reverse. The steer
+  executes only its first segment; goal-directed samples steer along a
+  quintic spanning the whole remaining horizon and keep just the first
+  second of it.
 - **Zero-action-point parenting.** A sample attaches to the previous
   layer's node whose coasting endpoint is nearest in `(x, y, yaw, v)` —
   "who reaches me with the least effort" under simplifying kinematic

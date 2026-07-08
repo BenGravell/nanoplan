@@ -1,15 +1,41 @@
 //! Small shared mechanics for sampling-tree planners.
 //!
-//! The planners still own their sampling, steering, and edge costs. This
-//! module only holds the boring tree-shaped plumbing they had each been
-//! carrying: parent-chain extraction, search-queue ordering, diagnostics, and
-//! conversion from sampled geometry back to simulator controls.
+//! The planners still own their edge costs and planner-specific sampling
+//! policy. This module holds the boring tree-shaped plumbing they had each
+//! been carrying: parent-chain extraction, search-queue ordering,
+//! diagnostics, road-frame setup, and conversion from sampled geometry back
+//! to simulator controls.
 
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
-use crate::planning::Diagnostics;
+use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
+use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
+
+pub(crate) struct RoadFrame {
+    pub path: Path,
+    pub s0: f64,
+    pub d0: f64,
+    pub speed: f64,
+    pub horizon_m: f64,
+}
+
+impl RoadFrame {
+    pub(crate) fn new(ego: State, ctx: &Context) -> Self {
+        let path = Path::new(&ctx.road.centerline);
+        let (s0, d0) = path.project([ego.x, ego.y]);
+        let speed = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
+        RoadFrame {
+            path,
+            s0,
+            d0,
+            speed,
+            horizon_m: speed * PLANNING_HORIZON_S,
+        }
+    }
+}
 
 /// A best-first queue item where the lowest cost pops first.
 pub(crate) struct QueueEntry {
@@ -65,6 +91,51 @@ pub(crate) fn parent_chain(
     chain
 }
 
+pub(crate) struct BestFirstResult {
+    pub goal: usize,
+    pub parent: Vec<usize>,
+}
+
+pub(crate) fn best_first(
+    n_nodes: usize,
+    start: usize,
+    mut is_goal: impl FnMut(usize) -> bool,
+    mut successors: impl FnMut(usize) -> Vec<(usize, f64)>,
+) -> Option<BestFirstResult> {
+    let mut dist = vec![f64::INFINITY; n_nodes];
+    let mut parent = vec![usize::MAX; n_nodes];
+    let mut heap = BinaryHeap::new();
+    dist[start] = 0.0;
+    heap.push(QueueEntry {
+        cost: 0.0,
+        node: start,
+    });
+
+    while let Some(QueueEntry { cost: g, node }) = heap.pop() {
+        if g > dist[node] {
+            continue;
+        }
+        if is_goal(node) {
+            return Some(BestFirstResult { goal: node, parent });
+        }
+        for (succ, edge_cost) in successors(node) {
+            if !edge_cost.is_finite() {
+                continue;
+            }
+            let nd = g + edge_cost;
+            if nd < dist[succ] {
+                dist[succ] = nd;
+                parent[succ] = node;
+                heap.push(QueueEntry {
+                    cost: nd,
+                    node: succ,
+                });
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn record_diagnostics(
     diag: &Diagnostics,
     nodes: impl IntoIterator<Item = ([f64; 2], Vec<[f64; 2]>)>,
@@ -73,6 +144,54 @@ pub(crate) fn record_diagnostics(
         diag.record_point(point);
         diag.record_trajectory(trajectory);
     }
+}
+
+pub(crate) fn repeat_last_controls(controls: &[Control], horizon: usize) -> Vec<Control> {
+    (0..horizon)
+        .map(|t| controls[t.min(controls.len() - 1)])
+        .collect()
+}
+
+pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Control> {
+    let mut x = ego;
+    (0..ctx.horizon)
+        .map(|_| {
+            let u = action_toward(x, accel, 0.0, ctx.road.dt);
+            x = step(x, u, ctx.road.dt);
+            u
+        })
+        .collect()
+}
+
+// Pure-pursuit extraction for sampled tree geometry. The curvature gain is
+// deliberately assertive because `action_toward` and `step` still clamp the
+// request to the plant's curvature and curvature-rate limits.
+const PATH_TRACK_LOOKAHEAD_TICKS: f64 = 8.0;
+const PATH_TRACK_LOOKAHEAD_MIN_M: f64 = 3.0;
+const PATH_TRACK_LOOKAHEAD_MAX_M: f64 = 10.0;
+const PATH_TRACK_CURVATURE_GAIN: f64 = 10.0;
+
+pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Context) -> Vec<Control> {
+    let total_len = path.length();
+    let dt = ctx.road.dt;
+    let lookahead = (speed * dt * PATH_TRACK_LOOKAHEAD_TICKS)
+        .clamp(PATH_TRACK_LOOKAHEAD_MIN_M, PATH_TRACK_LOOKAHEAD_MAX_M);
+    let mut x = ego;
+    (0..ctx.horizon)
+        .map(|i| {
+            let s = (speed * dt * (i + 1) as f64 + lookahead).min(total_len);
+            let (target, _) = path.pose_at(s);
+            let dx = target[0] - x.x;
+            let dy = target[1] - x.y;
+            let local_y = -dx * x.yaw.sin() + dy * x.yaw.cos();
+            let ld2 = (dx * dx + dy * dy).max(1e-6);
+            let curvature = 2.0 * PATH_TRACK_CURVATURE_GAIN * local_y / ld2;
+            let accel = (0.5 * (speed - x.speed)).clamp(-4.0, 2.0);
+            let u = action_toward(x, accel, curvature, dt);
+            x = step(x, u, dt);
+            u
+        })
+        .collect()
 }
 
 /// Turn a sampled position trajectory (spaced `dt` apart, starting one tick

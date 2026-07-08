@@ -18,13 +18,12 @@
 //! edge costs are non-negative, so the first final-layer node A\* settles is
 //! the global optimum); only the work to find it is smaller.
 
-use std::collections::BinaryHeap;
-
 use crate::planning::cost::{self, Sample};
-use crate::planning::search_tree::{QueueEntry, parent_chain, xy_to_controls};
-use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
-use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::planning::search_tree::{
+    RoadFrame, best_first, brake_controls, parent_chain, xy_to_controls,
+};
+use crate::planning::{Context, Planner};
+use crate::simulation::{Control, State};
 use crate::wrap_angle;
 
 pub struct LatticePlanner;
@@ -66,19 +65,18 @@ fn lateral(j: usize) -> f64 {
 
 impl Planner for LatticePlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let (path, s0, d0) = ctx.time("route", || {
-            let path = Path::new(&ctx.road.centerline);
-            let (s0, d0) = path.project([ego.x, ego.y]);
-            (path, s0, d0)
-        });
+        let RoadFrame {
+            path,
+            s0,
+            d0,
+            speed: v,
+            horizon_m,
+        } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
-        // ponytail: constant-speed profile; couple IDM into the lattice when needed
-        let v = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full
         // prediction horizon at the assumed cruise speed
-        let stations_m: [f64; STATION_LAYERS] = std::array::from_fn(|i| {
-            v * PLANNING_HORIZON_S * (i + 1) as f64 / STATION_LAYERS as f64
-        });
+        let stations_m: [f64; STATION_LAYERS] =
+            std::array::from_fn(|i| horizon_m * (i + 1) as f64 / STATION_LAYERS as f64);
         // initial lateral rate, expressed per unit of segment parameter u; the
         // first segment must honor it or every replan restarts the swerve at
         // zero slope and the executed path lags the plan into obstacles
@@ -151,86 +149,66 @@ impl Planner for LatticePlanner {
         if let Some(diag) = ctx.diagnostics {
             diag.record_point(path.frenet_to_xy(s0, d0)); // tree root
         }
-        let n_nodes = 1 + GRID_NODES;
-        let mut dist = vec![f64::INFINITY; n_nodes];
-        let mut parent = vec![usize::MAX; n_nodes];
-        dist[0] = 0.0;
-        let mut heap = BinaryHeap::new();
-        heap.push(QueueEntry { cost: 0.0, node: 0 });
-        let mut goal: Option<usize> = None;
-
-        ctx.time("optimize", || {
-            while let Some(QueueEntry { cost: g, node }) = heap.pop() {
-                if g > dist[node] {
-                    continue; // stale queue entry, already settled cheaper
-                }
-                // (station, lateral) and destination layer of this node
-                let (layer, sa, da, col) = if node == 0 {
-                    // map the ego's off-grid lateral to its nearest column so
-                    // the first (short) segment is limited the same way
-                    let c = (((d0 + LAT_BOUND_M) / (2.0 * LAT_BOUND_M) * (LATERALS - 1) as f64)
-                        .round() as i64)
-                        .clamp(0, LATERALS as i64 - 1) as usize;
-                    (None, s0, d0, c)
-                } else {
-                    let idx = node - 1;
-                    let l = idx / LATERALS;
-                    (
-                        Some(l),
-                        s0 + stations_m[l],
-                        lateral(idx % LATERALS),
-                        idx % LATERALS,
-                    )
-                };
-                if layer == Some(STATION_LAYERS - 1) {
-                    goal = Some(node); // settled the cheapest final-layer node
-                    return;
-                }
-                let next_layer = layer.map_or(0, |l| l + 1);
-                let sb = s0 + stations_m[next_layer];
-                let m0 = if layer.is_none() { m0_first } else { 0.0 };
-                // only connect to nearby lateral columns (see NEIGHBOR_SPAN)
-                let lo = col.saturating_sub(NEIGHBOR_SPAN);
-                let hi = (col + NEIGHBOR_SPAN).min(LATERALS - 1);
-                for j in lo..=hi {
-                    let db = lateral(j);
-                    if let Some(diag) = ctx.diagnostics {
-                        diag.record_point(path.frenet_to_xy(sb, db));
-                        diag.record_trajectory(segment_pts(sa, da, sb, db, m0));
-                    }
-                    let ec = edge_cost(sa, da, sb, db, m0);
-                    if !ec.is_finite() {
-                        continue;
-                    }
-                    let succ = 1 + next_layer * LATERALS + j;
-                    let nd = g + ec;
-                    if nd < dist[succ] {
-                        dist[succ] = nd;
-                        parent[succ] = node;
-                        heap.push(QueueEntry {
-                            cost: nd,
-                            node: succ,
-                        });
-                    }
-                }
+        // (station, lateral) and destination layer of a node.
+        let node_info = |node: usize| {
+            if node == 0 {
+                // map the ego's off-grid lateral to its nearest column so
+                // the first (short) segment is limited the same way
+                let c = (((d0 + LAT_BOUND_M) / (2.0 * LAT_BOUND_M) * (LATERALS - 1) as f64).round()
+                    as i64)
+                    .clamp(0, LATERALS as i64 - 1) as usize;
+                (None, s0, d0, c)
+            } else {
+                let idx = node - 1;
+                let l = idx / LATERALS;
+                (
+                    Some(l),
+                    s0 + stations_m[l],
+                    lateral(idx % LATERALS),
+                    idx % LATERALS,
+                )
             }
+        };
+
+        let result = ctx.time("optimize", || {
+            best_first(
+                1 + GRID_NODES,
+                0,
+                |node| node_info(node).0 == Some(STATION_LAYERS - 1),
+                |node| {
+                    let (layer, sa, da, col) = node_info(node);
+                    let next_layer = layer.map_or(0, |l| l + 1);
+                    let sb = s0 + stations_m[next_layer];
+                    let m0 = if layer.is_none() { m0_first } else { 0.0 };
+                    // only connect to nearby lateral columns (see NEIGHBOR_SPAN)
+                    let lo = col.saturating_sub(NEIGHBOR_SPAN);
+                    let hi = (col + NEIGHBOR_SPAN).min(LATERALS - 1);
+                    let mut successors = Vec::with_capacity(hi - lo + 1);
+                    for j in lo..=hi {
+                        let db = lateral(j);
+                        if let Some(diag) = ctx.diagnostics {
+                            diag.record_point(path.frenet_to_xy(sb, db));
+                            diag.record_trajectory(segment_pts(sa, da, sb, db, m0));
+                        }
+                        let ec = edge_cost(sa, da, sb, db, m0);
+                        let succ = 1 + next_layer * LATERALS + j;
+                        successors.push((succ, ec));
+                    }
+                    successors
+                },
+            )
         });
 
-        let Some(goal) = goal else {
+        let Some(result) = result else {
             // every path collides / leaves the road: brake straight ahead
-            let mut x = ego;
-            return (0..ctx.horizon)
-                .map(|_| {
-                    let u = action_toward(x, -4.0, 0.0, ctx.road.dt);
-                    x = step(x, u, ctx.road.dt);
-                    u
-                })
-                .collect();
+            return brake_controls(ego, ctx, -4.0);
         };
 
         // reconstruct the chosen lateral per layer from the parent chain
         let mut laterals = vec![0.0; STATION_LAYERS];
-        for node in parent_chain(goal, 0, |n| (parent[n] != usize::MAX).then_some(parent[n])) {
+        for node in parent_chain(result.goal, 0, |n| {
+            (result.parent[n] != usize::MAX).then_some(result.parent[n])
+        }) {
             let idx = node - 1;
             laterals[idx / LATERALS] = lateral(idx % LATERALS);
         }

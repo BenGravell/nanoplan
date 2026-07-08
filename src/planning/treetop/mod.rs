@@ -62,6 +62,7 @@ pub mod rrt;
 pub use ilqr::IlqrPlanner;
 pub use rrt::RrtPlanner;
 
+use crate::planning::search_tree::repeat_last_controls;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, step};
@@ -291,9 +292,7 @@ impl Planner for TreetopPlanner {
         }
 
         let controls = ctx.time("extract", || {
-            (0..ctx.horizon)
-                .map(|t| sol.controls[t.min(sol.controls.len() - 1)])
-                .collect::<Vec<_>>()
+            repeat_last_controls(&sol.controls, ctx.horizon)
         });
         self.expected_next = step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);

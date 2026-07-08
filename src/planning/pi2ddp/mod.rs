@@ -15,8 +15,9 @@
 //! the lane width at the preview distance.
 
 use crate::Rng;
-use crate::planning::cost;
-use crate::planning::planner_math::{self, M2, M4, M6, M24, V2};
+use crate::planning::planner_math::{
+    self, M2, M4, M6, M24, TrajectoryCost, TrajectoryCostWeights, V2,
+};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
@@ -30,6 +31,14 @@ const ALPHA: f64 = 0.5; // covariance damping (eq. 36)
 const LAMBDA_REG: f64 = 1e-3; // inverse regularization heuristic
 const SIGMA_JERK: f64 = 4.0; // [m/s³] exploration std
 const LANE_HALF_M: f64 = 1.75;
+const STATE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
+    center: 0.5,
+    speed: 0.0,
+    jerk: 0.0,
+    curvature_rate: 0.0,
+    scale: 1.0,
+    timed_shared_cost: true,
+};
 // physical action limits; also keep near-singular Σₓₓ inversions from
 // blowing the policy up when near-stationary rollouts lack state diversity
 
@@ -147,7 +156,6 @@ impl Pi2DdpPlanner {
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(&ctx.road.centerline));
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
@@ -175,13 +183,9 @@ impl Planner for Pi2DdpPlanner {
         // rollout average a gradient back onto the road.
         // The terminal call (no control has been applied yet) passes zero for
         // both, so it prices position/speed but not comfort.
-        let state_cost = |x: &State, j: usize| {
-            let (_, sample) = planner_math::state_sample(&path, x, j as f64 * ctx.road.dt, None);
-            0.5 * sample.lateral * sample.lateral
-                + ctx.time("cost", || {
-                    constraints.soft_point_cost(&sample, ctx.road.target_speed)
-                })
-        };
+        let trajectory_cost = TrajectoryCost::new(&path, ctx, STATE_COST_WEIGHTS);
+        let state_cost =
+            |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
         let effort = |u: &V2| 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1]);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;

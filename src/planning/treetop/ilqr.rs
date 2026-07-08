@@ -72,10 +72,11 @@
 
 use super::{TICKS, goal_state, rollout_constrained, take_warm};
 use crate::planning::planner_math::{
-    self, M22, M26, M62, M66, V2, V6, dot, mat_add, mat_mul, mat_vec, state, state_from_v6,
-    transpose, vec_add,
+    M22, M26, M62, M66, TrajectoryCost, TrajectoryCostWeights, V2, V6, dot, mat_add, mat_mul,
+    mat_vec, state, state_from_v6, transpose, vec_add,
 };
-use crate::planning::{Context, Planner, cost};
+use crate::planning::search_tree::repeat_last_controls;
+use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
@@ -104,6 +105,14 @@ const CENTER_W: f64 = 0.5;
 const SPEED_W: f64 = 0.3;
 const EFFORT_ACCEL_W: f64 = 0.1;
 const EFFORT_CURV_W: f64 = 10.0;
+const STAGE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
+    center: CENTER_W,
+    speed: SPEED_W,
+    jerk: EFFORT_ACCEL_W,
+    curvature_rate: EFFORT_CURV_W,
+    scale: 1.0 / TICKS as f64,
+    timed_shared_cost: false,
+};
 
 /// Terminal quadratic weights: position, heading, speed pulls toward the
 /// goal state.
@@ -127,20 +136,7 @@ impl Ocp<'_, '_> {
     /// `s_hint` narrows the Frenet projection during FD probing, where the
     /// state moves by ±[`H_COST`] around a known station.
     fn stage_cost(&self, x: &State, u: &Control, t: usize, s_hint: Option<f64>) -> f64 {
-        let (_, sample) =
-            planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        let target = self.ctx.road.target_speed;
-        let constraints =
-            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
-        // shared cost with a hard violation's escape slope (see the module
-        // doc), shared with the judo samplers and PI²-DDP.
-        let shared = constraints.soft_point_cost(&sample, target);
-        let dv = x.speed - target;
-        let structural = CENTER_W * sample.lateral * sample.lateral
-            + SPEED_W * dv * dv
-            + EFFORT_ACCEL_W * u.jerk * u.jerk
-            + EFFORT_CURV_W * u.curvature_rate * u.curvature_rate;
-        (shared + structural) / TICKS as f64
+        TrajectoryCost::new(self.path, self.ctx, STAGE_COST_WEIGHTS).stage(x, *u, t, s_hint)
     }
 
     /// Quadratic pull of the trajectory endpoint toward the goal state.
@@ -607,9 +603,7 @@ impl Planner for IlqrPlanner {
         }
 
         let controls = ctx.time("extract", || {
-            (0..ctx.horizon)
-                .map(|t| sol.controls[t.min(sol.controls.len() - 1)])
-                .collect::<Vec<_>>()
+            repeat_last_controls(&sol.controls, ctx.horizon)
         });
         self.expected_next = step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);

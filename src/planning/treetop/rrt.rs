@@ -12,10 +12,10 @@
 //!   controls — precisely what the iLQR pass needs as input. Moving
 //!   obstacles come free: a layer's states have a known absolute time, so
 //!   collision checks price actors where they will be, not where they are.
-//! - **Steering in action space.** [`steer_actions`] fits independent
-//!   cubics `x(t)`, `y(t)` between two states' position + velocity
-//!   boundary conditions, reads acceleration and curvature off the
-//!   polynomial derivatives (flat-output targets), then converts those
+//! - **Steering in action space.** [`steer_actions`] fits the shared
+//!   quintic flat-output connector between two states' position, velocity,
+//!   and acceleration boundary conditions, reads acceleration and curvature
+//!   off the polynomial derivatives, then converts those
 //!   targets into jerk/curvature-rate actions before rollout
 //!   ([`rollout_constrained`]).
 //! - **Zero-action-point parenting.** A sample attaches to the previous
@@ -37,8 +37,9 @@
 //!   by the shared Halton sequence (see the module doc in
 //!   [`super`]), and treetop's axis-aligned `(x, y, yaw, v)` search-space
 //!   box bent into the road frame: cold samples draw `(station, lateral,
-//!   heading error, speed)` and map through the [`Path`], so the box
-//!   follows a curved road instead of assuming the corridor is straight.
+//!   heading error, speed)` and map through the shared road-frame grid+QMC
+//!   sampler, so the box follows a curved road instead of assuming the
+//!   corridor is straight.
 //!
 //! **Seams**: `route`, `warm_start` (revalidate + shift the previous
 //! solution), `optimize` (the whole grow), `extract`; `cost` (the shared
@@ -52,8 +53,10 @@ use super::{
     GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, rollout_constrained, state_distance,
     take_warm, zero_action_point,
 };
-use crate::planning::sampling::{Halton, QuasiMonteCarlo};
-use crate::planning::search_tree::{parent_chain, record_diagnostics};
+use crate::planning::planner_math;
+use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
+use crate::planning::search_tree::{parent_chain, record_diagnostics, repeat_last_controls};
+use crate::planning::steering::QuinticSteer;
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
@@ -72,9 +75,11 @@ const SAMPLE_LATERAL_M: f64 = 4.5;
 /// speed range as a multiple of the target speed. treetop samples yaw over
 /// ±π/2 and speed over the full signed limit range; lane driving has no
 /// use for near-perpendicular or reversing states, which would only steer
-/// unreachable cubics.
+/// unreachable segments.
 const SAMPLE_YAW_SPREAD: f64 = 0.5;
 const SAMPLE_SPEED_FACTOR: f64 = 1.2;
+const COLD_GRID_STATIONS: usize = SEGMENTS - 1;
+const COLD_GRID_LATERALS: usize = 5;
 
 // treetop's category probabilities (`sampling.h`): goal 0.1, warm 0.2,
 // cold the rest. Drawn against a Halton coordinate instead of an RNG, so
@@ -196,9 +201,18 @@ impl Tree {
         let per_layer = samples / (SEGMENTS - 1).max(1);
         let (s0, _) = path.project([start.x, start.y]);
         let (s_goal, _) = path.project([goal.x, goal.y]);
+        let cold_samples = sampling::road_frame_samples::<Halton>(
+            s0,
+            (s_goal - s0).max(1.0),
+            SAMPLE_LATERAL_M,
+            COLD_GRID_STATIONS,
+            COLD_GRID_LATERALS,
+            samples,
+        );
         let mut ix = 1usize;
         for layer in 1..SEGMENTS {
             for _ in 0..per_layer {
+                let sample_id = ix;
                 let selector = Halton::coordinate(ix, 4);
                 let c: [f64; 4] = std::array::from_fn(|d| Halton::coordinate(ix, d));
                 ix += 1;
@@ -217,9 +231,9 @@ impl Tree {
                     };
                     (target, Reason::Sample)
                 } else {
-                    // Cold: the road-frame box (see the module doc).
-                    let s = s0 + c[0] * (s_goal - s0).max(1.0);
-                    let d = (2.0 * c[1] - 1.0) * SAMPLE_LATERAL_M;
+                    // Cold: the shared road-frame grid+QMC box (see the
+                    // module doc).
+                    let (s, d) = cold_samples[(sample_id - 1) % cold_samples.len()];
                     let xy = path.frenet_to_xy(s, d);
                     let (_, lane_yaw) = path.pose_at(s);
                     let target = State {
@@ -236,7 +250,7 @@ impl Tree {
                 // checks its obstacles here; the shared cost's hard reject
                 // is the equivalent).
                 let t_s = layer as f64 * steer_dur;
-                let sample = frenet_sample(path, &target, Control::default(), t_s);
+                let (_, sample) = planner_math::state_sample(path, &target, t_s, None);
                 if !ctx
                     .time("cost", || {
                         constraints.point_cost(&sample, ctx.road.target_speed)
@@ -442,9 +456,10 @@ impl Grower<'_, '_> {
         let mut collides = false;
         let constraints =
             cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
-        for (i, u) in us.iter().enumerate() {
+        for i in 0..us.len() {
             let x = &xs[i + 1];
-            let sample = frenet_sample(self.path, x, *u, t0 + (i + 1) as f64 * dt);
+            let (_, sample) =
+                planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
             let shared = self.ctx.time("cost", || {
                 constraints.point_cost(&sample, self.ctx.road.target_speed)
             });
@@ -467,109 +482,31 @@ impl Grower<'_, '_> {
     }
 }
 
-/// Build the shared-cost [`Sample`](cost::Sample) of one rolled-out state
-/// at absolute time `t_s`.
-pub(crate) fn frenet_sample(path: &Path, x: &State, _u: Control, t_s: f64) -> cost::Sample {
-    let (s, d) = path.project([x.x, x.y]);
-    let (_, lane_yaw) = path.pose_at(s);
-    cost::Sample {
-        xy: [x.x, x.y],
-        lateral: d,
-        heading_err: wrap_angle(x.yaw - lane_yaw),
-        speed: x.speed,
-        curvature: x.curvature,
-        accel: x.accel,
-        t: t_s,
-    }
-}
-
 // ---- The steering function (treetop `steer.h`) --------------------------
 
-/// Coefficients of `p(t) = a3 t³ + a2 t² + a1 t + a0` from Hermite boundary
-/// conditions (position + velocity at both ends) over duration `t`.
-fn cubic_coeffs(x0: f64, v0: f64, x1: f64, v1: f64, t: f64) -> [f64; 4] {
-    let (t2, t3) = (t * t, t * t * t);
-    let dx = x1 - x0;
-    let v_sum = v0 + v1;
-    [
-        (t * v_sum - 2.0 * dx) / t3,        // a3
-        (3.0 * dx) / t2 - (v0 + v_sum) / t, // a2
-        v0,                                 // a1
-        x0,                                 // a0
-    ]
-}
-
-fn polyval1(c: &[f64; 4], t: f64) -> f64 {
-    3.0 * c[0] * t * t + 2.0 * c[1] * t + c[2]
-}
-
-fn polyval2(c: &[f64; 4], t: f64) -> f64 {
-    6.0 * c[0] * t + 2.0 * c[1]
-}
-
-/// Below this speed the accel/curvature-from-derivatives expressions are
-/// singular and the steer falls back to a curvature-free stub — treetop's
-/// `V_ABS_MIN_FOR_STEER`.
-const V_MIN_FOR_STEER: f64 = 0.01;
 const STEER_ACCEL_TARGET_MAX: f64 = 3.0;
 
-/// treetop's `steerCubic`: fit independent cubics to `x(t)`, `y(t)`
-/// matching both states' position and velocity vector (speed along
-/// heading), then read the actions off the curve — acceleration is the
-/// tangential derivative of speed, curvature the standard flat-output
-/// expression `(x'y'' − y'x'') / v³` — sampling each segment at its
-/// midpoint. A secant against the start heading infers whether the curve
-/// is driven forward or in reverse, flipping the actions accordingly.
+/// treetop's steering action generator: fit the shared quintic flat-output
+/// connector matching both states' position, velocity, and acceleration
+/// vector, then read the actions off the curve — acceleration is the
+/// tangential derivative of speed, curvature is `(x'y'' - y'x'') / v^3` —
+/// sampling each segment at its midpoint. A secant against the start
+/// heading infers whether the curve is driven forward or in reverse,
+/// flipping curvature accordingly.
 /// Returns [`STEER_TICKS`] raw actions; the caller projects them onto the
 /// actuation limits during rollout.
 fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
-    let cx = cubic_coeffs(
-        start.x,
-        start.speed * start.yaw.cos(),
-        goal.x,
-        goal.speed * goal.yaw.cos(),
-        duration,
-    );
-    let cy = cubic_coeffs(
-        start.y,
-        start.speed * start.yaw.sin(),
-        goal.y,
-        goal.speed * goal.yaw.sin(),
-        duration,
-    );
-
-    // Forward or reverse? Dot a small secant stub of the path against the
-    // start heading (treetop `inferTrajectoryDirection`).
-    let (sx, sy) = (
-        cx[0] * dt.powi(3) + cx[1] * dt.powi(2) + cx[2] * dt,
-        cy[0] * dt.powi(3) + cy[1] * dt.powi(2) + cy[2] * dt,
-    );
-    let dir = if sx * start.yaw.cos() + sy * start.yaw.sin() >= 0.0 {
-        1.0
-    } else {
-        -1.0
-    };
+    let steer = QuinticSteer::from_states(start, goal, duration);
+    let dir = steer.forward_sign(start.yaw, dt);
 
     let mut x = *start;
     (0..STEER_TICKS)
         .map(|i| {
             // midpoint of the segment: slightly more accurate than either end
             let t = (i as f64 + 0.5) * dt;
-            let (dx, dy) = (polyval1(&cx, t), polyval1(&cy, t));
-            let (ddx, ddy) = (polyval2(&cx, t), polyval2(&cy, t));
-            let v = dx.hypot(dy);
-            let (_accel, curvature) = if v > V_MIN_FOR_STEER {
-                (
-                    (dx * ddx + dy * ddy) / v,
-                    (dx * ddy - dy * ddx) / (v * v * v),
-                )
-            } else {
-                // singular at rest: accelerate along the curve, no turning
-                (ddx.hypot(ddy), 0.0)
-            };
-            let speed_hold = (0.5 * (goal.speed - x.speed))
-                .clamp(-STEER_ACCEL_TARGET_MAX, STEER_ACCEL_TARGET_MAX);
-            let u = action_toward(x, speed_hold, dir * curvature, dt);
+            let (_, accel, curvature) = steer.kinematics(t);
+            let accel = accel.clamp(-STEER_ACCEL_TARGET_MAX, STEER_ACCEL_TARGET_MAX);
+            let u = action_toward(x, accel, dir * curvature, dt);
             x = step(x, u, dt);
             u
         })
@@ -612,9 +549,7 @@ impl Planner for RrtPlanner {
             let best = &tree.path_candidates(1)[0];
             tree.actions_of(best)
         });
-        let out: Vec<Control> = (0..ctx.horizon)
-            .map(|t| controls[t.min(controls.len() - 1)])
-            .collect();
+        let out = repeat_last_controls(&controls, ctx.horizon);
         self.expected_next = step(ego, out[0], ctx.road.dt);
         self.prev = Some(controls);
         out
@@ -650,8 +585,8 @@ mod tests {
 
     #[test]
     fn steer_reaches_a_lateral_offset_target() {
-        // 0.8 m of lateral over 1 s: peak lateral accel of the cubic is
-        // 6·Δ/T² = 4.8 m/s², inside ACCEL_LAT_MAX so the projection
+        // 0.8 m of lateral over 1 s: the lateral acceleration stays inside
+        // ACCEL_LAT_MAX so the projection
         // doesn't bite (a 2 m offset would demand 12 m/s² and get clamped
         // into an undershoot — that infeasible case is exactly what the
         // constrained rollout exists to prevent)
