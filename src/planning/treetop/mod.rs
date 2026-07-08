@@ -42,10 +42,10 @@
 //! - **Obstacles are moving actors priced by the shared cost function.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
-//!   [`cost::point_cost`](crate::planning::cost) at the absolute time the
-//!   state is reached, which folds in the same constant-velocity actor
-//!   prediction, drivable-area bound, and comfort terms every other search
-//!   planner uses.
+//!   [`cost::HardConstraints`](crate::planning::cost::HardConstraints) at
+//!   the absolute time the state is reached, which folds in the same
+//!   constant-velocity actor prediction, drivable-area bound, and comfort
+//!   terms every other search planner uses.
 //! - **Determinism.** treetop samples its tree with `std::mt19937` and
 //!   jitters actions with pseudo-random noise. The port draws every sample
 //!   from the shared Halton sequence ([`crate::planning::sampling`])

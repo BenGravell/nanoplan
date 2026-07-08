@@ -16,23 +16,24 @@
 //! prediction ultimately has to improve.
 //!
 //! The cost splits into two parts with different standing. Hard rules —
-//! collision and leaving the drivable area — are infinitely bad by fiat
-//! ([`features`] returns `None`, [`point_cost`] returns `f64::INFINITY`);
-//! no data ever adjusts them. Everything else is a linear combination
-//! [`WEIGHTS`]` · `[`features`], and the weights are learnable: the
+//! collision and leaving the drivable area — live behind [`HardConstraints`]
+//! and are infinitely bad by fiat ([`HardConstraints::features`] returns
+//! `None`, [`HardConstraints::point_cost`] returns `f64::INFINITY`); no data
+//! ever adjusts them. Everything else is a linear combination [`WEIGHTS`]` ·
+//! features, and the weights are learnable: the
 //! [`crate::tuning`] module re-fits them to expert nuPlan trajectories with
 //! maximum-entropy IRL, on the assumption that the human demonstrations were
 //! drawn from a well-tuned cost of exactly this form.
 //!
 //! nanoplan provides no analytic derivatives of its cost or dynamics — a
 //! deliberate design choice this module's interface enforces structurally:
-//! [`point_cost`] takes already-known numbers (position, speed, curvature,
-//! accel) and returns a plain `f64`, and nothing may demand a gradient of
-//! it. Most planners find trajectories by sampling candidates and comparing
-//! this scalar, never differentiating anything; where one needs curvature
-//! as an input it evaluates a closed-form fact about an already-*fixed*
-//! candidate curve (RRT*'s differential-flatness steering) or estimates it
-//! numerically off sampled points ([`curvature_of`], below). The one
+//! [`HardConstraints::point_cost`] takes already-known numbers (position,
+//! speed, curvature, accel) and returns a plain `f64`, and nothing may demand
+//! a gradient of it. Most planners find trajectories by sampling candidates
+//! and comparing this scalar, never differentiating anything; where one needs
+//! curvature as an input it evaluates a closed-form fact about an
+//! already-*fixed* candidate curve (RRT*'s differential-flatness steering) or
+//! estimates it numerically off sampled points ([`curvature_of`], below). The one
 //! genuine optimizer — the treetop-derived iLQR
 //! ([`crate::planning::treetop::ilqr`]) — respects the same interface: it
 //! consumes this exact black-box scalar and differentiates it by central
@@ -72,6 +73,125 @@ pub(crate) struct Sample {
     pub t: f64,
 }
 
+/// One hard rule a candidate sample must satisfy. Each rule reports both a
+/// boolean reject and a depth so optimizers can use the same violation
+/// boundary with a finite escape slope instead of re-encoding it.
+pub(crate) trait HardConstraint {
+    fn is_violated(&self, sample: &Sample) -> bool;
+    fn violation_depth(&self, sample: &Sample) -> f64;
+}
+
+struct DrivableArea {
+    half_width: f64,
+}
+
+impl HardConstraint for DrivableArea {
+    fn is_violated(&self, sample: &Sample) -> bool {
+        sample.lateral.abs() > self.half_width
+    }
+
+    fn violation_depth(&self, sample: &Sample) -> f64 {
+        (sample.lateral.abs() - self.half_width).max(0.0)
+    }
+}
+
+struct CollisionFree<'a> {
+    actors: &'a [State],
+    lane: Option<&'a Path>,
+}
+
+impl HardConstraint for CollisionFree<'_> {
+    fn is_violated(&self, sample: &Sample) -> bool {
+        self.actors.iter().any(|a| {
+            let predicted = crate::metrics::predict(a, self.lane, sample.t);
+            (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y) < COLLISION_DIAMETER_M
+        })
+    }
+
+    fn violation_depth(&self, sample: &Sample) -> f64 {
+        self.actors
+            .iter()
+            .map(|a| {
+                let p = crate::metrics::predict(a, self.lane, sample.t);
+                let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
+                (COLLISION_DIAMETER_M - gap).max(0.0)
+            })
+            .sum()
+    }
+}
+
+/// The hard constraints shared by every planner: stay on the drivable
+/// surface and clear predicted actors. Search planners call
+/// [`HardConstraints::point_cost`] and reject infinity; optimizers call
+/// [`HardConstraints::soft_point_cost`] to keep the same boundary but turn
+/// violations into a finite escape slope.
+pub(crate) struct HardConstraints<'a> {
+    drivable: DrivableArea,
+    collision: CollisionFree<'a>,
+}
+
+impl<'a> HardConstraints<'a> {
+    pub(crate) fn new(road_half_width: f64, actors: &'a [State], lane: Option<&'a Path>) -> Self {
+        HardConstraints {
+            drivable: DrivableArea {
+                half_width: road_half_width,
+            },
+            collision: CollisionFree { actors, lane },
+        }
+    }
+
+    pub(crate) fn is_violated(&self, sample: &Sample) -> bool {
+        self.drivable.is_violated(sample) || self.collision.is_violated(sample)
+    }
+
+    pub(crate) fn violation_depth(&self, sample: &Sample) -> f64 {
+        self.drivable.violation_depth(sample) + self.collision.violation_depth(sample)
+    }
+
+    /// Soft feature vector of one sample, or `None` for a hard violation.
+    /// Each feature is already squared/hinged so the cost is linear in
+    /// [`WEIGHTS`] — the form the IRL tuner learns.
+    pub(crate) fn features(&self, sample: &Sample, target_speed: f64) -> Option<[f64; N_FEATURES]> {
+        if self.is_violated(sample) {
+            return None;
+        }
+
+        Some(soft_features(
+            sample,
+            target_speed,
+            self.drivable.half_width,
+            self.collision.actors,
+            self.collision.lane,
+        ))
+    }
+
+    /// [`WEIGHTS`] dotted with [`HardConstraints::features`], or
+    /// `f64::INFINITY` for a hard violation a planner should reject.
+    pub(crate) fn point_cost(&self, sample: &Sample, target_speed: f64) -> f64 {
+        match self.features(sample, target_speed) {
+            None => f64::INFINITY,
+            Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
+        }
+    }
+
+    /// Finite, depth-scaled stand-in for a hard violation.
+    pub(crate) fn violation_penalty(&self, sample: &Sample) -> f64 {
+        HARD_VIOLATION_PENALTY * (1.0 + self.violation_depth(sample))
+    }
+
+    /// [`HardConstraints::point_cost`] with hard violations made finite by
+    /// [`HardConstraints::violation_penalty`], for optimizers whose reward
+    /// statistics or finite differences cannot absorb an infinity.
+    pub(crate) fn soft_point_cost(&self, sample: &Sample, target_speed: f64) -> f64 {
+        let c = self.point_cost(sample, target_speed);
+        if c.is_finite() {
+            c
+        } else {
+            self.violation_penalty(sample)
+        }
+    }
+}
+
 /// Unsigned curvature through three points, via the Menger curvature
 /// formula (twice the signed area of the triangle they form, over the
 /// product of its three side lengths) — a purely numerical estimate off
@@ -93,7 +213,7 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
 }
 
 /// Number of soft cost features; the length of [`WEIGHTS`], [`FEATURE_NAMES`],
-/// and the array [`features`] returns.
+/// and the array [`HardConstraints::features`] returns.
 pub(crate) const N_FEATURES: usize = 7;
 
 /// Display names of the soft features, index-aligned with [`WEIGHTS`].
@@ -111,7 +231,7 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
 /// originally; `cargo run --release --bin tune` re-fits them to expert nuPlan
 /// trajectories with maximum-entropy IRL (see [`crate::tuning`]) and prints a
 /// replacement for this line. The hard collision/off-road rejection is *not*
-/// in here — it is a fixed rule of [`features`], never a learned weight.
+/// in here — it is a fixed rule of [`HardConstraints`], never a learned weight.
 ///
 /// `lane_keeping` is weighted well below the collision/road-edge terms so it
 /// pulls the car to its lane center on an open road without ever fighting an
@@ -119,37 +239,17 @@ pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
 /// far larger `actor_proximity`/off-road terms).
 pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0, 3.0];
 
-/// Soft feature vector of one sample, or `None` for a hard violation —
-/// collision with an actor's predicted position, or off the drivable area —
-/// which is infinitely bad by fiat, not by any weight. Actors are predicted
-/// with [`crate::metrics::predict`] against `lane`: one travelling along the
-/// route follows the lane's curve back toward its center, while oncoming or
-/// crossing traffic (or a `None` lane) falls back to the constant-velocity
-/// projection `metrics::ttc` uses. Each feature is already squared/hinged so
-/// the cost is *linear* in [`WEIGHTS`] — the form the IRL tuner learns.
-///
-/// `road_half_width` is the actual half-width of the road this sample sits
-/// on ([`crate::scenarios::Road::half_width`]) — the same lateral bound the
-/// `drivable_area` metric scores against — so the off-road reject and the
-/// road-edge push-back below fire at the true road edge, not a fixed
-/// default. On a narrow street that is well inside the old 5.5 m constant.
-pub(crate) fn features(
+fn soft_features(
     sample: &Sample,
     target_speed: f64,
     road_half_width: f64,
     actors: &[State],
     lane: Option<&Path>,
-) -> Option<[f64; N_FEATURES]> {
-    if sample.lateral.abs() > road_half_width {
-        return None;
-    }
+) -> [f64; N_FEATURES] {
     let mut proximity = 0.0;
     for a in actors {
         let predicted = crate::metrics::predict(a, lane, sample.t);
         let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
-        if gap < COLLISION_DIAMETER_M {
-            return None;
-        }
         // smooth inverse-square repulsion inside the safe zone, so a search
         // that samples near an actor without touching it still prefers
         // more clearance. Weighted heavily for the same reason as the
@@ -203,7 +303,7 @@ pub(crate) fn features(
     let lane_over = (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0)
         / lane_keeping::LANE_HALF_WIDTH_M;
 
-    Some([
+    [
         proximity,
         edge * edge,
         overspeed * overspeed,
@@ -211,75 +311,7 @@ pub(crate) fn features(
         lon_over * lon_over,
         lat_over * lat_over,
         lane_over * lane_over,
-    ])
-}
-
-/// Cost of one sample against the road and every actor's predicted position
-/// at `sample.t`: [`WEIGHTS`] dotted with [`features`]. Returns
-/// `f64::INFINITY` for a hard violation — collision, or off the drivable
-/// area — that a planner should reject outright rather than merely disfavor;
-/// see [`HARD_VIOLATION_PENALTY`] for callers that need a finite number
-/// instead.
-pub(crate) fn point_cost(
-    sample: &Sample,
-    target_speed: f64,
-    road_half_width: f64,
-    actors: &[State],
-    lane: Option<&Path>,
-) -> f64 {
-    match features(sample, target_speed, road_half_width, actors, lane) {
-        None => f64::INFINITY,
-        Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
-    }
-}
-
-/// How far *inside* a hard violation `sample` sits, in meters: how far past
-/// `road_half_width` it is off-road, plus how far inside
-/// [`COLLISION_DIAMETER_M`] it is of each predicted actor. Zero exactly at
-/// the violation boundary. This is the depth the escape slope in
-/// [`soft_point_cost`] scales, so that penalty is continuous with the flat
-/// one at the edge.
-pub(crate) fn violation_depth(
-    sample: &Sample,
-    road_half_width: f64,
-    actors: &[State],
-    lane: Option<&Path>,
-) -> f64 {
-    let mut depth = (sample.lateral.abs() - road_half_width).max(0.0);
-    for a in actors {
-        let p = crate::metrics::predict(a, lane, sample.t);
-        let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
-        depth += (COLLISION_DIAMETER_M - gap).max(0.0);
-    }
-    depth
-}
-
-/// [`point_cost`] with hard violations made finite by a *depth-scaled escape
-/// slope*: `HARD_VIOLATION_PENALTY · (1 + `[`violation_depth`]`)` instead of
-/// `f64::INFINITY`, for the continuous, sampling-based optimizers (the judo
-/// samplers, PI²-DDP, iLQR) whose reward statistics can't absorb an infinity.
-///
-/// The escape slope matters as much as the finiteness: a *flat*
-/// `HARD_VIOLATION_PENALTY` plateau gives those optimizers no gradient once
-/// their rollouts are all in violation — on a tight bend where every sampled
-/// candidate briefly clips the road edge, or once the closed loop has already
-/// drifted off-road, a reward-weighted average (CEM, MPPI) then has nothing
-/// pulling it back onto the road and can settle there. Making the penalty
-/// grow with depth restores that gradient, so "less off-road" always scores
-/// better than "more off-road" and the search climbs back in.
-pub(crate) fn soft_point_cost(
-    sample: &Sample,
-    target_speed: f64,
-    road_half_width: f64,
-    actors: &[State],
-    lane: Option<&Path>,
-) -> f64 {
-    let c = point_cost(sample, target_speed, road_half_width, actors, lane);
-    if c.is_finite() {
-        c
-    } else {
-        HARD_VIOLATION_PENALTY * (1.0 + violation_depth(sample, road_half_width, actors, lane))
-    }
+    ]
 }
 
 #[cfg(test)]
@@ -289,6 +321,36 @@ mod tests {
     /// Standard drivable half-width for the cost tests — the default road
     /// width ([`crate::metrics::drivable_area::ROAD_HALF_WIDTH_M`]).
     const HW: f64 = 5.5;
+
+    fn features(
+        sample: &Sample,
+        target_speed: f64,
+        road_half_width: f64,
+        actors: &[State],
+        lane: Option<&Path>,
+    ) -> Option<[f64; N_FEATURES]> {
+        HardConstraints::new(road_half_width, actors, lane).features(sample, target_speed)
+    }
+
+    fn point_cost(
+        sample: &Sample,
+        target_speed: f64,
+        road_half_width: f64,
+        actors: &[State],
+        lane: Option<&Path>,
+    ) -> f64 {
+        HardConstraints::new(road_half_width, actors, lane).point_cost(sample, target_speed)
+    }
+
+    fn soft_point_cost(
+        sample: &Sample,
+        target_speed: f64,
+        road_half_width: f64,
+        actors: &[State],
+        lane: Option<&Path>,
+    ) -> f64 {
+        HardConstraints::new(road_half_width, actors, lane).soft_point_cost(sample, target_speed)
+    }
 
     #[test]
     fn rejects_collision() {

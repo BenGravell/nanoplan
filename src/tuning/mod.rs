@@ -16,7 +16,7 @@
 //!
 //! **The hard rules are not learned.** Collision and leaving the drivable
 //! area yield infinite cost / zero probability by fiat, exactly as
-//! [`cost::features`](crate::planning::cost::features) hardcodes them: a
+//! [`cost::HardConstraints`](crate::planning::cost::HardConstraints) defines them: a
 //! candidate that hard-violates is dropped from the distribution's support
 //! entirely (DriveIRL's safety filter plays the same role), and a scenario
 //! whose *expert* hard-violates under the model is skipped — a demonstration
@@ -32,7 +32,8 @@
 //! expert included, is featurized by the same code path: project onto the
 //! centerline, estimate curvature with the same Menger formula the lattice
 //! planner uses, difference speeds for accel, and sum
-//! [`cost::features`](crate::planning::cost::features) over the ticks.
+//! [`cost::HardConstraints::features`](crate::planning::cost::HardConstraints::features)
+//! over the ticks.
 //!
 //! Optimization is plain projected gradient descent (weights clamped ≥ 0 —
 //! these are penalties) with backtracking line search, on the mean NLL plus
@@ -312,7 +313,7 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
     }
     let path = Path::new(&sc.centerline);
     // actor states at t = 0, the same current-tick view a planner gets;
-    // cost::features projects them forward itself, by the sample's t
+    // HardConstraints projects them forward itself, by the sample's t
     let actors: Vec<State> = sc
         .actors
         .iter()
@@ -355,8 +356,8 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
     (cands.len() >= 2).then_some(cands)
 }
 
-/// Summed [`cost::features`] over a tick-sampled trajectory, or `None` if
-/// any tick hard-violates. Curvature is the Menger estimate off consecutive
+/// Summed soft features over a tick-sampled trajectory, or `None` if any
+/// tick hard-violates. Curvature is the Menger estimate off consecutive
 /// points (the same one the lattice planner uses) and accel the speed
 /// difference quotient, so logged experts and generated maneuvers are
 /// featurized identically.
@@ -368,6 +369,7 @@ fn trajectory_features(
     actors: &[State],
 ) -> Option<[f64; N_FEATURES]> {
     let mut total = [0.0; N_FEATURES];
+    let constraints = cost::HardConstraints::new(road_half_width, actors, Some(path));
     for (i, st) in states.iter().enumerate() {
         let p = [st.x, st.y];
         let (s, lateral) = path.project(p);
@@ -391,7 +393,7 @@ fn trajectory_features(
             accel,
             t: i as f64 * DT,
         };
-        let f = cost::features(&sample, target_speed, road_half_width, actors, Some(path))?;
+        let f = constraints.features(&sample, target_speed)?;
         for (tot, x) in total.iter_mut().zip(f) {
             *tot += x;
         }

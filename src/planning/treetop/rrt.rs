@@ -27,8 +27,8 @@
 //! - **A zero-action fallback chain** guarantees every layer is non-empty
 //!   (so a full-length path always exists), *ignoring collisions* —
 //!   treetop's `growZap`. Such nodes carry a `collides` flag and price
-//!   their violating stages at [`cost::HARD_VIOLATION_PENALTY`], so they
-//!   lose to any genuine alternative and surface only as a
+//!   their violating stages at the shared depth-scaled hard-violation
+//!   penalty, so they lose to any genuine alternative and surface only as a
 //!   better-than-nothing brace when the tree finds nothing else.
 //! - **Layered sampling, three ways** (treetop `sampling.h`): *goal*
 //!   samples steer gently toward the goal over the remaining horizon,
@@ -110,9 +110,9 @@ pub(crate) struct Node {
 
 /// Edge evaluation: the shared cost function per rolled-out stage plus
 /// treetop's `softLoss` integrand (the magnitude of total acceleration —
-/// effort), averaged over the segment. A hard violation is priced at
-/// [`cost::HARD_VIOLATION_PENALTY`] and flagged rather than propagated as
-/// an infinity, because the fallback chains must be able to carry a cost.
+/// effort), averaged over the segment. A hard violation is priced at the
+/// shared depth-scaled penalty and flagged rather than propagated as an
+/// infinity, because the fallback chains must be able to carry a cost.
 struct EdgeEval {
     cost: f64,
     collides: bool,
@@ -144,6 +144,7 @@ impl Tree {
             layers: std::array::from_fn(|_| Vec::new()),
         };
         let g = Grower { path, ctx };
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
 
         // Root node.
         tree.nodes.push(Node {
@@ -237,13 +238,7 @@ impl Tree {
                 let sample = frenet_sample(path, &target, Control::default(), t_s);
                 if !ctx
                     .time("cost", || {
-                        cost::point_cost(
-                            &sample,
-                            ctx.road.target_speed,
-                            ctx.road.half_width,
-                            ctx.actors,
-                            Some(path),
-                        )
+                        constraints.point_cost(&sample, ctx.road.target_speed)
                     })
                     .is_finite()
                 {
@@ -442,17 +437,13 @@ impl Grower<'_, '_> {
         let t0 = (layer - 1) as f64 * STEER_TICKS as f64 * dt;
         let mut total = 0.0;
         let mut collides = false;
+        let constraints =
+            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
         for (i, u) in us.iter().enumerate() {
             let x = &xs[i + 1];
             let sample = frenet_sample(self.path, x, *u, t0 + (i + 1) as f64 * dt);
             let shared = self.ctx.time("cost", || {
-                cost::point_cost(
-                    &sample,
-                    self.ctx.road.target_speed,
-                    self.ctx.road.half_width,
-                    self.ctx.actors,
-                    Some(self.path),
-                )
+                constraints.point_cost(&sample, self.ctx.road.target_speed)
             });
             // treetop softLoss: magnitude of (lon, lat) acceleration
             let effort = x.accel.hypot(x.speed * x.speed * x.curvature);
@@ -463,7 +454,7 @@ impl Grower<'_, '_> {
                 total += shared + effort + pull + speed_cost;
             } else {
                 collides = true;
-                total += cost::HARD_VIOLATION_PENALTY + effort + pull + speed_cost;
+                total += constraints.violation_penalty(&sample) + effort + pull + speed_cost;
             }
         }
         EdgeEval {

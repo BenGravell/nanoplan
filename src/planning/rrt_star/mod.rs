@@ -312,6 +312,7 @@ fn steer_cost(
 ) -> Option<f64> {
     let mut total = 0.0;
     let mut prev: Option<[f64; 2]> = None;
+    let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
@@ -350,13 +351,7 @@ fn steer_cost(
             ..Default::default()
         };
         let point = ctx.time("cost", || {
-            cost::point_cost(
-                &sample,
-                ctx.road.target_speed,
-                ctx.road.half_width,
-                ctx.actors,
-                Some(path),
-            )
+            constraints.point_cost(&sample, ctx.road.target_speed)
         });
         if point.is_infinite() {
             return None;

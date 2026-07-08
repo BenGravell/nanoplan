@@ -129,6 +129,7 @@ impl Planner for LatticePlanner {
             let (s0, d0) = path.project([ego.x, ego.y]);
             (path, s0, d0)
         });
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
         // ponytail: constant-speed profile; couple IDM into the lattice when needed
         let v = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full
@@ -175,13 +176,7 @@ impl Planner for LatticePlanner {
                     ..Default::default()
                 };
                 let point = ctx.time("cost", || {
-                    cost::point_cost(
-                        &sample,
-                        ctx.road.target_speed,
-                        ctx.road.half_width,
-                        ctx.actors,
-                        Some(&path),
-                    )
+                    constraints.point_cost(&sample, ctx.road.target_speed)
                 });
                 if point.is_infinite() {
                     return f64::INFINITY;

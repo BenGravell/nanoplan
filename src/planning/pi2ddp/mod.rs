@@ -166,6 +166,7 @@ impl Pi2DdpPlanner {
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
@@ -180,17 +181,17 @@ impl Planner for Pi2DdpPlanner {
 
         // Shared cost of being at `x` at tick `j` with its current
         // acceleration/curvature state — the road/actor/comfort terms every search
-        // planner now agrees on (`cost::point_cost`), plus a planner-specific
+        // planner now agrees on (`cost::HardConstraints`), plus a planner-specific
         // centerline-pull term (no metric measures "distance from
         // centerline" directly — it's a structural bias toward the lane the
         // lattice and RRT* also keep as their own terms, not part of the
         // shared cost). A hard
         // violation (collision, or off the drivable area) becomes a large but
         // finite `cost::HARD_VIOLATION_PENALTY · (1 + depth)` via
-        // `cost::soft_point_cost` rather than `f64::INFINITY` — the
+        // `HardConstraints::soft_point_cost` rather than `f64::INFINITY` — the
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
-        // rollout average a gradient back onto the road (see that function).
+        // rollout average a gradient back onto the road.
         // The terminal call (no control has been applied yet) passes zero for
         // both, so it prices position/speed but not comfort.
         let state_cost = |x: &State, j: usize| {
@@ -207,13 +208,7 @@ impl Planner for Pi2DdpPlanner {
             };
             0.5 * d * d
                 + ctx.time("cost", || {
-                    cost::soft_point_cost(
-                        &sample,
-                        ctx.road.target_speed,
-                        ctx.road.half_width,
-                        ctx.actors,
-                        Some(&path),
-                    )
+                    constraints.soft_point_cost(&sample, ctx.road.target_speed)
                 })
         };
         let effort = |u: &V2| 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1]);

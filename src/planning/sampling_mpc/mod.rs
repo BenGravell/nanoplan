@@ -38,10 +38,10 @@
 //!   [`crate::simulation::step`] — the exact model the plant steps the ego
 //!   with — so each candidate is priced on the same jerk/rate action bounds
 //!   and acceleration/curvature state bounds the plant enforces.
-//! - **The shared cost function.** Each rolled-out state is priced by
-//!   [`crate::planning::cost::point_cost`], the same scalar the Frenet
-//!   lattice, PI²-DDP, and RRT* agree on, with a hard violation made finite
-//!   ([`cost::HARD_VIOLATION_PENALTY`]) since MPPI's and CEM's reward
+//! - **The shared cost function.** Each rolled-out state is priced through
+//!   [`crate::planning::cost::HardConstraints`], the same cost interface the
+//!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
+//!   finite by the shared constraint escape slope since MPPI's and CEM's reward
 //!   aggregation can't absorb an infinity — the same reason PI²-DDP makes
 //!   that swap. Three planner-specific terms sit on top, each mirroring one
 //!   PI²-DDP keeps: an undiscounted speed-tracking term (`SPEED_WEIGHT`), a
@@ -337,6 +337,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             accel: x.accel,
             t: t as f64 * ctx.road.dt,
         };
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
         // The shared cost with hard violations made finite by a depth-scaled
         // escape slope (`soft_point_cost`): a flat penalty plateau leaves
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
@@ -344,13 +345,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
         // settle off-road; the depth slope pulls them back in.
         0.5 * d * d
             + ctx.time("cost", || {
-                cost::soft_point_cost(
-                    &sample,
-                    ctx.road.target_speed,
-                    ctx.road.half_width,
-                    ctx.actors,
-                    Some(path),
-                )
+                constraints.soft_point_cost(&sample, ctx.road.target_speed)
             })
     }
 

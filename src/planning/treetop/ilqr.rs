@@ -19,7 +19,7 @@
 //! treetop's `Loss` carries ~200 lines of hand-derived gradients and
 //! Hessians (`loss.h`), and its `Dynamics::jacobian` is closed-form.
 //! nanoplan deliberately provides neither: its shared cost
-//! ([`cost::point_cost`]) and dynamics ([`step`]) are black-box scalars
+//! ([`cost::HardConstraints`]) and dynamics ([`step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/planning/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the cost gradient/Hessian
@@ -35,8 +35,8 @@
 //!
 //! ## The optimal control problem ([`Ocp`])
 //!
-//! The running cost is the shared [`cost::point_cost`] — the same scalar
-//! every search planner prices candidates with — plus the usual
+//! The running cost goes through [`cost::HardConstraints`] — the same cost
+//! interface every search planner prices candidates with — plus the usual
 //! planner-specific structural terms (centerline pull, speed tracking, and
 //! a small control-effort quadratic that also keeps `l_uu` strictly
 //! positive), scaled by `1/TICKS` as treetop scales by
@@ -44,9 +44,9 @@
 //! under an optimizer that *differentiates* it rather than compares it:
 //!
 //! - **Hard violations get an escape slope.** `point_cost` returns
-//!   `f64::INFINITY` on collision/off-road; PI²-DDP substitutes the flat
-//!   [`cost::HARD_VIOLATION_PENALTY`] because its statistics can't absorb
-//!   an infinity. A *flat* plateau is equally useless to a
+//!   `f64::INFINITY` on collision/off-road; optimizers need a finite
+//!   replacement because their statistics and finite differences can't
+//!   absorb an infinity. A *flat* plateau is equally useless to a
 //!   finite-difference gradient (zero slope everywhere inside the
 //!   violation), so this planner prices a violation as
 //!   `HARD_VIOLATION_PENALTY · (1 + depth)` where `depth` is how far
@@ -202,16 +202,11 @@ impl Ocp<'_, '_> {
             t: t as f64 * self.ctx.road.dt,
         };
         let target = self.ctx.road.target_speed;
+        let constraints =
+            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
         // shared cost with a hard violation's escape slope (see the module
-        // doc); the depth-scaled penalty lives in `cost::soft_point_cost`,
-        // shared with the judo samplers and PI²-DDP.
-        let shared = cost::soft_point_cost(
-            &sample,
-            target,
-            self.ctx.road.half_width,
-            self.ctx.actors,
-            Some(self.path),
-        );
+        // doc), shared with the judo samplers and PI²-DDP.
+        let shared = constraints.soft_point_cost(&sample, target);
         let dv = x.speed - target;
         let structural = CENTER_W * d * d
             + SPEED_W * dv * dv
