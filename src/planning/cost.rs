@@ -440,6 +440,7 @@ mod tests {
             y: 0.0,
             yaw: 0.0,
             speed: 10.0,
+            ..Default::default()
         };
         // a sample sitting 20 m of arc length ahead of the actor — up on the
         // *northbound* leg, at (50, 10). Two seconds out the actor reaches it.

@@ -11,11 +11,11 @@ freely; tools/export_commonroad_scenarios.py converts them (or any real
 CommonRoad scenario) to the nanoplan JSON the viewer and batch runner load.
 
 Every obstacle carries a fully scripted 20s/10Hz trajectory, computed by
-simulating a control profile (accel, curvature) through the exact kinematic
-step nanoplan's own physics uses (src/simulation/mod.rs::step) — so a
+simulating an acceleration/curvature profile through the same kinematic
+model nanoplan uses (src/simulation/mod.rs::step) — so a
 "braking to a stop" or "cutting into the lane" obstacle behaves exactly as
-advertised, with speed clamped at zero rather than drifting negative the way
-a raw constant control would.
+advertised, with speed clamped at zero rather than drifting negative under a
+constant acceleration state.
 
 Environmental conditions (rain, night, fog) are expressed the CommonRoad
 way — a location/environment element — plus a derated goal-velocity
@@ -109,9 +109,17 @@ def sine_centerline(rng, length=450.0, amplitude=(1.0, 8.0), wavelength=(70.0, 1
 # --- actor motion --------------------------------------------------------
 
 
-def _waypoint(t, state):
+def _waypoint(t, state, accel=0.0, curvature=0.0):
     x, y, yaw, speed = state
-    return {"t": round(t, 2), "x": round(x, 3), "y": round(y, 3), "yaw": round(yaw, 4), "speed": round(speed, 3)}
+    return {
+        "t": round(t, 2),
+        "x": round(x, 3),
+        "y": round(y, 3),
+        "yaw": round(yaw, 4),
+        "speed": round(speed, 3),
+        "accel": round(accel, 3),
+        "curvature": round(curvature, 5),
+    }
 
 
 def scripted_actor(x0, y0, yaw0, speed0, control_fn):
@@ -130,12 +138,12 @@ def scripted_actor(x0, y0, yaw0, speed0, control_fn):
             yaw + speed * curvature * DT,
             max(0.0, speed + accel * DT),
         ]
-        traj.append(_waypoint(i * DT, state))
+        traj.append(_waypoint(i * DT, state, accel, curvature))
     return {"init": {k: traj[0][k] for k in ("x", "y", "yaw", "speed")}, "trajectory": traj}
 
 
 def simple_actor(x, y, yaw, speed, accel=0.0, curvature=0.0):
-    """A constant-control actor (straight line, or a steady turn/closing
+    """A constant-actuator actor (straight line, or a steady turn/closing
     speed) — cheaper than a scripted trajectory when no clamping or
     maneuver is needed.
 
@@ -150,7 +158,8 @@ def simple_actor(x, y, yaw, speed, accel=0.0, curvature=0.0):
     same mix-up) and worth not repeating."""
     actor = {"init": {"x": round(x, 2), "y": round(y, 2), "yaw": round(yaw, 4), "speed": round(speed, 2)}}
     if accel != 0.0 or curvature != 0.0:
-        actor["control"] = {"accel": round(accel, 3), "curvature": round(curvature, 5)}
+        actor["init"]["accel"] = round(accel, 3)
+        actor["init"]["curvature"] = round(curvature, 5)
     return actor
 
 
@@ -766,13 +775,12 @@ def add_lanelets(root, scenario):
 
 def rolled_out(actor):
     """Every obstacle gets a full trajectory: scripted actors already have
-    one; constant-control actors are integrated with the same kinematic
-    step (an obstacle in CommonRoad is a trajectory, not a control law)."""
+    one; constant-actuator actors are integrated with the same kinematic
+    model (an obstacle in CommonRoad is a trajectory, not a control law)."""
     if "trajectory" in actor:
         return actor["trajectory"]
     init = actor["init"]
-    control = actor.get("control", {})
-    fn = lambda t, s: (control.get("accel", 0.0), control.get("curvature", 0.0))  # noqa: E731
+    fn = lambda t, s: (init.get("accel", 0.0), init.get("curvature", 0.0))  # noqa: E731
     return scripted_actor(init["x"], init["y"], init.get("yaw", 0.0), init["speed"], fn)["trajectory"]
 
 

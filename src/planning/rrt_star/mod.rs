@@ -32,7 +32,7 @@ use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
 
 /// A tree node's position tagged with its index in `nodes`, stored in the
@@ -514,6 +514,7 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
     let mut v = ego.speed;
     let mut yaw = ego.yaw;
     let mut prev = [ego.x, ego.y];
+    let mut x = ego;
     pts.iter()
         .map(|&p| {
             let ds = (p[0] - prev[0]).hypot(p[1] - prev[1]);
@@ -523,14 +524,14 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
             } else {
                 yaw
             };
-            let u = Control {
-                accel: (new_v - v) / dt,
-                curvature: if ds > 1e-6 {
-                    wrap_angle(new_yaw - yaw) / ds
-                } else {
-                    0.0
-                },
+            let accel = (new_v - v) / dt;
+            let curvature = if ds > 1e-6 {
+                wrap_angle(new_yaw - yaw) / ds
+            } else {
+                0.0
             };
+            let u = action_toward(x, accel, curvature, dt);
+            x = step(x, u, dt);
             (v, yaw, prev) = (new_v, new_yaw, p);
             u
         })
@@ -791,13 +792,14 @@ impl Planner for RrtStarPlanner {
             self.prev_path.clear();
             self.committed_bias = 0.0; // no plan to be committed to
             let accel = (-ego.speed / ctx.road.dt).max(-4.0);
-            return vec![
-                Control {
-                    accel,
-                    curvature: 0.0,
-                };
-                ctx.horizon
-            ];
+            let mut x = ego;
+            return (0..ctx.horizon)
+                .map(|_| {
+                    let u = action_toward(x, accel, 0.0, ctx.road.dt);
+                    x = step(x, u, ctx.road.dt);
+                    u
+                })
+                .collect();
         };
 
         // Smooth `committed_bias` toward the chosen path's side. As the ego

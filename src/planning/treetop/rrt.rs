@@ -15,11 +15,9 @@
 //! - **Steering in action space.** [`steer_actions`] fits independent
 //!   cubics `x(t)`, `y(t)` between two states' position + velocity
 //!   boundary conditions, reads acceleration and curvature off the
-//!   polynomial derivatives (the flat-output→action map), and *projects*
-//!   the result onto the actuation limits during rollout
-//!   ([`rollout_constrained`]) — treetop's key trick: projection instead of
-//!   rejection keeps nearly every sample usable, at the price of bang-bang
-//!   edges the optimizer later smooths.
+//!   polynomial derivatives (flat-output targets), then converts those
+//!   targets into jerk/curvature-rate actions before rollout
+//!   ([`rollout_constrained`]).
 //! - **Zero-action-point parenting.** A sample attaches to the previous
 //!   layer's node whose coasting endpoint ([`zero_action_point`]) is
 //!   nearest in `(x, y, yaw, v)` — "who reaches me with the least effort",
@@ -57,7 +55,7 @@ use super::{
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
 
 /// Lateral half-width cold samples span. Inside the shared cost's hard
@@ -213,6 +211,7 @@ impl Tree {
                         y: w.y + (c[1] - 0.5) * 2.0 * WARM_D_POS,
                         yaw: w.yaw + (c[2] - 0.5) * 2.0 * WARM_D_YAW,
                         speed: (w.speed + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0),
+                        ..Default::default()
                     };
                     (target, Reason::Sample)
                 } else {
@@ -226,6 +225,7 @@ impl Tree {
                         y: xy[1],
                         yaw: lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
                         speed: c[3] * SAMPLE_SPEED_FACTOR * ctx.road.target_speed,
+                        ..Default::default()
                     };
                     (target, Reason::Sample)
                 };
@@ -455,13 +455,15 @@ impl Grower<'_, '_> {
                 )
             });
             // treetop softLoss: magnitude of (lon, lat) acceleration
-            let effort = u.accel.hypot(x.speed * x.speed * u.curvature);
+            let effort = x.accel.hypot(x.speed * x.speed * x.curvature);
             let pull = CENTER_W * sample.lateral * sample.lateral;
+            let speed_err = x.speed - self.ctx.road.target_speed;
+            let speed_cost = 0.5 * speed_err * speed_err;
             if shared.is_finite() {
-                total += shared + effort + pull;
+                total += shared + effort + pull + speed_cost;
             } else {
                 collides = true;
-                total += cost::HARD_VIOLATION_PENALTY + effort + pull;
+                total += cost::HARD_VIOLATION_PENALTY + effort + pull + speed_cost;
             }
         }
         EdgeEval {
@@ -473,7 +475,7 @@ impl Grower<'_, '_> {
 
 /// Build the shared-cost [`Sample`](cost::Sample) of one rolled-out state
 /// at absolute time `t_s`.
-pub(crate) fn frenet_sample(path: &Path, x: &State, u: Control, t_s: f64) -> cost::Sample {
+pub(crate) fn frenet_sample(path: &Path, x: &State, _u: Control, t_s: f64) -> cost::Sample {
     let (s, d) = path.project([x.x, x.y]);
     let (_, lane_yaw) = path.pose_at(s);
     cost::Sample {
@@ -481,8 +483,8 @@ pub(crate) fn frenet_sample(path: &Path, x: &State, u: Control, t_s: f64) -> cos
         lateral: d,
         heading_err: wrap_angle(x.yaw - lane_yaw),
         speed: x.speed,
-        curvature: u.curvature,
-        accel: u.accel,
+        curvature: x.curvature,
+        accel: x.accel,
         t: t_s,
     }
 }
@@ -515,6 +517,7 @@ fn polyval2(c: &[f64; 4], t: f64) -> f64 {
 /// singular and the steer falls back to a curvature-free stub — treetop's
 /// `V_ABS_MIN_FOR_STEER`.
 const V_MIN_FOR_STEER: f64 = 0.01;
+const STEER_ACCEL_TARGET_MAX: f64 = 3.0;
 
 /// treetop's `steerCubic`: fit independent cubics to `x(t)`, `y(t)`
 /// matching both states' position and velocity vector (speed along
@@ -553,6 +556,7 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
         -1.0
     };
 
+    let mut x = *start;
     (0..STEER_TICKS)
         .map(|i| {
             // midpoint of the segment: slightly more accurate than either end
@@ -560,7 +564,7 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
             let (dx, dy) = (polyval1(&cx, t), polyval1(&cy, t));
             let (ddx, ddy) = (polyval2(&cx, t), polyval2(&cy, t));
             let v = dx.hypot(dy);
-            let (accel, curvature) = if v > V_MIN_FOR_STEER {
+            let (_accel, curvature) = if v > V_MIN_FOR_STEER {
                 (
                     (dx * ddx + dy * ddy) / v,
                     (dx * ddy - dy * ddx) / (v * v * v),
@@ -569,10 +573,11 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
                 // singular at rest: accelerate along the curve, no turning
                 (ddx.hypot(ddy), 0.0)
             };
-            Control {
-                accel: dir * accel,
-                curvature: dir * curvature,
-            }
+            let speed_hold = (0.5 * (goal.speed - x.speed))
+                .clamp(-STEER_ACCEL_TARGET_MAX, STEER_ACCEL_TARGET_MAX);
+            let u = action_toward(x, speed_hold, dir * curvature, dt);
+            x = step(x, u, dt);
+            u
         })
         .collect()
 }
@@ -667,6 +672,7 @@ mod tests {
             y: 0.8,
             yaw: 0.0,
             speed: 10.0,
+            ..Default::default()
         };
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);

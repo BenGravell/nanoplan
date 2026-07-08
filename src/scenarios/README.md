@@ -90,7 +90,7 @@ which `tools/export_commonroad_scenarios.py` converted from
 ```rust
 pub struct Actor {
     pub init: State,
-    pub control: Control,             // defaults to Control::default() (drives straight)
+    pub control: Control,             // defaults to Control::default() (holds actuators)
     pub trajectory: Vec<Waypoint>,     // defaults to []; overrides control when non-empty
 }
 ```
@@ -98,7 +98,7 @@ pub struct Actor {
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `init` | `State` | required | The actor's state at scenario time `0`. |
-| `control` | `Control` | `{accel: 0, curvature: 0}` | Constant control the actor drives under, if `trajectory` is empty. |
+| `control` | `Control` | `{jerk: 0, curvature_rate: 0}` | Constant action the actor drives under from `init`, if `trajectory` is empty. |
 | `trajectory` | `Vec<Waypoint>` | `[]` | A logged path to replay instead of integrating `control`. Must be sorted by `t`. See [Trajectory replay](#trajectory-replay). |
 
 ### `Waypoint`

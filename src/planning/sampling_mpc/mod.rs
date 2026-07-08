@@ -31,17 +31,13 @@
 //!   "hybrid road model" the sampling explores around. The nominal starts at
 //!   *zero* deviation — the bare base policy — the judo-typical zero nominal.
 //! - **Control knots → controls.** The `num_nodes` deviation knots
-//!   (`[accel, curvature]`) are spread over the planning horizon and
+//!   (`[jerk, curvature_rate]`) are spread over the planning horizon and
 //!   linearly interpolated to a per-tick sequence (`control_at`) — judo's
 //!   spline interpolation, at its simplest order.
 //! - **The shared forward model.** Every rollout advances through
-//!   [`crate::simulation::drive`] — the exact model the plant steps the ego
-//!   with — seeded from [`Context::ego_control`](crate::planning::Context), so
-//!   each candidate is priced on the *actually applied* control after the
-//!   actuation limits (including jerk and steering rate) clip it. The base
-//!   policy plus knot deviation is the *commanded* control; `drive` turns it
-//!   into what the car does, so the sampler plans steering and throttle ramps
-//!   that fit the limits rather than steps the plant would clip.
+//!   [`crate::simulation::step`] — the exact model the plant steps the ego
+//!   with — so each candidate is priced on the same jerk/rate action bounds
+//!   and acceleration/curvature state bounds the plant enforces.
 //! - **The shared cost function.** Each rolled-out state is priced by
 //!   [`crate::planning::cost::point_cost`], the same scalar the Frenet
 //!   lattice, PI²-DDP, and RRT* agree on, with a hard violation made finite
@@ -74,10 +70,10 @@ use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, drive, step};
+use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
 
-/// Control dimension: `[accel, curvature]`. judo's `nu`.
+/// Control dimension: `[jerk, curvature_rate]`. judo's `nu`.
 pub(crate) const NU: usize = 2;
 
 /// Planning horizon in ticks: 10 s at the simulator's 0.1 s tick rate, the
@@ -86,8 +82,8 @@ pub(crate) const NU: usize = 2;
 /// returned control trajectory is sampled from it.
 const HORIZON: usize = (PLANNING_HORIZON_S / 0.1) as usize;
 
-/// Physical std the dimensionless judo `sigma` multiplies, per control
-/// dimension: `[accel, curvature]` — but of the knot *deviation* from the
+/// Physical std the dimensionless judo `sigma` multiplies, per action
+/// dimension: `[jerk, curvature_rate]` — but of the knot *deviation* from the
 /// base policy (see [`SamplingPlanner::base_policy`]), not an absolute
 /// control. judo normalizes its controls to roughly `[-1, 1]`, so its
 /// `sigma` values (0.05–0.1) are unitless; here a `sigma` of 1 means an
@@ -99,7 +95,7 @@ const HORIZON: usize = (PLANNING_HORIZON_S / 0.1) as usize;
 /// lane-width-derived `sigma_kappa`) to span roughly the lane width over the
 /// look-ahead. A wider acceleration std mainly gave MPPI's and CEM's
 /// reward-weighted averages room to drift the speed off target for no gain.
-pub(crate) const SIGMA_SCALE: [f64; NU] = [0.4, 0.08];
+pub(crate) const SIGMA_SCALE: [f64; NU] = [4.0, 0.08];
 
 /// Weight on an explicit speed-tracking term, `Σ_t (speed_t − target)²`.
 /// The shared cost prices overspeed only lightly (it is one term of many),
@@ -126,7 +122,7 @@ const SPEED_WEIGHT: f64 = 0.5;
 /// target speed (PS, taking the single best, didn't suffer this).
 const CONTROL_WEIGHT: f64 = 0.3;
 
-/// One control knot: `[accel, curvature]`.
+/// One control knot: `[jerk, curvature_rate]`.
 pub type Knot = [f64; NU];
 
 /// Base configuration shared by every optimizer — judo's `OptimizerConfig`.
@@ -310,19 +306,18 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let heading_err = wrap_angle(x.yaw - lane_yaw);
         let curvature = -(0.02 * d + 0.3 * heading_err);
         let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-        [accel, curvature]
+        let u = action_toward(*x, accel, curvature, ctx.road.dt);
+        [u.jerk, u.curvature_rate]
     }
 
-    /// The control *commanded* at rollout state `x` for knot-deviation `dev`:
-    /// the base policy plus the deviation. It is not clamped here — the rollout
-    /// pushes it through the shared forward model ([`drive`]), which applies
-    /// the actuation limits (including jerk and steering rate) against the
-    /// previously applied control, exactly as the plant will.
+    /// The action commanded at rollout state `x` for knot-deviation `dev`:
+    /// the base policy plus the deviation. It is not clamped here — `step`
+    /// applies the shared action/state limits exactly as the plant will.
     fn command(path: &Path, x: &State, dev: Knot, ctx: &Context) -> Control {
         let base = Self::base_policy(path, x, ctx);
         Control {
-            accel: base[0] + dev[0],
-            curvature: base[1] + dev[1],
+            jerk: base[0] + dev[0],
+            curvature_rate: base[1] + dev[1],
         }
     }
 
@@ -330,7 +325,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// shared cost function plus a centerline-pull term, with hard
     /// violations made finite (see the module doc). Timed under the `cost`
     /// seam, like every other search planner.
-    fn state_cost(path: &Path, x: &State, u: Knot, t: usize, ctx: &Context) -> f64 {
+    fn state_cost(path: &Path, x: &State, t: usize, ctx: &Context) -> f64 {
         let (s, d) = path.project([x.x, x.y]);
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
@@ -338,8 +333,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: u[1],
-            accel: u[0],
+            curvature: x.curvature,
+            accel: x.accel,
             t: t as f64 * ctx.road.dt,
         };
         // The shared cost with hard violations made finite by a depth-scaled
@@ -367,17 +362,13 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// end.
     fn rollout(&self, knots: &[Knot], path: &Path, ego: State, ctx: &Context) -> (Vec<State>, f64) {
         let mut x = ego;
-        // seed the rollout's actuation state with the control the plant applied
-        // to the ego last tick, so the jerk/steering-rate limiting inside
-        // `drive` starts where the car actually is (see `Context::ego_control`)
-        let mut prev = ctx.ego_control;
         let mut xs = vec![ego];
         let mut total = 0.0;
         for t in 0..HORIZON {
             let dev = control_at(knots, t, HORIZON);
-            let cmd = Self::command(path, &x, dev, ctx);
-            let (nx, u) = drive(x, prev, cmd, ctx.road.dt);
-            total += Self::state_cost(path, &x, [u.accel, u.curvature], t, ctx);
+            let u = Self::command(path, &x, dev, ctx);
+            x = step(x, u, ctx.road.dt);
+            total += Self::state_cost(path, &x, t + 1, ctx);
             // control-effort penalty on the deviation from the base policy
             // (see CONTROL_WEIGHT)
             total += CONTROL_WEIGHT
@@ -385,10 +376,9 @@ impl<O: Optimizer> SamplingPlanner<O> {
             // firm speed tracking (see SPEED_WEIGHT)
             let sv = x.speed - ctx.road.target_speed;
             total += SPEED_WEIGHT * sv * sv;
-            (x, prev) = (nx, u);
             xs.push(x);
         }
-        total += 5.0 * Self::state_cost(path, &x, [0.0, 0.0], HORIZON, ctx);
+        total += 5.0 * Self::state_cost(path, &x, HORIZON, ctx);
         (xs, -total)
     }
 }
@@ -456,12 +446,10 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         // reached) and emit the actually-applied control sequence.
         let controls = ctx.time("extract", || {
             let mut x = ego;
-            let mut prev = ctx.ego_control;
             (0..ctx.horizon)
                 .map(|t| {
-                    let cmd = Self::command(&path, &x, control_at(&nominal, t, HORIZON), ctx);
-                    let (nx, u) = drive(x, prev, cmd, ctx.road.dt);
-                    (x, prev) = (nx, u);
+                    let u = Self::command(&path, &x, control_at(&nominal, t, HORIZON), ctx);
+                    x = step(x, u, ctx.road.dt);
                     u
                 })
                 .collect::<Vec<_>>()

@@ -3,7 +3,7 @@
 
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, action_toward, step};
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
 /// Also drives the open-world traffic actors ([`crate::world`]).
@@ -68,21 +68,19 @@ impl Planner for BezierIdmPlanner {
         });
         // custom seam: scanning the actors for the in-lane lead
         let mut lead = ctx.time("lead_search", || lead_vehicle(&path, s0, ctx.actors));
-        let mut v = ego.speed;
+        let mut x = ego;
         let mut t = 0.0;
         ctx.time("extract", || {
             (0..ctx.horizon)
                 .map(|_| {
-                    let accel = idm_accel(v, ctx.road.target_speed, lead);
-                    let u = Control {
-                        accel,
-                        curvature: bezier_curvature(&b, t),
-                    };
-                    v = (v + accel * ctx.road.dt).max(0.0);
+                    let accel = idm_accel(x.speed, ctx.road.target_speed, lead);
+                    let curvature = bezier_curvature(&b, t);
+                    let u = action_toward(x, accel, curvature, ctx.road.dt);
+                    x = step(x, u, ctx.road.dt);
                     let d1 = bezier_d1(&b, t);
-                    t = (t + v * ctx.road.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
+                    t = (t + x.speed * ctx.road.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
                     if let Some((gap, lead_v)) = &mut lead {
-                        *gap = (*gap + (*lead_v - v) * ctx.road.dt).max(0.0);
+                        *gap = (*gap + (*lead_v - x.speed) * ctx.road.dt).max(0.0);
                     }
                     u
                 })

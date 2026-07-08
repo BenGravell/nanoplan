@@ -351,7 +351,7 @@ sampling_mpc/
 
 **The judo interface, verbatim.** An `Optimizer` is exactly judo's two-method
 strategy over control *knots* — `num_nodes` control points of dimension
-`nu = 2` (`[accel, curvature]`):
+`nu = 2` (`[jerk, curvature_rate]`):
 
 ```rust
 fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize) -> Vec<Vec<Knot>>;
@@ -566,12 +566,11 @@ centerline plus proportional speed hold (`init_policy`); the initial
 curvature exploration variance `σ_κ` is sized so sampled trajectories span
 roughly the lane half-width (`LANE_HALF_M = 1.75` m) by the preview
 distance, rather than an arbitrary constant. The running cost prices the
-control just applied against the [shared cost function](#the-shared-cost-function)
-— curvature and accel are exactly `u`, the commanded control, since this
-kinematic model defines them as the instantaneous curvature and
-acceleration — plus PI²-DDP's own centerline-pull term and a control-effort
-quadratic tied to the sampling covariance (the paper's "linear solvability"
-trick). Unlike the lattice and RRT*, which reject a colliding or off-road
+rolled-out state against the [shared cost function](#the-shared-cost-function)
+— acceleration and curvature live in `State`, while `u` is jerk/rate — plus
+PI²-DDP's own centerline-pull term and a control-effort quadratic tied to
+the sampling covariance (the paper's "linear solvability" trick). Unlike
+the lattice and RRT*, which reject a colliding or off-road
 candidate outright, PI²-DDP has no such hard accept/reject step in its
 continuous search, so the shared cost's soft road-edge and actor-proximity
 terms are weighted heavily for its benefit specifically — see "The shared
@@ -585,8 +584,8 @@ one step and continues refining; otherwise it re-initializes from scratch.
 failures (see the `stays_finite_and_safe_over_full_scenario` regression
 test):
 
-- `clamp_u` bounds acceleration and curvature to physical limits
-  (`ACCEL_LIMIT = 5.0`, `KAPPA_LIMIT = 0.2`) — near-stationary rollouts have
+- `clamp_u` bounds jerk and curvature rate to physical limits
+  (`MAX_ABS_LON_JERK`, `MAX_ABS_CURVATURE_RATE`) — near-stationary rollouts have
   little state diversity, which makes the `Σₓₓ` inverse in the gain
   computation nearly singular and can otherwise blow the policy up.
 - A PSD guard on the perturbation covariance: if `Σᵤ`'s Schur complement
@@ -805,11 +804,10 @@ treetop/
 └── ilqr.rs  the iLQR solver (treetop ilqr/), finite-difference derivatives — IlqrPlanner
 ```
 
-nanoplan's kinematic model is *exactly* treetop's `Dynamics::forward` —
-same state `[x, y, yaw, speed]`, same action `[accel, curvature]`, same
-forward-Euler step — so the dynamics needed no port at all, only the
-problem around them. Three adaptations recur throughout (see the module
-doc): treetop's fixed user-placed goal pose becomes a **rolling lane
+nanoplan's kinematic model uses treetop's same pose/speed kinematics, but
+with actuator position in state (`accel`, `curvature`) and actuator velocity
+as action (`jerk`, `curvature_rate`). Three adaptations recur throughout
+(see the module doc): treetop's fixed user-placed goal pose becomes a **rolling lane
 target** (`goal_state`: the centerline pose a planning horizon ahead, at
 the target speed); treetop's static circular obstacles become **moving
 actors priced through the shared cost function** at the absolute time each
@@ -819,16 +817,10 @@ entirely — its purpose is randomized restarts), so all three planners are
 pure functions of the ego state, pinned by `*_is_a_pure_function_of_state`
 tests.
 
-Shared `mod.rs` core, used by both halves: treetop's vehicle limits
-(±3 m/s² longitudinal, ±6 m/s² lateral, |κ| ≤ 0.2) with the **dynamic
-curvature bound** `min(CURVATURE_MAX, ACCEL_LAT_MAX / v²)` — at speed, the
-car may not steer as sharply as its geometry allows — and the constrained
-open-loop rollout that *projects* every action onto those limits
-(treetop's key sampling-efficiency trick: projection instead of rejection
-keeps nearly every sample usable, at the price of bang-bang edges the
-optimizer smooths out). The horizon is `TICKS = 100` ticks (10 s, the
-common `PLANNING_HORIZON_S`), split into `SEGMENTS = 10` steering segments
-of `STEER_TICKS = 10` ticks.
+Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100`
+ticks (10 s, the common `PLANNING_HORIZON_S`), split into `SEGMENTS = 10`
+steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that
+advances every candidate through `simulation::step`.
 
 ### RRT (treetop tree)
 
@@ -848,8 +840,8 @@ optimizer — rather than by asymptotic optimality (contrast
   `x(t)`, `y(t)` between two states' position+velocity boundary conditions
   (velocity = speed along heading), reads acceleration and curvature off
   the polynomial derivatives — the same differential-flatness idea as
-  RRT*'s `CubicSteer`, but emitting *actions* rather than a geometric
-  curve — and realizes them through the constrained rollout. A secant
+  RRT*'s `CubicSteer` — then converts those targets into jerk/curvature-rate
+  actions and realizes them through the shared rollout. A secant
   against the start heading infers forward/reverse. The steer executes
   only its first segment; goal-directed samples steer along a cubic
   spanning the whole remaining horizon and keep just the first second

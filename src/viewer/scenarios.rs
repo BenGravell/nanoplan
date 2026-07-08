@@ -47,8 +47,13 @@ fn s_curve_road() -> Vec<[f64; 2]> {
 
 // ponytail: hardcoded synthetic scenarios cover cases the CommonRoad corpus doesn't need to
 fn scenarios() -> Vec<Scenario> {
-    let state = |x, y, yaw, speed| State { x, y, yaw, speed };
-    let drive = |accel, curvature| Control { accel, curvature };
+    let state = |x, y, yaw, speed| State {
+        x,
+        y,
+        yaw,
+        speed,
+        ..Default::default()
+    };
     let map = |divider_d, crosswalk_s| MapData {
         divider_d,
         crosswalk_s,
@@ -87,7 +92,7 @@ fn scenarios() -> Vec<Scenario> {
             state(0.0, 0.0, 0.0, 8.0),
             vec![Actor {
                 init: state(60.0, 0.0, 0.0, 0.0),
-                control: drive(0.0, 0.0),
+                control: Control::default(),
                 trajectory: vec![],
             }],
             straight_road(),
@@ -98,7 +103,7 @@ fn scenarios() -> Vec<Scenario> {
             state(0.0, 0.0, 0.0, 8.0),
             vec![Actor {
                 init: state(160.0, 4.0, std::f64::consts::PI, 8.0),
-                control: drive(0.0, 0.0),
+                control: Control::default(),
                 trajectory: vec![],
             }],
             straight_road(),
@@ -109,7 +114,7 @@ fn scenarios() -> Vec<Scenario> {
             state(0.0, 0.0, 0.0, 8.0),
             vec![Actor {
                 init: state(80.0, -60.0, std::f64::consts::FRAC_PI_2, 6.0),
-                control: drive(0.0, 0.0),
+                control: Control::default(),
                 trajectory: vec![],
             }],
             straight_road(),
@@ -120,9 +125,12 @@ fn scenarios() -> Vec<Scenario> {
             "curving lead",
             state(0.0, 0.0, 0.0, 8.0),
             vec![Actor {
-                init: state(20.0, 0.0, 0.0, 8.0),
+                init: State {
+                    curvature: 0.02,
+                    ..state(20.0, 0.0, 0.0, 8.0)
+                },
                 // curves away; constant-velocity prediction visibly diverges
-                control: drive(0.0, 0.02),
+                control: Control::default(),
                 trajectory: vec![],
             }],
             straight_road(),

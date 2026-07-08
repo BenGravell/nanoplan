@@ -24,7 +24,7 @@ use std::collections::BinaryHeap;
 use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
 
 pub struct LatticePlanner;
@@ -98,6 +98,7 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
     let mut v = ego.speed;
     let mut yaw = ego.yaw;
     let mut prev = [ego.x, ego.y];
+    let mut x = ego;
     pts.iter()
         .map(|&p| {
             let ds = (p[0] - prev[0]).hypot(p[1] - prev[1]);
@@ -107,14 +108,14 @@ fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
             } else {
                 yaw
             };
-            let u = Control {
-                accel: (new_v - v) / dt,
-                curvature: if ds > 1e-6 {
-                    wrap_angle(new_yaw - yaw) / ds
-                } else {
-                    0.0
-                },
+            let accel = (new_v - v) / dt;
+            let curvature = if ds > 1e-6 {
+                wrap_angle(new_yaw - yaw) / ds
+            } else {
+                0.0
             };
+            let u = action_toward(x, accel, curvature, dt);
+            x = step(x, u, dt);
             (v, yaw, prev) = (new_v, new_yaw, p);
             u
         })
@@ -280,13 +281,14 @@ impl Planner for LatticePlanner {
 
         let Some(goal) = goal else {
             // every path collides / leaves the road: brake straight ahead
-            return vec![
-                Control {
-                    accel: -4.0,
-                    curvature: 0.0,
-                };
-                ctx.horizon
-            ];
+            let mut x = ego;
+            return (0..ctx.horizon)
+                .map(|_| {
+                    let u = action_toward(x, -4.0, 0.0, ctx.road.dt);
+                    x = step(x, u, ctx.road.dt);
+                    u
+                })
+                .collect();
         };
 
         // reconstruct the chosen lateral per layer from the parent chain

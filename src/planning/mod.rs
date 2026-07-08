@@ -37,12 +37,6 @@ pub struct Context<'a> {
     pub road: &'a Road,
     /// Current states of the other actors.
     pub actors: &'a [State],
-    /// The control the plant applied to the ego last tick. A planner seeds the
-    /// first step of any rollout through [`crate::simulation::drive`] with
-    /// this, so its jerk- and steering-rate-limited prediction starts from the
-    /// same actuation state the plant will — otherwise the plan's opening move
-    /// assumes a wheel/pedal position the car isn't actually at.
-    pub ego_control: Control,
     /// Requested number of controls (planners may return fewer or more).
     pub horizon: usize,
     /// Latency recorder for this plan call, when diagnostics are collected.
@@ -223,7 +217,6 @@ pub(crate) fn test_ctx<'a>(road: &'a Road, actors: &'a [State]) -> Context<'a> {
     Context {
         road,
         actors,
-        ego_control: Control::default(),
         horizon: 10,
         latency: None,
         diagnostics: None,

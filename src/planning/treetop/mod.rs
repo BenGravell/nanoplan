@@ -21,13 +21,12 @@
 //!   tree.
 //!
 //! This file also owns what treetop keeps in `core/` — the pieces *both*
-//! halves stand on: the trajectory-length constants, the vehicle actuation
-//! limits with the dynamic (lateral-acceleration-derived) curvature bound,
-//! the constrained open-loop rollout, and the goal state. nanoplan's
-//! kinematic model ([`crate::simulation::step`]) is *exactly* treetop's
-//! `Dynamics::forward` (same state `[x, y, yaw, speed]`, same action
-//! `[accel, curvature]`, same forward-Euler discretization), so no
-//! dynamics port was needed at all — only the problem around it.
+//! halves stand on: the trajectory-length constants, the constrained
+//! open-loop rollout, and the goal state. nanoplan's kinematic model now
+//! carries actuator position in state (`accel`, `curvature`) and takes
+//! actuator velocity as action (`jerk`, `curvature_rate`), so the treetop
+//! port converts its flat-output accel/curvature targets into those actions
+//! before every rollout.
 //!
 //! ## Fitting treetop into the nanoplan framework
 //!
@@ -83,37 +82,11 @@ pub(crate) const STEER_TICKS: usize = 10;
 /// the number of tree layers past the root.
 pub(crate) const SEGMENTS: usize = TICKS / STEER_TICKS;
 
-// treetop's vehicle limits (`core/constants.h`), unchanged: ~0.3 g
-// longitudinal, ~0.6 g lateral, and the 5 m turning radius of a small
-// sedan. The curvature bound matches the `KAPPA_LIMIT` PI²-DDP and the
-// judo planners clamp to.
-pub(crate) const ACCEL_LON_MAX: f64 = 3.0;
-pub(crate) const ACCEL_LAT_MAX: f64 = 6.0;
-pub(crate) const CURVATURE_MAX: f64 = 0.2;
-
-/// treetop's action projection (`rolloutOpenLoopConstrained`): clamp accel
-/// to the longitudinal limit and curvature to the more restrictive of the
-/// static bound and the lateral-acceleration-induced bound
-/// `ACCEL_LAT_MAX / v²` — at speed, the car may not steer as sharply as its
-/// geometry allows. treetop's note applies: *projecting* onto the action
-/// constraints (rather than rejection-sampling feasible steers) is critical
-/// to the tree's sampling efficiency, at the price of bang-bang edges that
-/// the iLQR pass smooths out.
-pub(crate) fn clamp_action(u: Control, speed: f64) -> Control {
-    let v_sq = (speed * speed).max(1e-6);
-    let dyn_curvature_max = CURVATURE_MAX.min(ACCEL_LAT_MAX / v_sq);
-    Control {
-        accel: u.accel.clamp(-ACCEL_LON_MAX, ACCEL_LON_MAX),
-        curvature: u.curvature.clamp(-dyn_curvature_max, dyn_curvature_max),
-    }
-}
-
 /// Roll `actions` out open-loop from `x0` through the kinematic model,
-/// projecting each action onto the limits first ([`clamp_action`]).
+/// letting [`step`] enforce the state and action limits.
 /// Returns the visited states (`actions.len() + 1`, starting at `x0`) and
-/// the *clamped* actions actually applied — treetop's
-/// `rolloutOpenLoopConstrained`, which both halves use for every
-/// trajectory they realize.
+/// the actions — treetop's `rolloutOpenLoopConstrained`, with the projection
+/// collapsed into the shared simulator step.
 pub(crate) fn rollout_constrained(
     x0: State,
     actions: &[Control],
@@ -124,7 +97,6 @@ pub(crate) fn rollout_constrained(
     xs.push(x0);
     let mut x = x0;
     for &u in actions {
-        let u = clamp_action(u, x.speed);
         x = step(x, u, dt);
         xs.push(x);
         us.push(u);
@@ -162,6 +134,8 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
         y: gy,
         yaw: gyaw,
         speed: ctx.road.target_speed,
+        accel: 0.0,
+        curvature: 0.0,
     }
 }
 
@@ -349,19 +323,18 @@ mod tests {
     }
 
     #[test]
-    fn clamp_action_tightens_curvature_with_speed() {
-        let sharp = Control {
-            accel: 10.0,
-            curvature: 1.0,
+    fn rollout_constrained_uses_the_shared_step() {
+        let x0 = State {
+            speed: 5.0,
+            ..Default::default()
         };
-        // slow: static curvature bound, accel clamped to the lon limit
-        let slow = clamp_action(sharp, 1.0);
-        assert_eq!(slow.accel, ACCEL_LON_MAX);
-        assert_eq!(slow.curvature, CURVATURE_MAX);
-        // fast: the lateral-accel-derived bound is tighter than the static one
-        let fast = clamp_action(sharp, 20.0);
-        assert!(fast.curvature < CURVATURE_MAX);
-        assert!((fast.curvature - ACCEL_LAT_MAX / 400.0).abs() < 1e-12);
+        let actions = [Control {
+            jerk: 2.0,
+            curvature_rate: 0.1,
+        }];
+        let (xs, us) = rollout_constrained(x0, &actions, 0.1);
+        assert_eq!(us, actions);
+        assert_eq!(xs[1], step(x0, actions[0], 0.1));
     }
 
     #[test]
@@ -371,6 +344,7 @@ mod tests {
             y: 2.0,
             yaw: 0.0,
             speed: 5.0,
+            ..Default::default()
         };
         let z = zero_action_point(x, 2.0);
         assert_eq!(z, State { x: 11.0, ..x });

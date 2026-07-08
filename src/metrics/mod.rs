@@ -325,6 +325,7 @@ mod tests {
             y: 3.0,
             yaw: 0.5,
             speed: 8.0,
+            ..Default::default()
         };
         assert_eq!(predict(&a, None, 2.0), project(&a, 2.0));
     }
@@ -339,12 +340,14 @@ mod tests {
             y: 0.0,
             yaw: std::f64::consts::FRAC_PI_2,
             speed: 6.0,
+            ..Default::default()
         };
         let oncoming = State {
             x: 40.0,
             y: 2.0,
             yaw: std::f64::consts::PI,
             speed: 6.0,
+            ..Default::default()
         };
         for a in [crossing, oncoming] {
             assert_eq!(predict(&a, Some(&lane), 1.5), project(&a, 1.5));
@@ -360,6 +363,7 @@ mod tests {
             y: 2.0,
             yaw: 0.0,
             speed: 10.0,
+            ..Default::default()
         };
         let p = predict(&a, Some(&lane), 2.0);
         // advanced ~speed·t along the lane and eased back toward the center
@@ -382,6 +386,7 @@ mod tests {
             y: 0.0,
             yaw: 0.0,
             speed: 10.0,
+            ..Default::default()
         };
         let curved = predict(&a, Some(&lane), 2.0);
         let straight = project(&a, 2.0);

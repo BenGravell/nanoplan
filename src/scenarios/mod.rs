@@ -175,6 +175,8 @@ pub(crate) fn replay(trajectory: &[Waypoint], t: f64) -> State {
         y: a.state.y + (b.state.y - a.state.y) * u,
         yaw: a.state.yaw + wrap_angle(b.state.yaw - a.state.yaw) * u,
         speed: a.state.speed + (b.state.speed - a.state.speed) * u,
+        accel: a.state.accel + (b.state.accel - a.state.accel) * u,
+        curvature: a.state.curvature + (b.state.curvature - a.state.curvature) * u,
     }
 }
 
@@ -331,7 +333,13 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                 })
                 .collect();
             let actor = |x, y, yaw, speed| Actor {
-                init: State { x, y, yaw, speed },
+                init: State {
+                    x,
+                    y,
+                    yaw,
+                    speed,
+                    ..Default::default()
+                },
                 control: Control::default(),
                 trajectory: vec![],
             };

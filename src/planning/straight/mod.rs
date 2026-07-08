@@ -25,6 +25,7 @@ mod tests {
                 y: 2.0,
                 yaw: 0.5,
                 speed: 3.0,
+                ..Default::default()
             },
             0.1,
         );

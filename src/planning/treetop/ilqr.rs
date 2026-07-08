@@ -73,19 +73,19 @@
 use super::{TICKS, goal_state, rollout_constrained, take_warm};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
 
 // ---- Tiny fixed-size linear algebra --------------------------------------
-// State dimension 4, action dimension 2 — small enough that hand-rolled
+// State dimension 6, action dimension 2 — small enough that hand-rolled
 // const-generic helpers beat pulling in a matrix crate (and stay wasm-lean).
 // Convention: a matrix is `[[f64; COLS]; ROWS]`.
 
 type V2 = [f64; 2];
-type V4 = [f64; 4];
-type M44 = [[f64; 4]; 4];
-type M42 = [[f64; 2]; 4]; // 4 rows × 2 cols
-type M24 = [[f64; 4]; 2]; // 2 rows × 4 cols
+type V6 = [f64; 6];
+type M66 = [[f64; 6]; 6];
+type M62 = [[f64; 2]; 6]; // 6 rows × 2 cols
+type M26 = [[f64; 6]; 2]; // 2 rows × 6 cols
 type M22 = [[f64; 2]; 2];
 
 fn mat_mul<const M: usize, const K: usize, const N: usize>(
@@ -124,16 +124,18 @@ fn dot<const N: usize>(a: [f64; N], b: [f64; N]) -> f64 {
     (0..N).map(|i| a[i] * b[i]).sum()
 }
 
-fn to_v4(x: &State) -> V4 {
-    [x.x, x.y, x.yaw, x.speed]
+fn to_v6(x: &State) -> V6 {
+    [x.x, x.y, x.yaw, x.speed, x.accel, x.curvature]
 }
 
-fn of_v4(v: V4) -> State {
+fn of_v6(v: V6) -> State {
     State {
         x: v[0],
         y: v[1],
         yaw: v[2],
         speed: v[3],
+        accel: v[4],
+        curvature: v[5],
     }
 }
 
@@ -195,8 +197,8 @@ impl Ocp<'_, '_> {
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: u.curvature,
-            accel: u.accel,
+            curvature: x.curvature,
+            accel: x.accel,
             t: t as f64 * self.ctx.road.dt,
         };
         let target = self.ctx.road.target_speed;
@@ -213,8 +215,8 @@ impl Ocp<'_, '_> {
         let dv = x.speed - target;
         let structural = CENTER_W * d * d
             + SPEED_W * dv * dv
-            + EFFORT_ACCEL_W * u.accel * u.accel
-            + EFFORT_CURV_W * u.curvature * u.curvature;
+            + EFFORT_ACCEL_W * u.jerk * u.jerk
+            + EFFORT_CURV_W * u.curvature_rate * u.curvature_rate;
         (shared + structural) / TICKS as f64
     }
 
@@ -249,13 +251,13 @@ const H_DYN: f64 = 1e-5;
 
 /// Quadratic expansion of the running cost at one `(x, u)` — treetop's
 /// `Loss::gradientAndHessian`, by central finite differences over the
-/// packed 6-vector `z = (x, y, yaw, v, accel, curvature)`: 1 + 12 first-
-/// difference and 60 cross-difference probes of the black-box scalar.
+/// packed 8-vector `z = (x, y, yaw, v, accel, curvature, jerk,
+/// curvature_rate)`.
 struct StageDerivs {
-    lx: V4,
+    lx: V6,
     lu: V2,
-    lxx: M44,
-    lxu: M42,
+    lxx: M66,
+    lxu: M62,
     luu: M22,
 }
 
@@ -263,33 +265,44 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     // one projection of the unperturbed state anchors every probe's
     // Frenet lookup (the probes move by ±H_COST, far less than the window)
     let s_hint = ocp.path.project([x.x, x.y]).0;
-    let z0 = [x.x, x.y, x.yaw, x.speed, u.accel, u.curvature];
-    let eval = |z: [f64; 6]| {
+    let z0 = [
+        x.x,
+        x.y,
+        x.yaw,
+        x.speed,
+        x.accel,
+        x.curvature,
+        u.jerk,
+        u.curvature_rate,
+    ];
+    let eval = |z: [f64; 8]| {
         let xs = State {
             x: z[0],
             y: z[1],
             yaw: z[2],
             speed: z[3],
-        };
-        let us = Control {
             accel: z[4],
             curvature: z[5],
+        };
+        let us = Control {
+            jerk: z[6],
+            curvature_rate: z[7],
         };
         ocp.stage_cost(&xs, &us, t, Some(s_hint))
     };
     let (grad, hess) = fd_grad_hess(&eval, z0);
     StageDerivs {
-        lx: [grad[0], grad[1], grad[2], grad[3]],
-        lu: [grad[4], grad[5]],
+        lx: [grad[0], grad[1], grad[2], grad[3], grad[4], grad[5]],
+        lu: [grad[6], grad[7]],
         lxx: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][j])),
-        lxu: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][4 + j])),
-        luu: std::array::from_fn(|i| std::array::from_fn(|j| hess[4 + i][4 + j])),
+        lxu: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][6 + j])),
+        luu: std::array::from_fn(|i| std::array::from_fn(|j| hess[6 + i][6 + j])),
     }
 }
 
 /// Terminal gradient and Hessian, likewise by finite differences.
-fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M44) {
-    let (grad, hess) = fd_grad_hess(&|z: [f64; 4]| ocp.terminal_cost(&of_v4(z)), to_v4(x));
+fn terminal_derivs(ocp: &Ocp, x: &State) -> (V6, M66) {
+    let (grad, hess) = fd_grad_hess(&|z: [f64; 6]| ocp.terminal_cost(&of_v6(z)), to_v6(x));
     (grad, hess)
 }
 
@@ -336,45 +349,45 @@ fn fd_grad_hess<const N: usize>(
 /// Dynamics Jacobians `A = ∂step/∂x`, `B = ∂step/∂u` by central finite
 /// differences on [`step`] — treetop's closed-form `Dynamics::jacobian`,
 /// derived numerically instead.
-fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M44, M42) {
-    let mut a = [[0.0; 4]; 4];
-    for j in 0..4 {
-        let mut zp = to_v4(x);
+fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M66, M62) {
+    let mut a = [[0.0; 6]; 6];
+    for j in 0..6 {
+        let mut zp = to_v6(x);
         zp[j] += H_DYN;
-        let mut zm = to_v4(x);
+        let mut zm = to_v6(x);
         zm[j] -= H_DYN;
-        let sp = to_v4(&step(of_v4(zp), *u, dt));
-        let sm = to_v4(&step(of_v4(zm), *u, dt));
-        for i in 0..4 {
+        let sp = to_v6(&step(of_v6(zp), *u, dt));
+        let sm = to_v6(&step(of_v6(zm), *u, dt));
+        for i in 0..6 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
-    let col = |up: Control, um: Control| -> V4 {
-        let sp = to_v4(&step(*x, up, dt));
-        let sm = to_v4(&step(*x, um, dt));
+    let col = |up: Control, um: Control| -> V6 {
+        let sp = to_v6(&step(*x, up, dt));
+        let sm = to_v6(&step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
-    let ca = col(
+    let cj = col(
         Control {
-            accel: u.accel + H_DYN,
+            jerk: u.jerk + H_DYN,
             ..*u
         },
         Control {
-            accel: u.accel - H_DYN,
-            ..*u
-        },
-    );
-    let ck = col(
-        Control {
-            curvature: u.curvature + H_DYN,
-            ..*u
-        },
-        Control {
-            curvature: u.curvature - H_DYN,
+            jerk: u.jerk - H_DYN,
             ..*u
         },
     );
-    let b: M42 = std::array::from_fn(|i| [ca[i], ck[i]]);
+    let cr = col(
+        Control {
+            curvature_rate: u.curvature_rate + H_DYN,
+            ..*u
+        },
+        Control {
+            curvature_rate: u.curvature_rate - H_DYN,
+            ..*u
+        },
+    );
+    let b: M62 = std::array::from_fn(|i| [cj[i], cr[i]]);
     (a, b)
 }
 
@@ -384,7 +397,7 @@ fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M44, M42) {
 #[derive(Clone, Copy)]
 struct Gains {
     k: V2,
-    kk: M24,
+    kk: M26,
 }
 
 /// treetop's `ExpectedCostChange`: the expansion's prediction of the cost
@@ -424,7 +437,7 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
     let mut gains = vec![
         Gains {
             k: [0.0; 2],
-            kk: [[0.0; 4]; 2]
+            kk: [[0.0; 6]; 2]
         };
         n
     ];
@@ -438,13 +451,13 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         let (a, b) = dynamics_jacobian(&xs[t], &us[t], ocp.ctx.road.dt);
         let at = transpose(&a);
         let bt = transpose(&b);
-        let atv: M44 = mat_mul(&at, &vxx);
-        let btv: M24 = mat_mul(&bt, &vxx);
+        let atv: M66 = mat_mul(&at, &vxx);
+        let btv: M26 = mat_mul(&bt, &vxx);
 
-        let qx: V4 = vec_add(sd.lx, mat_vec(&at, &vx));
+        let qx: V6 = vec_add(sd.lx, mat_vec(&at, &vx));
         let qu: V2 = vec_add(sd.lu, mat_vec(&bt, &vx));
-        let qxx: M44 = mat_add(sd.lxx, mat_mul(&atv, &a));
-        let qxu: M42 = mat_add(sd.lxu, mat_mul(&atv, &b));
+        let qxx: M66 = mat_add(sd.lxx, mat_mul(&atv, &a));
+        let qxu: M62 = mat_add(sd.lxu, mat_mul(&atv, &b));
         let quu: M22 = mat_add(sd.luu, mat_mul(&btv, &b));
 
         // regularize with treetop's gradient-norm scaling, then check PD
@@ -461,14 +474,14 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         ];
 
         let k: V2 = mat_vec(&inv, &qu).map(|v| -v);
-        let kk: M24 = mat_mul(&inv, &transpose(&qxu)).map(|row| row.map(|v| -v));
+        let kk: M26 = mat_mul(&inv, &transpose(&qxu)).map(|row| row.map(|v| -v));
 
         // value-function update (treetop `updateV`), symmetrized to shed
         // FD asymmetry before it compounds across 100 steps
-        let kt: M42 = transpose(&kk);
-        let w: M42 = mat_add(mat_mul(&kt, &quu), qxu);
+        let kt: M62 = transpose(&kk);
+        let w: M62 = mat_add(mat_mul(&kt, &quu), qxu);
         vx = vec_add(qx, vec_add(mat_vec(&w, &k), mat_vec(&kt, &qu)));
-        let vxx_new: M44 = mat_add(
+        let vxx_new: M66 = mat_add(
             qxx,
             mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))),
         );
@@ -505,11 +518,11 @@ fn forward(
     nxs.push(x);
     let mut cost_total = 0.0;
     for t in 0..n {
-        let dx: V4 = std::array::from_fn(|i| to_v4(&x)[i] - to_v4(&xs[t])[i]);
+        let dx: V6 = std::array::from_fn(|i| to_v6(&x)[i] - to_v6(&xs[t])[i]);
         let fb = mat_vec(&gains[t].kk, &dx);
         let u = Control {
-            accel: us[t].accel + scale * gains[t].k[0] + fb[0],
-            curvature: us[t].curvature + scale * gains[t].k[1] + fb[1],
+            jerk: us[t].jerk + scale * gains[t].k[0] + fb[0],
+            curvature_rate: us[t].curvature_rate + scale * gains[t].k[1] + fb[1],
         };
         cost_total += ocp.stage_cost(&x, &u, t, None);
         x = step(x, u, ocp.ctx.road.dt);
@@ -613,12 +626,11 @@ fn base_guess(path: &Path, ego: State, ctx: &Context) -> Vec<Control> {
         let (s, d) = path.project([x.x, x.y]);
         let (_, lane_yaw) = path.pose_at(s);
         let heading_err = wrap_angle(x.yaw - lane_yaw);
-        let u = super::clamp_action(
-            Control {
-                accel: (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5),
-                curvature: -(0.02 * d + 0.3 * heading_err),
-            },
-            x.speed,
+        let u = action_toward(
+            x,
+            (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5),
+            -(0.02 * d + 0.3 * heading_err),
+            ctx.road.dt,
         );
         x = step(x, u, ctx.road.dt);
         actions.push(u);
@@ -704,22 +716,48 @@ mod tests {
             y: 2.0,
             yaw: 0.3,
             speed: 8.0,
+            accel: 0.2,
+            curvature: 0.03,
         };
         let u = Control {
-            accel: 0.5,
-            curvature: 0.05,
+            jerk: 0.5,
+            curvature_rate: 0.05,
         };
         let dt = 0.1;
         let (a, b) = dynamics_jacobian(&x, &u, dt);
+        let next_curvature = x.curvature + u.curvature_rate * dt;
         let expect_a = [
-            [1.0, 0.0, -x.speed * dt * x.yaw.sin(), dt * x.yaw.cos()],
-            [0.0, 1.0, x.speed * dt * x.yaw.cos(), dt * x.yaw.sin()],
-            [0.0, 0.0, 1.0, dt * u.curvature],
-            [0.0, 0.0, 0.0, 1.0],
+            [
+                1.0,
+                0.0,
+                -x.speed * dt * x.yaw.sin(),
+                dt * x.yaw.cos(),
+                0.0,
+                0.0,
+            ],
+            [
+                0.0,
+                1.0,
+                x.speed * dt * x.yaw.cos(),
+                dt * x.yaw.sin(),
+                0.0,
+                0.0,
+            ],
+            [0.0, 0.0, 1.0, dt * next_curvature, 0.0, x.speed * dt],
+            [0.0, 0.0, 0.0, 1.0, dt, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         ];
-        let expect_b = [[0.0, 0.0], [0.0, 0.0], [0.0, x.speed * dt], [dt, 0.0]];
-        for i in 0..4 {
-            for j in 0..4 {
+        let expect_b = [
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [0.0, x.speed * dt * dt],
+            [dt * dt, 0.0],
+            [dt, 0.0],
+            [0.0, dt],
+        ];
+        for i in 0..6 {
+            for j in 0..6 {
                 assert!((a[i][j] - expect_a[i][j]).abs() < 1e-6, "A[{i}][{j}]");
             }
             for j in 0..2 {

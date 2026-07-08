@@ -462,6 +462,7 @@ fn maneuver_states(path: &Path, s0: f64, d0: f64, speed0: f64, m: &Maneuver) -> 
                 y: xy[i][1],
                 yaw,
                 speed: speeds[i],
+                ..Default::default()
             }
         })
         .collect()

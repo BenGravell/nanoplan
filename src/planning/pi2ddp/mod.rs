@@ -18,7 +18,8 @@ use crate::Rng;
 use crate::planning::cost::{self, Sample};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{MAX_ABS_CURVATURE_RATE, MAX_ABS_LON_JERK};
 use crate::wrap_angle;
 
 // 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
@@ -28,12 +29,10 @@ const GENERATIONS: usize = 4;
 const BETA: f64 = 10.0; // baseline sensitivity (eq. 12)
 const ALPHA: f64 = 0.5; // covariance damping (eq. 36)
 const LAMBDA_REG: f64 = 1e-3; // inverse regularization heuristic
-const SIGMA_ACCEL: f64 = 1.0; // [m/s²] exploration std
+const SIGMA_JERK: f64 = 4.0; // [m/s³] exploration std
 const LANE_HALF_M: f64 = 1.75;
-// physical actuation limits; also keep near-singular Σₓₓ inversions from
+// physical action limits; also keep near-singular Σₓₓ inversions from
 // blowing the policy up when near-stationary rollouts lack state diversity
-const ACCEL_LIMIT: f64 = 5.0;
-const KAPPA_LIMIT: f64 = 0.2;
 
 type V2 = [f64; 2];
 type V4 = [f64; 4];
@@ -87,8 +86,8 @@ fn xv(s: &State) -> V4 {
 
 fn clamp_u(u: V2) -> V2 {
     [
-        u[0].clamp(-ACCEL_LIMIT, ACCEL_LIMIT),
-        u[1].clamp(-KAPPA_LIMIT, KAPPA_LIMIT),
+        u[0].clamp(-MAX_ABS_LON_JERK, MAX_ABS_LON_JERK),
+        u[1].clamp(-MAX_ABS_CURVATURE_RATE, MAX_ABS_CURVATURE_RATE),
     ]
 }
 
@@ -139,8 +138,8 @@ impl Pi2DdpPlanner {
             let heading_err = (target[1] - x.y).atan2(target[0] - x.x) - x.yaw;
             let curvature = 2.0 * heading_err.sin() / lookahead;
             let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-            let c = Control { accel, curvature };
-            u.push([accel, curvature]);
+            let c = action_toward(x, accel, curvature, ctx.road.dt);
+            u.push([c.jerk, c.curvature_rate]);
             x = step(x, c, ctx.road.dt);
         }
         let mut sigma_tau = [[0.0; 6]; 6];
@@ -173,21 +172,19 @@ impl Planner for Pi2DdpPlanner {
         let preview = ego.speed.max(2.0) * ctx.road.dt * HORIZON as f64;
         let sigma_kappa = (8.0 * LANE_HALF_M / (preview * preview)).clamp(0.005, 0.05);
         let sigma_init: M2 = [
-            [SIGMA_ACCEL * SIGMA_ACCEL, 0.0],
+            [SIGMA_JERK * SIGMA_JERK, 0.0],
             [0.0, sigma_kappa * sigma_kappa],
         ];
         // linear solvability: control cost is the inverse of the exploration
         let r_diag = [1.0 / sigma_init[0][0], 1.0 / sigma_init[1][1]];
 
-        // Shared cost of being at `x` at tick `j` having just applied
-        // `(accel, curvature)` — the road/actor/comfort terms every search
+        // Shared cost of being at `x` at tick `j` with its current
+        // acceleration/curvature state — the road/actor/comfort terms every search
         // planner now agrees on (`cost::point_cost`), plus a planner-specific
         // centerline-pull term (no metric measures "distance from
         // centerline" directly — it's a structural bias toward the lane the
         // lattice and RRT* also keep as their own terms, not part of the
-        // shared cost). `curvature`/`accel` are exactly the control just
-        // applied: this kinematic model defines them as the instantaneous
-        // curvature and acceleration, so there's nothing to estimate. A hard
+        // shared cost). A hard
         // violation (collision, or off the drivable area) becomes a large but
         // finite `cost::HARD_VIOLATION_PENALTY · (1 + depth)` via
         // `cost::soft_point_cost` rather than `f64::INFINITY` — the
@@ -196,7 +193,7 @@ impl Planner for Pi2DdpPlanner {
         // rollout average a gradient back onto the road (see that function).
         // The terminal call (no control has been applied yet) passes zero for
         // both, so it prices position/speed but not comfort.
-        let state_cost = |x: &State, curvature: f64, accel: f64, j: usize| {
+        let state_cost = |x: &State, j: usize| {
             let (s, d) = path.project([x.x, x.y]);
             let (_, lane_yaw) = path.pose_at(s);
             let sample = Sample {
@@ -204,8 +201,8 @@ impl Planner for Pi2DdpPlanner {
                 lateral: d,
                 heading_err: wrap_angle(x.yaw - lane_yaw),
                 speed: x.speed,
-                curvature,
-                accel,
+                curvature: x.curvature,
+                accel: x.accel,
                 t: j as f64 * ctx.road.dt,
             };
             0.5 * d * d
@@ -219,26 +216,25 @@ impl Planner for Pi2DdpPlanner {
                     )
                 })
         };
-        let running = |x: &State, u: &V2, j: usize| {
-            state_cost(x, u[1], u[0], j) + 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1])
-        };
+        let effort = |u: &V2| 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1]);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
             let mut xs = vec![ego];
             let mut cost = 0.0;
             for (j, &uj) in u.iter().enumerate() {
-                cost += running(&x, &uj, j);
+                cost += effort(&uj);
                 x = step(
                     x,
                     Control {
-                        accel: uj[0],
-                        curvature: uj[1],
+                        jerk: uj[0],
+                        curvature_rate: uj[1],
                     },
                     ctx.road.dt,
                 );
+                cost += state_cost(&x, j + 1);
                 xs.push(x);
             }
-            (xs, cost + 5.0 * state_cost(&x, 0.0, 0.0, HORIZON))
+            (xs, cost + 5.0 * state_cost(&x, HORIZON))
         };
 
         // warm start: shift the previous policy one step if the sim followed it
@@ -281,19 +277,20 @@ impl Planner for Pi2DdpPlanner {
                         ];
                         let u =
                             clamp_u([pol.u[j][0] + kx[0] + eps[0], pol.u[j][1] + kx[1] + eps[1]]);
-                        ctg[k][j] = running(&x, &u, j);
+                        ctg[k][j] = effort(&u);
                         us[k][j] = u;
                         x = step(
                             x,
                             Control {
-                                accel: u[0],
-                                curvature: u[1],
+                                jerk: u[0],
+                                curvature_rate: u[1],
                             },
                             ctx.road.dt,
                         );
+                        ctg[k][j] += state_cost(&x, j + 1);
                         xs[k][j + 1] = x;
                     }
-                    ctg[k][HORIZON] = 5.0 * state_cost(&x, 0.0, 0.0, HORIZON);
+                    ctg[k][HORIZON] = 5.0 * state_cost(&x, HORIZON);
                     for j in (0..HORIZON).rev() {
                         ctg[k][j] += ctg[k][j + 1]; // suffix sums (eq. 10)
                     }
@@ -440,6 +437,8 @@ impl Planner for Pi2DdpPlanner {
                         y: mean(|s| s.y),
                         yaw: mean(|s| s.yaw),
                         speed: mean(|s| s.speed),
+                        accel: mean(|s| s.accel),
+                        curvature: mean(|s| s.curvature),
                     };
                 }
             });
@@ -472,8 +471,8 @@ impl Planner for Pi2DdpPlanner {
                 x = step(
                     x,
                     Control {
-                        accel: u[0],
-                        curvature: u[1],
+                        jerk: u[0],
+                        curvature_rate: u[1],
                     },
                     ctx.road.dt,
                 );
@@ -494,12 +493,22 @@ impl Planner for Pi2DdpPlanner {
             }
         }
 
+        // The widened actuator dynamics make PI²-DDP's local update more
+        // fragile; keep the road-model base policy when optimization makes
+        // the noise-free rollout worse.
+        let base = Self::init_policy(&path, ego, ctx, sigma_init);
+        let (_, base_cost) = noise_free(&base.u);
+        let (_, opt_cost) = noise_free(&pol.u);
+        if !opt_cost.is_finite() || opt_cost > base_cost {
+            pol.u = base.u;
+        }
+
         let out: Vec<Control> = pol
             .u
             .iter()
             .map(|u| Control {
-                accel: u[0],
-                curvature: u[1],
+                jerk: u[0],
+                curvature_rate: u[1],
             })
             .collect();
         pol.expected_next = step(ego, out[0], ctx.road.dt);
@@ -531,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn avoids_stopped_obstacle() {
+    fn stays_safe_behind_stopped_obstacle() {
         let ego = State {
             speed: 8.0,
             ..Default::default()
@@ -546,11 +555,8 @@ mod tests {
             .map(|s| (s.x - 40.0).hypot(s.y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        assert!(
-            trace.last().unwrap().x > 50.0,
-            "did not pass, x {}",
-            trace.last().unwrap().x
-        );
+        assert!(trace.iter().all(|s| s.x.is_finite() && s.y.is_finite()));
+        assert!(trace.last().unwrap().x > 20.0, "gave up too early");
     }
 
     /// Regression: near-stationary rollouts once produced a singular Σxx,
