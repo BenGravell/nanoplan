@@ -53,6 +53,7 @@ use super::{
     take_warm, zero_action_point,
 };
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
+use crate::planning::search_tree::{parent_chain, record_diagnostics};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
@@ -360,12 +361,9 @@ impl Tree {
 
     /// Walk parent pointers from a goal node back to the root (treetop
     /// `extractPath`).
-    fn extract_path(&self, mut node: usize) -> Vec<usize> {
-        let mut path = vec![0; SEGMENTS];
-        for slot in (0..SEGMENTS).rev() {
-            path[slot] = node;
-            node = self.nodes[node].parent.expect("full-depth path");
-        }
+    fn extract_path(&self, node: usize) -> Vec<usize> {
+        let path = parent_chain(node, 0, |n| self.nodes[n].parent);
+        assert_eq!(path.len(), SEGMENTS);
         path
     }
 
@@ -381,10 +379,15 @@ impl Tree {
     }
 
     pub(crate) fn record_diagnostics(&self, diag: &crate::planning::Diagnostics) {
-        for node in self.nodes.iter().skip(1) {
-            diag.record_point([node.state.x, node.state.y]);
-            diag.record_trajectory(node.states.iter().map(|s| [s.x, s.y]).collect());
-        }
+        record_diagnostics(
+            diag,
+            self.nodes.iter().skip(1).map(|node| {
+                (
+                    [node.state.x, node.state.y],
+                    node.states.iter().map(|s| [s.x, s.y]).collect(),
+                )
+            }),
+        );
     }
 }
 

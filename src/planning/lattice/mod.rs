@@ -18,10 +18,10 @@
 //! edge costs are non-negative, so the first final-layer node A\* settles is
 //! the global optimum); only the work to find it is smaller.
 
-use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::planning::cost::{self, Sample};
+use crate::planning::search_tree::{QueueEntry, parent_chain, xy_to_controls};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
@@ -62,64 +62,6 @@ const GRID_NODES: usize = STATION_LAYERS * LATERALS;
 /// Lateral offset of grid column `j`.
 fn lateral(j: usize) -> f64 {
     -LAT_BOUND_M + 2.0 * LAT_BOUND_M * j as f64 / (LATERALS - 1) as f64
-}
-
-/// A\* priority-queue entry: the cheapest cost-so-far pops first (min-heap
-/// via a reversed `Ord`). `total_cmp` gives a total order over the finite,
-/// non-negative edge costs; ties break on node index for determinism.
-struct QItem {
-    cost: f64,
-    node: usize,
-}
-impl PartialEq for QItem {
-    fn eq(&self, other: &Self) -> bool {
-        self.cost == other.cost && self.node == other.node
-    }
-}
-impl Eq for QItem {}
-impl Ord for QItem {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // reversed so BinaryHeap (a max-heap) yields the minimum cost
-        other
-            .cost
-            .total_cmp(&self.cost)
-            .then_with(|| other.node.cmp(&self.node))
-    }
-}
-impl PartialOrd for QItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Turn a sampled position trajectory (spaced `dt` apart, starting one tick
-/// after the ego) into controls for the kinematic model.
-fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
-    let mut v = ego.speed;
-    let mut yaw = ego.yaw;
-    let mut prev = [ego.x, ego.y];
-    let mut x = ego;
-    pts.iter()
-        .map(|&p| {
-            let ds = (p[0] - prev[0]).hypot(p[1] - prev[1]);
-            let new_v = ds / dt;
-            let new_yaw = if ds > 1e-6 {
-                (p[1] - prev[1]).atan2(p[0] - prev[0])
-            } else {
-                yaw
-            };
-            let accel = (new_v - v) / dt;
-            let curvature = if ds > 1e-6 {
-                wrap_angle(new_yaw - yaw) / ds
-            } else {
-                0.0
-            };
-            let u = action_toward(x, accel, curvature, dt);
-            x = step(x, u, dt);
-            (v, yaw, prev) = (new_v, new_yaw, p);
-            u
-        })
-        .collect()
 }
 
 impl Planner for LatticePlanner {
@@ -214,11 +156,11 @@ impl Planner for LatticePlanner {
         let mut parent = vec![usize::MAX; n_nodes];
         dist[0] = 0.0;
         let mut heap = BinaryHeap::new();
-        heap.push(QItem { cost: 0.0, node: 0 });
+        heap.push(QueueEntry { cost: 0.0, node: 0 });
         let mut goal: Option<usize> = None;
 
         ctx.time("optimize", || {
-            while let Some(QItem { cost: g, node }) = heap.pop() {
+            while let Some(QueueEntry { cost: g, node }) = heap.pop() {
                 if g > dist[node] {
                     continue; // stale queue entry, already settled cheaper
                 }
@@ -265,7 +207,7 @@ impl Planner for LatticePlanner {
                     if nd < dist[succ] {
                         dist[succ] = nd;
                         parent[succ] = node;
-                        heap.push(QItem {
+                        heap.push(QueueEntry {
                             cost: nd,
                             node: succ,
                         });
@@ -288,11 +230,9 @@ impl Planner for LatticePlanner {
 
         // reconstruct the chosen lateral per layer from the parent chain
         let mut laterals = vec![0.0; STATION_LAYERS];
-        let mut node = goal;
-        while node != 0 {
+        for node in parent_chain(goal, 0, |n| (parent[n] != usize::MAX).then_some(parent[n])) {
             let idx = node - 1;
             laterals[idx / LATERALS] = lateral(idx % LATERALS);
-            node = parent[node];
         }
 
         // sample the winning path over time; d is cubic in t on each segment

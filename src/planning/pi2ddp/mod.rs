@@ -15,12 +15,11 @@
 //! the lane width at the preview distance.
 
 use crate::Rng;
-use crate::planning::cost::{self, Sample};
+use crate::planning::cost;
+use crate::planning::planner_math::{self, M2, M4, M6, M24, V2};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
-use crate::simulation::{MAX_ABS_CURVATURE_RATE, MAX_ABS_LON_JERK};
-use crate::wrap_angle;
 
 // 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
 const HORIZON: usize = 100;
@@ -33,13 +32,6 @@ const SIGMA_JERK: f64 = 4.0; // [m/s³] exploration std
 const LANE_HALF_M: f64 = 1.75;
 // physical action limits; also keep near-singular Σₓₓ inversions from
 // blowing the policy up when near-stationary rollouts lack state diversity
-
-type V2 = [f64; 2];
-type V4 = [f64; 4];
-type M2 = [[f64; 2]; 2];
-type M24 = [[f64; 4]; 2];
-type M4 = [[f64; 4]; 4];
-type M6 = [[f64; 6]; 6];
 
 // --- tiny fixed-size linear algebra ---
 
@@ -78,17 +70,6 @@ fn inv4(a: &M4, reg: f64) -> M4 {
         }
     }
     inv
-}
-
-fn xv(s: &State) -> V4 {
-    [s.x, s.y, s.yaw, s.speed]
-}
-
-fn clamp_u(u: V2) -> V2 {
-    [
-        u[0].clamp(-MAX_ABS_LON_JERK, MAX_ABS_LON_JERK),
-        u[1].clamp(-MAX_ABS_CURVATURE_RATE, MAX_ABS_CURVATURE_RATE),
-    ]
 }
 
 /// Sample from N(0, sigma) via the analytic 2x2 Cholesky factor.
@@ -195,18 +176,8 @@ impl Planner for Pi2DdpPlanner {
         // The terminal call (no control has been applied yet) passes zero for
         // both, so it prices position/speed but not comfort.
         let state_cost = |x: &State, j: usize| {
-            let (s, d) = path.project([x.x, x.y]);
-            let (_, lane_yaw) = path.pose_at(s);
-            let sample = Sample {
-                xy: [x.x, x.y],
-                lateral: d,
-                heading_err: wrap_angle(x.yaw - lane_yaw),
-                speed: x.speed,
-                curvature: x.curvature,
-                accel: x.accel,
-                t: j as f64 * ctx.road.dt,
-            };
-            0.5 * d * d
+            let (_, sample) = planner_math::state_sample(&path, x, j as f64 * ctx.road.dt, None);
+            0.5 * sample.lateral * sample.lateral
                 + ctx.time("cost", || {
                     constraints.soft_point_cost(&sample, ctx.road.target_speed)
                 })
@@ -270,18 +241,13 @@ impl Planner for Pi2DdpPlanner {
                             pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
                             pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum(),
                         ];
-                        let u =
-                            clamp_u([pol.u[j][0] + kx[0] + eps[0], pol.u[j][1] + kx[1] + eps[1]]);
+                        let u = planner_math::clamp_u([
+                            pol.u[j][0] + kx[0] + eps[0],
+                            pol.u[j][1] + kx[1] + eps[1],
+                        ]);
                         ctg[k][j] = effort(&u);
                         us[k][j] = u;
-                        x = step(
-                            x,
-                            Control {
-                                jerk: u[0],
-                                curvature_rate: u[1],
-                            },
-                            ctx.road.dt,
-                        );
+                        x = step(x, planner_math::control(u), ctx.road.dt);
                         ctg[k][j] += state_cost(&x, j + 1);
                         xs[k][j + 1] = x;
                     }
@@ -327,8 +293,8 @@ impl Planner for Pi2DdpPlanner {
                     // Σ_τ ← (1−α)Σ_τ + α Σₖ pₖ δτ δτᵀ, δτ relative to the nominal
                     let mut s_tau = [[0.0; 6]; 6];
                     for k in 0..ROLLOUTS {
-                        let xn = xv(&x_nom[j]);
-                        let xk = xv(&xs[k][j]);
+                        let xn = planner_math::state4(&x_nom[j]);
+                        let xk = planner_math::state4(&xs[k][j]);
                         let dtau = [
                             xk[0] - xn[0],
                             xk[1] - xn[1],
@@ -448,7 +414,7 @@ impl Planner for Pi2DdpPlanner {
                     x.yaw - nom.yaw,
                     x.speed - nom.speed,
                 ];
-                let u = clamp_u([
+                let u = planner_math::clamp_u([
                     pol.u[j][0]
                         + pol.gains[j][0]
                             .iter()
@@ -463,14 +429,7 @@ impl Planner for Pi2DdpPlanner {
                             .sum::<f64>(),
                 ]);
                 u_exec.push(u);
-                x = step(
-                    x,
-                    Control {
-                        jerk: u[0],
-                        curvature_rate: u[1],
-                    },
-                    ctx.road.dt,
-                );
+                x = step(x, planner_math::control(u), ctx.road.dt);
             }
             let (_, cost) = noise_free(&u_exec);
 
@@ -498,14 +457,7 @@ impl Planner for Pi2DdpPlanner {
             pol.u = base.u;
         }
 
-        let out: Vec<Control> = pol
-            .u
-            .iter()
-            .map(|u| Control {
-                jerk: u[0],
-                curvature_rate: u[1],
-            })
-            .collect();
+        let out: Vec<Control> = pol.u.iter().map(|&u| planner_math::control(u)).collect();
         pol.expected_next = step(ego, out[0], ctx.road.dt);
         self.policy = Some(pol);
         out

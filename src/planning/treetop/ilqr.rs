@@ -71,73 +71,14 @@
 //! points.
 
 use super::{TICKS, goal_state, rollout_constrained, take_warm};
+use crate::planning::planner_math::{
+    self, M22, M26, M62, M66, V2, V6, dot, mat_add, mat_mul, mat_vec, state_from_v6, state6,
+    transpose, vec_add,
+};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
 use crate::wrap_angle;
-
-// ---- Tiny fixed-size linear algebra --------------------------------------
-// State dimension 6, action dimension 2 — small enough that hand-rolled
-// const-generic helpers beat pulling in a matrix crate (and stay wasm-lean).
-// Convention: a matrix is `[[f64; COLS]; ROWS]`.
-
-type V2 = [f64; 2];
-type V6 = [f64; 6];
-type M66 = [[f64; 6]; 6];
-type M62 = [[f64; 2]; 6]; // 6 rows × 2 cols
-type M26 = [[f64; 6]; 2]; // 2 rows × 6 cols
-type M22 = [[f64; 2]; 2];
-
-fn mat_mul<const M: usize, const K: usize, const N: usize>(
-    a: &[[f64; K]; M],
-    b: &[[f64; N]; K],
-) -> [[f64; N]; M] {
-    let mut out = [[0.0; N]; M];
-    for i in 0..M {
-        for k in 0..K {
-            let aik = a[i][k];
-            for j in 0..N {
-                out[i][j] += aik * b[k][j];
-            }
-        }
-    }
-    out
-}
-
-fn mat_vec<const M: usize, const N: usize>(a: &[[f64; N]; M], v: &[f64; N]) -> [f64; M] {
-    std::array::from_fn(|i| (0..N).map(|j| a[i][j] * v[j]).sum())
-}
-
-fn transpose<const M: usize, const N: usize>(a: &[[f64; N]; M]) -> [[f64; M]; N] {
-    std::array::from_fn(|i| std::array::from_fn(|j| a[j][i]))
-}
-
-fn vec_add<const N: usize>(a: [f64; N], b: [f64; N]) -> [f64; N] {
-    std::array::from_fn(|i| a[i] + b[i])
-}
-
-fn mat_add<const M: usize, const N: usize>(a: [[f64; N]; M], b: [[f64; N]; M]) -> [[f64; N]; M] {
-    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
-}
-
-fn dot<const N: usize>(a: [f64; N], b: [f64; N]) -> f64 {
-    (0..N).map(|i| a[i] * b[i]).sum()
-}
-
-fn to_v6(x: &State) -> V6 {
-    [x.x, x.y, x.yaw, x.speed, x.accel, x.curvature]
-}
-
-fn of_v6(v: V6) -> State {
-    State {
-        x: v[0],
-        y: v[1],
-        yaw: v[2],
-        speed: v[3],
-        accel: v[4],
-        curvature: v[5],
-    }
-}
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
 
@@ -186,21 +127,8 @@ impl Ocp<'_, '_> {
     /// `s_hint` narrows the Frenet projection during FD probing, where the
     /// state moves by ±[`H_COST`] around a known station.
     fn stage_cost(&self, x: &State, u: &Control, t: usize, s_hint: Option<f64>) -> f64 {
-        let p = [x.x, x.y];
-        let (s, d) = match s_hint {
-            Some(h) => self.path.project_near(p, h, 15.0),
-            None => self.path.project(p),
-        };
-        let (_, lane_yaw) = self.path.pose_at(s);
-        let sample = cost::Sample {
-            xy: p,
-            lateral: d,
-            heading_err: wrap_angle(x.yaw - lane_yaw),
-            speed: x.speed,
-            curvature: x.curvature,
-            accel: x.accel,
-            t: t as f64 * self.ctx.road.dt,
-        };
+        let (_, sample) =
+            planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
         let target = self.ctx.road.target_speed;
         let constraints =
             cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
@@ -208,7 +136,7 @@ impl Ocp<'_, '_> {
         // doc), shared with the judo samplers and PI²-DDP.
         let shared = constraints.soft_point_cost(&sample, target);
         let dv = x.speed - target;
-        let structural = CENTER_W * d * d
+        let structural = CENTER_W * sample.lateral * sample.lateral
             + SPEED_W * dv * dv
             + EFFORT_ACCEL_W * u.jerk * u.jerk
             + EFFORT_CURV_W * u.curvature_rate * u.curvature_rate;
@@ -297,7 +225,10 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
 
 /// Terminal gradient and Hessian, likewise by finite differences.
 fn terminal_derivs(ocp: &Ocp, x: &State) -> (V6, M66) {
-    let (grad, hess) = fd_grad_hess(&|z: [f64; 6]| ocp.terminal_cost(&of_v6(z)), to_v6(x));
+    let (grad, hess) = fd_grad_hess(
+        &|z: [f64; 6]| ocp.terminal_cost(&state_from_v6(z)),
+        state6(x),
+    );
     (grad, hess)
 }
 
@@ -347,19 +278,19 @@ fn fd_grad_hess<const N: usize>(
 fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M66, M62) {
     let mut a = [[0.0; 6]; 6];
     for j in 0..6 {
-        let mut zp = to_v6(x);
+        let mut zp = state6(x);
         zp[j] += H_DYN;
-        let mut zm = to_v6(x);
+        let mut zm = state6(x);
         zm[j] -= H_DYN;
-        let sp = to_v6(&step(of_v6(zp), *u, dt));
-        let sm = to_v6(&step(of_v6(zm), *u, dt));
+        let sp = state6(&step(state_from_v6(zp), *u, dt));
+        let sm = state6(&step(state_from_v6(zm), *u, dt));
         for i in 0..6 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
     let col = |up: Control, um: Control| -> V6 {
-        let sp = to_v6(&step(*x, up, dt));
-        let sm = to_v6(&step(*x, um, dt));
+        let sp = state6(&step(*x, up, dt));
+        let sm = state6(&step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
     let cj = col(
@@ -513,7 +444,7 @@ fn forward(
     nxs.push(x);
     let mut cost_total = 0.0;
     for t in 0..n {
-        let dx: V6 = std::array::from_fn(|i| to_v6(&x)[i] - to_v6(&xs[t])[i]);
+        let dx: V6 = std::array::from_fn(|i| state6(&x)[i] - state6(&xs[t])[i]);
         let fb = mat_vec(&gains[t].kk, &dx);
         let u = Control {
             jerk: us[t].jerk + scale * gains[t].k[0] + fb[0],

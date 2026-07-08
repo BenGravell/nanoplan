@@ -30,6 +30,9 @@ use rstar::primitives::GeomWithData;
 
 use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
+use crate::planning::search_tree::{
+    dist, parent_chain, record_diagnostics, signed_max, xy_to_controls,
+};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, action_toward, step};
@@ -152,16 +155,6 @@ const DRIVABLE_MARGIN_M: f64 = 0.5;
 /// narrow road still leaves the centerline itself reachable.
 fn drivable_bound(ctx: &Context) -> f64 {
     (ctx.road.half_width - DRIVABLE_MARGIN_M).max(0.5)
-}
-
-fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
-}
-
-/// Whichever of `a`, `b` has the larger magnitude, keeping its sign — the
-/// running "most lateral offset so far" for `Node::peak_lateral`.
-fn signed_max(a: f64, b: f64) -> f64 {
-    if a.abs() >= b.abs() { a } else { b }
 }
 
 /// Largest heading change worth attempting for a hop of length `step_len`,
@@ -502,37 +495,6 @@ fn try_extend(
     true
 }
 
-/// Turn a sampled position trajectory (spaced `dt` apart, starting one tick
-/// after the ego) into controls for the kinematic model. Same technique as
-/// the Frenet lattice's converter of the same name.
-fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
-    let mut v = ego.speed;
-    let mut yaw = ego.yaw;
-    let mut prev = [ego.x, ego.y];
-    let mut x = ego;
-    pts.iter()
-        .map(|&p| {
-            let ds = (p[0] - prev[0]).hypot(p[1] - prev[1]);
-            let new_v = ds / dt;
-            let new_yaw = if ds > 1e-6 {
-                (p[1] - prev[1]).atan2(p[0] - prev[0])
-            } else {
-                yaw
-            };
-            let accel = (new_v - v) / dt;
-            let curvature = if ds > 1e-6 {
-                wrap_angle(new_yaw - yaw) / ds
-            } else {
-                0.0
-            };
-            let u = action_toward(x, accel, curvature, dt);
-            x = step(x, u, dt);
-            (v, yaw, prev) = (new_v, new_yaw, p);
-            u
-        })
-        .collect()
-}
-
 #[derive(Default)]
 pub struct RrtStarPlanner {
     /// Last tick's winning polyline, in the same fixed world frame the ego
@@ -706,10 +668,13 @@ impl Planner for RrtStarPlanner {
         });
 
         if let Some(diag) = ctx.diagnostics {
-            for node in nodes.iter().skip(1) {
-                diag.record_point(node.pos);
-                diag.record_trajectory(node.segment.clone());
-            }
+            record_diagnostics(
+                diag,
+                nodes
+                    .iter()
+                    .skip(1)
+                    .map(|node| (node.pos, node.segment.clone())),
+            );
         }
 
         // Goal selection. The simulator executes only the *first* segment of
@@ -772,7 +737,7 @@ impl Planner for RrtStarPlanner {
             _ => overall_best,
         };
 
-        let Some(mut idx) = best_leaf else {
+        let Some(idx) = best_leaf else {
             // every sample was infeasible (e.g. boxed in): brake straight,
             // and drop the stale warm start so next tick starts fresh.
             // Capped so one Euler step can't overshoot past zero speed —
@@ -804,12 +769,7 @@ impl Planner for RrtStarPlanner {
         self.committed_bias = (1.0 - COMMIT_SMOOTHING) * self.committed_bias
             + COMMIT_SMOOTHING * nodes[idx].peak_lateral;
 
-        let mut chain = vec![];
-        while let Some(parent) = nodes[idx].parent {
-            chain.push(idx);
-            idx = parent;
-        }
-        chain.reverse();
+        let chain = parent_chain(idx, 0, |i| nodes[i].parent);
         let mut winning_path = vec![nodes[0].pos];
         for i in chain {
             winning_path.extend(nodes[i].segment.iter().skip(1).copied());

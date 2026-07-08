@@ -2,18 +2,6 @@
 
 ## Business logic and design
 
-
---
-Coalesce similar planners
-
-- src/planning/lattice is very similar to src/planning/treetop/rrt and src/planning/rrt_star
-  - they are all sampling-based trees, so they can share a common base
-
-- src/planning/pi2ddp and src/planning/treetop/ilqr
-  - they are both ilqr/ddp variants, mostly different in the way that derivatives are approximated/handled (sampling vs finite differencing), so they can share a common base
-
-
-
 --
 Factor out shared types and helpers across planners in src/planning
 

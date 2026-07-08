@@ -6,9 +6,11 @@ pub mod diagnostics;
 pub mod latency;
 pub mod lattice;
 pub mod pi2ddp;
+pub(crate) mod planner_math;
 pub mod rrt_star;
 pub(crate) mod sampling;
 pub mod sampling_mpc;
+pub(crate) mod search_tree;
 pub mod straight;
 pub mod treetop;
 
