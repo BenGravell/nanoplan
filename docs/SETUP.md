@@ -7,6 +7,17 @@
   [`rust-toolchain.toml`](../rust-toolchain.toml) pins the channel and adds
   the `wasm32-unknown-unknown` target automatically the first time you run
   `cargo` in this repo.
+- **Linux native build libraries**, if building the desktop viewer on
+  Debian/Ubuntu or a minimal container:
+
+  ```sh
+  sudo apt-get install -y --no-install-recommends \
+      pkg-config libwayland-dev libxkbcommon-dev
+  ```
+
+  The app does not enable Bevy's gamepad stack, so the normal build does not
+  need `libudev-dev`. Add it only if you re-enable Bevy `gamepad`/`bevy_gilrs`
+  support.
 - **Python 3** with the standard library only, if you plan to regenerate or
   convert the CommonRoad scenario corpus
   (`tools/generate_diverse_scenarios.py`,
@@ -68,19 +79,10 @@ faster; `[profile.dev] debug = "line-tables-only"` (instead of full
 debuginfo) accounts for the rest, trading per-variable debugger info for
 faster codegen and linking (panic/backtrace file:line info is unaffected).
 
-### Linux system dependencies
-
-Bevy's windowing and audio backends link against system libraries that
-aren't always present in minimal containers. If `cargo build` fails at the
-link step (not the compile step), install:
-
-```sh
-sudo apt-get install -y --no-install-recommends \
-    libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev pkg-config
-```
+### Headless Linux runtime
 
 To *run* the viewer in a headless environment (CI, a container with no
-display), you additionally need a software renderer and a virtual display:
+display), install a software renderer and a virtual display:
 
 ```sh
 sudo apt-get install -y --no-install-recommends \

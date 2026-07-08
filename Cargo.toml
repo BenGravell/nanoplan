@@ -14,10 +14,20 @@ license = "MIT"
 # UI, gizmos for drawing, no meshes/scenes). Listing the individual render
 # features instead avoids all of that; verified with `cargo build --timings`
 # (see tools/build_timings.py) that bevy_ui/bevy_animation/bevy_ui_render
-# drop out of the build entirely.
+# drop out of the build entirely. `default_platform` is expanded manually so
+# the unused gamepad stack (gilrs -> libudev-sys) stays out of native builds.
 bevy = { version = "0.19", default-features = false, features = [
     "default_app",
-    "default_platform",
+    "std",
+    "multi_threaded",
+    "bevy_winit",
+    "bevy_clipboard",
+    "default_font",
+    "webgl2",
+    "x11",
+    "wayland",
+    "custom_cursor",
+    "sysinfo_plugin",
     "bevy_render",
     "bevy_core_pipeline",
     "bevy_post_process",
