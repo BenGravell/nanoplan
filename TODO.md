@@ -1,5 +1,10 @@
 # TODO
 
+## Performance
+
+Planner latency has gotten way too high in the world mode, upwards of 300ms.
+Need to tackle the root causes by profiling more granularly and using industry best practices for low hanging fruit.
+
 ## Business logic and design
 
 --
