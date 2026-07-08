@@ -328,8 +328,13 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
     let expert_states: Vec<State> = (0..=TICKS)
         .map(|i| replay(&sc.expert, i as f64 * DT))
         .collect();
-    let expert =
-        trajectory_features(&expert_states, &path, sc.target_speed, sc.map.road_half_width, &actors)?;
+    let expert = trajectory_features(
+        &expert_states,
+        &path,
+        sc.target_speed,
+        sc.map.road_half_width,
+        &actors,
+    )?;
 
     let (s0, d0) = path.project([sc.ego.x, sc.ego.y]);
     let mut cands = vec![expert];
@@ -337,9 +342,13 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
         let states = maneuver_states(&path, s0, d0, sc.ego.speed, &m);
         // hard-violating candidates get zero probability: out of the
         // support entirely, like the planners reject them
-        if let Some(f) =
-            trajectory_features(&states, &path, sc.target_speed, sc.map.road_half_width, &actors)
-        {
+        if let Some(f) = trajectory_features(
+            &states,
+            &path,
+            sc.target_speed,
+            sc.map.road_half_width,
+            &actors,
+        ) {
             cands.push(f);
         }
     }

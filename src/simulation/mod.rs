@@ -377,7 +377,12 @@ mod tests {
         // stopped and holds the end pose.
         let sc = Scenario {
             name: "short-route".into(),
-            ego: State { x: 0.0, y: 0.0, yaw: 0.0, speed: 10.0 },
+            ego: State {
+                x: 0.0,
+                y: 0.0,
+                yaw: 0.0,
+                speed: 10.0,
+            },
             actors: vec![],
             centerline: vec![[-5.0, 0.0], [60.0, 0.0]],
             target_speed: 10.0,
@@ -398,9 +403,18 @@ mod tests {
         // the limits produce, and the new state is that control integrated —
         // so a planner rolling out through drive sees the same clipped motion
         // the plant will
-        let s = State { speed: 12.0, ..Default::default() };
-        let prev = Control { accel: 1.0, curvature: 0.05 };
-        let cmd = Control { accel: 100.0, curvature: 100.0 }; // wild command
+        let s = State {
+            speed: 12.0,
+            ..Default::default()
+        };
+        let prev = Control {
+            accel: 1.0,
+            curvature: 0.05,
+        };
+        let cmd = Control {
+            accel: 100.0,
+            curvature: 100.0,
+        }; // wild command
         let (ns, u) = drive(s, prev, cmd, 0.1);
         assert_eq!(u, apply_limits(prev, cmd, s.speed, 0.1));
         assert_eq!(ns, step(s, u, 0.1));
@@ -445,18 +459,48 @@ mod tests {
     fn limits_clamp_accel_and_jerk() {
         // a wild command from rest (prev = 0): jerk holds the first-tick accel
         // change to MAX_ABS_LON_JERK · dt, well inside the accel bound
-        let u = apply_limits(Control::default(), Control { accel: 100.0, curvature: 0.0 }, 5.0, 0.1);
-        assert!((u.accel - MAX_ABS_LON_JERK * 0.1).abs() < 1e-9, "accel {}", u.accel);
+        let u = apply_limits(
+            Control::default(),
+            Control {
+                accel: 100.0,
+                curvature: 0.0,
+            },
+            5.0,
+            0.1,
+        );
+        assert!(
+            (u.accel - MAX_ABS_LON_JERK * 0.1).abs() < 1e-9,
+            "accel {}",
+            u.accel
+        );
         // once ramped up, accel saturates at the capability bound, not beyond
         let mut prev = Control::default();
         for _ in 0..100 {
-            prev = apply_limits(prev, Control { accel: 100.0, curvature: 0.0 }, 5.0, 0.1);
+            prev = apply_limits(
+                prev,
+                Control {
+                    accel: 100.0,
+                    curvature: 0.0,
+                },
+                5.0,
+                0.1,
+            );
         }
-        assert!((prev.accel - MAX_LON_ACCEL).abs() < 1e-9, "accel {}", prev.accel);
+        assert!(
+            (prev.accel - MAX_LON_ACCEL).abs() < 1e-9,
+            "accel {}",
+            prev.accel
+        );
         // hard braking clamps to the (larger) deceleration bound
         let brake = apply_limits(
-            Control { accel: MIN_LON_ACCEL, ..Default::default() },
-            Control { accel: -100.0, curvature: 0.0 },
+            Control {
+                accel: MIN_LON_ACCEL,
+                ..Default::default()
+            },
+            Control {
+                accel: -100.0,
+                curvature: 0.0,
+            },
             5.0,
             0.1,
         );
@@ -471,25 +515,50 @@ mod tests {
         let slow = 3.0;
         assert!(MAX_ABS_LAT_ACCEL / (slow * slow) > MAX_ABS_CURVATURE);
         let u = apply_limits(
-            Control { accel: 0.0, curvature: MAX_ABS_CURVATURE },
-            Control { accel: 0.0, curvature: -MAX_ABS_CURVATURE },
+            Control {
+                accel: 0.0,
+                curvature: MAX_ABS_CURVATURE,
+            },
+            Control {
+                accel: 0.0,
+                curvature: -MAX_ABS_CURVATURE,
+            },
             slow,
             0.1,
         );
         let expected = MAX_ABS_CURVATURE - MAX_ABS_CURVATURE_RATE * 0.1;
-        assert!((u.curvature - expected).abs() < 1e-9, "curv {}", u.curvature);
+        assert!(
+            (u.curvature - expected).abs() < 1e-9,
+            "curv {}",
+            u.curvature
+        );
 
         // lateral-accel (grip) cap: at speed, sustained max steering saturates
         // at the curvature giving MAX_ABS_LAT_ACCEL, tighter than the absolute
         // cap
         let fast = 25.0;
         let kappa_lat = MAX_ABS_LAT_ACCEL / (fast * fast);
-        assert!(kappa_lat < MAX_ABS_CURVATURE, "test speed too low to bind lat accel");
+        assert!(
+            kappa_lat < MAX_ABS_CURVATURE,
+            "test speed too low to bind lat accel"
+        );
         let mut prev = Control::default();
         for _ in 0..100 {
-            prev = apply_limits(prev, Control { accel: 0.0, curvature: 1.0 }, fast, 0.1);
+            prev = apply_limits(
+                prev,
+                Control {
+                    accel: 0.0,
+                    curvature: 1.0,
+                },
+                fast,
+                0.1,
+            );
         }
-        assert!((prev.curvature - kappa_lat).abs() < 1e-9, "curv {}", prev.curvature);
+        assert!(
+            (prev.curvature - kappa_lat).abs() < 1e-9,
+            "curv {}",
+            prev.curvature
+        );
         assert!((prev.curvature * fast * fast - MAX_ABS_LAT_ACCEL).abs() < 1e-9);
     }
 
@@ -498,10 +567,19 @@ mod tests {
         // a planner slamming the wheel lock-to-lock every tick at speed: the
         // plant holds curvature, lateral accel, and per-tick steering change to
         // the capability bounds regardless
-        let mut sim = Simulator::new(State { speed: 8.0, ..Default::default() }, 0.1);
+        let mut sim = Simulator::new(
+            State {
+                speed: 8.0,
+                ..Default::default()
+            },
+            0.1,
+        );
         let mut prev = Control::default();
         for k in 0..200 {
-            let cmd = Control { accel: 0.0, curvature: if k % 2 == 0 { 5.0 } else { -5.0 } };
+            let cmd = Control {
+                accel: 0.0,
+                curvature: if k % 2 == 0 { 5.0 } else { -5.0 },
+            };
             let u = apply_limits(prev, cmd, sim.state.speed, sim.dt);
             let prev_yaw = sim.state.yaw;
             let dk = (u.curvature - prev.curvature).abs();
@@ -510,8 +588,14 @@ mod tests {
             let yaw_rate = crate::wrap_angle(sim.state.yaw - prev_yaw) / sim.dt;
             let lat_accel = yaw_rate * sim.state.speed;
             assert!(u.curvature.abs() <= MAX_ABS_CURVATURE + 1e-9);
-            assert!(dk <= MAX_ABS_CURVATURE_RATE * sim.dt + 1e-9, "steer step {dk}");
-            assert!(lat_accel.abs() <= MAX_ABS_LAT_ACCEL + 1e-6, "lat accel {lat_accel}");
+            assert!(
+                dk <= MAX_ABS_CURVATURE_RATE * sim.dt + 1e-9,
+                "steer step {dk}"
+            );
+            assert!(
+                lat_accel.abs() <= MAX_ABS_LAT_ACCEL + 1e-6,
+                "lat accel {lat_accel}"
+            );
         }
     }
 }

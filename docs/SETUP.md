@@ -33,7 +33,7 @@ outside of what [Trunk](#web-wasm-build) drives.
 
 ```sh
 git clone <repo-url> nanoplan && cd nanoplan
-cargo build            # debug build of both binaries (nanoplan, batch)
+cargo build            # debug build of all binaries
 cargo test             # ~27 tests across all four components
 cargo run              # launch the interactive viewer
 ```
@@ -106,9 +106,9 @@ trunk build --release --public-url /nanoplan/   # static output in dist/
 ```
 
 [`index.html`](../index.html) is Trunk's entry point. `data-bin="nanoplan"`
-pins Trunk to the viewer binary — without it, Trunk refuses to guess between
-`nanoplan` and the `batch` binary and the build fails with *"found more than
-one target artifact"*.
+pins Trunk to the viewer binary — without it, Trunk refuses to guess among
+the crate's binaries and the build fails with *"found more than one target
+artifact"*.
 
 ### wasm-specific notes
 
@@ -141,16 +141,19 @@ one target artifact"*.
   `scenarios/web/`; Trunk's `copy-file` directive in `index.html` copies the
   result into `dist/`. See [docs/USAGE.md#scenario-sources](USAGE.md#scenario-sources).
 
-## Batch runner
+## Batch tools
 
-The batch runner is a second binary in the same crate; no extra setup:
+The batch and latency-profiling tools are extra binaries in the same crate;
+no extra setup:
 
 ```sh
 cargo run --release --bin batch -- --count 20
+cargo run --release --bin profile_latency -- --count 20
 ```
 
-See [docs/USAGE.md#batch-evaluation](USAGE.md#batch-evaluation) for flags and
-output format.
+See [docs/USAGE.md#batch-evaluation](USAGE.md#batch-evaluation) and
+[docs/USAGE.md#latency-profiling](USAGE.md#latency-profiling) for flags and
+output formats.
 
 ## Converting scenarios
 

@@ -200,8 +200,8 @@ pub(crate) fn features(
     // finite-difference search, whose trajectories live near center. The
     // within-lane *bias* the `lane_keeping` metric also scores is left to
     // those centerline pulls; a per-sample cost has no window to measure it.
-    let lane_over =
-        (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0) / lane_keeping::LANE_HALF_WIDTH_M;
+    let lane_over = (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0)
+        / lane_keeping::LANE_HALF_WIDTH_M;
 
     Some([
         proximity,
@@ -327,14 +327,20 @@ mod tests {
 
     #[test]
     fn lane_keeping_feature_is_zero_in_lane_and_grows_when_straddling() {
-        let feat = |lateral: f64| features(
-            &Sample { lateral, speed: 10.0, ..Default::default() },
-            10.0,
-            HW,
-            &[],
-            None,
-        )
-        .unwrap()[6];
+        let feat = |lateral: f64| {
+            features(
+                &Sample {
+                    lateral,
+                    speed: 10.0,
+                    ..Default::default()
+                },
+                10.0,
+                HW,
+                &[],
+                None,
+            )
+            .unwrap()[6]
+        };
         // centered and anywhere inside the ego's own lane: no lane-keeping cost
         assert_eq!(feat(0.0), 0.0);
         assert_eq!(feat(lane_keeping::LANE_HALF_WIDTH_M - 0.01), 0.0);
@@ -360,19 +366,34 @@ mod tests {
         // violations (infinite under point_cost) but soft_point_cost prices
         // the deeper one higher, giving a sampling optimizer a gradient back
         // toward the road instead of a flat penalty plateau.
-        let near = Sample { lateral: HW + 0.5, ..Default::default() };
-        let far = Sample { lateral: HW + 3.0, ..Default::default() };
+        let near = Sample {
+            lateral: HW + 0.5,
+            ..Default::default()
+        };
+        let far = Sample {
+            lateral: HW + 3.0,
+            ..Default::default()
+        };
         assert!(point_cost(&near, 10.0, HW, &[], None).is_infinite());
         assert!(point_cost(&far, 10.0, HW, &[], None).is_infinite());
         let c_near = soft_point_cost(&near, 10.0, HW, &[], None);
         let c_far = soft_point_cost(&far, 10.0, HW, &[], None);
         assert!(c_near.is_finite() && c_far.is_finite());
-        assert!(c_far > c_near, "escape slope not monotonic: {c_near} vs {c_far}");
+        assert!(
+            c_far > c_near,
+            "escape slope not monotonic: {c_near} vs {c_far}"
+        );
         // continuous with the flat penalty exactly at the edge (zero depth)
-        let edge = Sample { lateral: HW, speed: 10.0, ..Default::default() };
-        assert!((soft_point_cost(&edge, 10.0, HW, &[], None)
-            - point_cost(&edge, 10.0, HW, &[], None))
-        .abs() < 1e-9);
+        let edge = Sample {
+            lateral: HW,
+            speed: 10.0,
+            ..Default::default()
+        };
+        assert!(
+            (soft_point_cost(&edge, 10.0, HW, &[], None) - point_cost(&edge, 10.0, HW, &[], None))
+                .abs()
+                < 1e-9
+        );
     }
 
     #[test]

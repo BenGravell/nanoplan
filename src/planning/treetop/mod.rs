@@ -277,7 +277,12 @@ impl Planner for TreetopPlanner {
             // goal, else the one ending nearest it (a candidate that
             // merely optimized to a low cost by giving up on progress
             // must not beat one that gets there).
-            let ocp = ilqr::Ocp { path: &path, start: ego, goal, ctx };
+            let ocp = ilqr::Ocp {
+                path: &path,
+                start: ego,
+                goal,
+                ctx,
+            };
             let best = ctx.time("traj_opt", || {
                 let mut best_hit: Option<(f64, usize, ilqr::Solution)> = None;
                 let mut best_any: Option<(f64, usize, ilqr::Solution)> = None;
@@ -285,8 +290,7 @@ impl Planner for TreetopPlanner {
                     let actions = tree.actions_of(cand);
                     let sol = ilqr::solve(&ocp, &actions, OPT_ITERS);
                     let dist = state_distance(sol.states.last().unwrap(), &goal);
-                    if dist < GOAL_HIT_TOL
-                        && best_hit.as_ref().is_none_or(|(c, ..)| sol.cost < *c)
+                    if dist < GOAL_HIT_TOL && best_hit.as_ref().is_none_or(|(c, ..)| sol.cost < *c)
                     {
                         best_hit = Some((sol.cost, i, sol.clone()));
                     }
@@ -332,7 +336,10 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(&road.centerline);
-        let ego = State { speed: 10.0, ..Default::default() };
+        let ego = State {
+            speed: 10.0,
+            ..Default::default()
+        };
         let g = goal_state(&path, ego, &ctx);
         // 10 m/s for 10 s ahead of x = 0, on the lane, facing along it
         assert!((g.x - 100.0).abs() < 1e-6, "goal x {}", g.x);
@@ -343,7 +350,10 @@ mod tests {
 
     #[test]
     fn clamp_action_tightens_curvature_with_speed() {
-        let sharp = Control { accel: 10.0, curvature: 1.0 };
+        let sharp = Control {
+            accel: 10.0,
+            curvature: 1.0,
+        };
         // slow: static curvature bound, accel clamped to the lon limit
         let slow = clamp_action(sharp, 1.0);
         assert_eq!(slow.accel, ACCEL_LON_MAX);
@@ -356,16 +366,24 @@ mod tests {
 
     #[test]
     fn zero_action_point_coasts_straight() {
-        let x = State { x: 1.0, y: 2.0, yaw: 0.0, speed: 5.0 };
+        let x = State {
+            x: 1.0,
+            y: 2.0,
+            yaw: 0.0,
+            speed: 5.0,
+        };
         let z = zero_action_point(x, 2.0);
         assert_eq!(z, State { x: 11.0, ..x });
     }
 
     #[test]
     fn tracks_centerline_and_speed() {
-        let ego = State { y: 2.0, speed: 6.0, ..Default::default() };
-        let trace =
-            crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[], 150);
+        let ego = State {
+            y: 2.0,
+            speed: 6.0,
+            ..Default::default()
+        };
+        let trace = crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.2, "offset {}", end.y);
         assert!((end.speed - 10.0).abs() < 2.5, "speed {}", end.speed);
@@ -373,8 +391,14 @@ mod tests {
 
     #[test]
     fn avoids_stopped_obstacle() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
         let trace =
             crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
@@ -382,13 +406,23 @@ mod tests {
             .map(|s| (s.x - 40.0).hypot(s.y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        assert!(trace.last().unwrap().x > 50.0, "did not pass, x {}", trace.last().unwrap().x);
+        assert!(
+            trace.last().unwrap().x > 50.0,
+            "did not pass, x {}",
+            trace.last().unwrap().x
+        );
     }
 
     #[test]
     fn plan_is_a_pure_function_of_state() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
@@ -404,7 +438,10 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let mut ctx = crate::planning::test_ctx(&road, &[]);
         ctx.diagnostics = Some(&diag);
-        let ego = State { speed: 8.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
         TreetopPlanner::default().plan(ego, &ctx);
         let data = diag.take();
         // tree nodes as points; tree edges + pre-opt + post-opt polylines

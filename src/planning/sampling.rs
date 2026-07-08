@@ -162,9 +162,17 @@ pub(crate) fn inv_normal_cdf(p: f64) -> f64 {
 /// tracking tests). Subtracting each dimension's empirical mean restores the
 /// zero-mean property judo's RNG has in expectation, at the cost of one
 /// degree of freedom (negligible at these counts).
-pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(base: usize, count: usize, dim: usize) -> Vec<Vec<f64>> {
+pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(
+    base: usize,
+    count: usize,
+    dim: usize,
+) -> Vec<Vec<f64>> {
     let mut z: Vec<Vec<f64>> = (0..count)
-        .map(|k| (0..dim).map(|d| inv_normal_cdf(Q::coordinate(base + k, d))).collect())
+        .map(|k| {
+            (0..dim)
+                .map(|d| inv_normal_cdf(Q::coordinate(base + k, d)))
+                .collect()
+        })
         .collect();
     if count > 0 {
         for d in 0..dim {

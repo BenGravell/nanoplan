@@ -195,6 +195,31 @@ Flags:
 | `--seed S` | `42` | Seed for the synthetic generator. Same seed + count always produces the same scenarios. |
 | `--dir PATH` | (none) | A directory of `*.json` scenario files to include. Repeatable — pass `--dir a --dir b` to combine multiple directories. |
 
+## Latency profiling
+
+```sh
+cargo run --release --bin profile_latency -- --count 20
+cargo run --release --bin profile_latency -- --count 0 --dir DIR
+```
+
+Runs the same planner/scenario sweep as `batch`, but aggregates the existing
+`simulate()` latency diagnostics instead of metric scores.
+
+- **stdout**: one CSV row per `(planner, seam)` across the whole batch:
+
+  ```
+  planner,seam,calls,total_ms,mean_ms,max_ms
+  straight_(strawman),total,4000,12.341,0.003,0.029
+  frenet_lattice,route,4000,44.120,0.011,0.041
+  ...
+  ```
+
+- **stderr**: a compact mean `total` latency summary per planner, useful for
+  quick comparisons.
+
+Flags are the same as [Batch evaluation](#batch-evaluation): `--count`,
+`--seed`, and repeatable `--dir`.
+
 ## Converting CommonRoad scenarios
 
 `tools/export_commonroad_scenarios.py` reads [CommonRoad](https://commonroad.in.tum.de)

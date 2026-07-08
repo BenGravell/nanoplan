@@ -464,7 +464,10 @@ impl Grower<'_, '_> {
                 total += cost::HARD_VIOLATION_PENALTY + effort + pull;
             }
         }
-        EdgeEval { cost: total / us.len().max(1) as f64, collides }
+        EdgeEval {
+            cost: total / us.len().max(1) as f64,
+            collides,
+        }
     }
 }
 
@@ -493,10 +496,10 @@ fn cubic_coeffs(x0: f64, v0: f64, x1: f64, v1: f64, t: f64) -> [f64; 4] {
     let dx = x1 - x0;
     let v_sum = v0 + v1;
     [
-        (t * v_sum - 2.0 * dx) / t3,      // a3
+        (t * v_sum - 2.0 * dx) / t3,        // a3
         (3.0 * dx) / t2 - (v0 + v_sum) / t, // a2
-        v0,                                // a1
-        x0,                                // a0
+        v0,                                 // a1
+        x0,                                 // a0
     ]
 }
 
@@ -544,7 +547,11 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
         cx[0] * dt.powi(3) + cx[1] * dt.powi(2) + cx[2] * dt,
         cy[0] * dt.powi(3) + cy[1] * dt.powi(2) + cy[2] * dt,
     );
-    let dir = if sx * start.yaw.cos() + sy * start.yaw.sin() >= 0.0 { 1.0 } else { -1.0 };
+    let dir = if sx * start.yaw.cos() + sy * start.yaw.sin() >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
 
     (0..STEER_TICKS)
         .map(|i| {
@@ -554,12 +561,18 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
             let (ddx, ddy) = (polyval2(&cx, t), polyval2(&cy, t));
             let v = dx.hypot(dy);
             let (accel, curvature) = if v > V_MIN_FOR_STEER {
-                ((dx * ddx + dy * ddy) / v, (dx * ddy - dy * ddx) / (v * v * v))
+                (
+                    (dx * ddx + dy * ddy) / v,
+                    (dx * ddy - dy * ddx) / (v * v * v),
+                )
             } else {
                 // singular at rest: accelerate along the curve, no turning
                 (ddx.hypot(ddy), 0.0)
             };
-            Control { accel: dir * accel, curvature: dir * curvature }
+            Control {
+                accel: dir * accel,
+                curvature: dir * curvature,
+            }
         })
         .collect()
 }
@@ -616,14 +629,22 @@ mod tests {
     #[test]
     fn steer_reaches_a_straight_ahead_target() {
         // steering to the zero-action point should be nearly zero action
-        let from = State { speed: 10.0, ..Default::default() };
+        let from = State {
+            speed: 10.0,
+            ..Default::default()
+        };
         let dt = 0.1;
         let dur = STEER_TICKS as f64 * dt;
         let target = zero_action_point(from, dur);
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
-        assert!((end.x - target.x).abs() < 0.1, "x {} vs {}", end.x, target.x);
+        assert!(
+            (end.x - target.x).abs() < 0.1,
+            "x {} vs {}",
+            end.x,
+            target.x
+        );
         assert!(end.y.abs() < 0.01);
         assert!((end.speed - 10.0).abs() < 0.1);
     }
@@ -635,10 +656,18 @@ mod tests {
         // doesn't bite (a 2 m offset would demand 12 m/s² and get clamped
         // into an undershoot — that infeasible case is exactly what the
         // constrained rollout exists to prevent)
-        let from = State { speed: 10.0, ..Default::default() };
+        let from = State {
+            speed: 10.0,
+            ..Default::default()
+        };
         let dt = 0.1;
         let dur = STEER_TICKS as f64 * dt;
-        let target = State { x: 10.0, y: 0.8, yaw: 0.0, speed: 10.0 };
+        let target = State {
+            x: 10.0,
+            y: 0.8,
+            yaw: 0.0,
+            speed: 10.0,
+        };
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
@@ -652,11 +681,18 @@ mod tests {
         // boxed in by actors, the zap fallback still yields a full path
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let actors: Vec<State> = (0..5)
-            .map(|i| State { x: 10.0 + 5.0 * i as f64, y: -2.0 + i as f64, ..Default::default() })
+            .map(|i| State {
+                x: 10.0 + 5.0 * i as f64,
+                y: -2.0 + i as f64,
+                ..Default::default()
+            })
             .collect();
         let ctx = crate::planning::test_ctx(&road, &actors);
         let path = Path::new(&road.centerline);
-        let ego = State { speed: 8.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
         let goal = goal_state(&path, ego, &ctx);
         let tree = Tree::grow(ego, goal, None, 90, &path, &ctx);
         let cands = tree.path_candidates(2);
@@ -669,7 +705,11 @@ mod tests {
 
     #[test]
     fn tracks_centerline_and_speed() {
-        let ego = State { y: 2.0, speed: 6.0, ..Default::default() };
+        let ego = State {
+            y: 2.0,
+            speed: 6.0,
+            ..Default::default()
+        };
         let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.5, "offset {}", end.y);
@@ -678,22 +718,37 @@ mod tests {
 
     #[test]
     fn avoids_stopped_obstacle() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
-        let trace =
-            crate::planning::test_run(&mut RrtPlanner::default(), ego, &[obstacle], 150);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
+        let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
             .map(|s| (s.x - 40.0).hypot(s.y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        assert!(trace.last().unwrap().x > 50.0, "did not pass, x {}", trace.last().unwrap().x);
+        assert!(
+            trace.last().unwrap().x > 50.0,
+            "did not pass, x {}",
+            trace.last().unwrap().x
+        );
     }
 
     #[test]
     fn plan_is_a_pure_function_of_state() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);

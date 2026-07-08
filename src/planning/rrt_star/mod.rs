@@ -436,8 +436,16 @@ fn try_extend(
         .filter_map(|&j| {
             let curve = CubicSteer::new(nodes[j].pos, nodes[j].yaw, new_pos, new_yaw);
             let segment = curve.sample(STEER_SAMPLES);
-            steer_cost(&curve, &segment, path, s0, v, ctx, [nodes[j].station, new_s])
-                .map(|ec| (j, nodes[j].cost + ec, segment))
+            steer_cost(
+                &curve,
+                &segment,
+                path,
+                s0,
+                v,
+                ctx,
+                [nodes[j].station, new_s],
+            )
+            .map(|ec| (j, nodes[j].cost + ec, segment))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let Some((parent_idx, cost, segment)) = best else {
@@ -472,7 +480,15 @@ fn try_extend(
     for j in rewire_candidates {
         let curve = CubicSteer::new(new_pos, new_yaw, nodes[j].pos, nodes[j].yaw);
         let segment = curve.sample(STEER_SAMPLES);
-        let Some(ec) = steer_cost(&curve, &segment, path, s0, v, ctx, [new_s, nodes[j].station]) else {
+        let Some(ec) = steer_cost(
+            &curve,
+            &segment,
+            path,
+            s0,
+            v,
+            ctx,
+            [new_s, nodes[j].station],
+        ) else {
             continue;
         };
         let rewired_cost = cost + ec;
@@ -588,9 +604,15 @@ impl Planner for RrtStarPlanner {
                 let yaw = wrap_angle(parent.yaw + dyaw);
                 let curve = CubicSteer::new(parent.pos, parent.yaw, p, yaw);
                 let segment = curve.sample(STEER_SAMPLES);
-                let Some(ec) =
-                    steer_cost(&curve, &segment, &path, s0, v, ctx, [parent.station, station])
-                else {
+                let Some(ec) = steer_cost(
+                    &curve,
+                    &segment,
+                    &path,
+                    s0,
+                    v,
+                    ctx,
+                    [parent.station, station],
+                ) else {
                     break; // stale from here on; random sampling takes over
                 };
                 let cost = parent.cost + ec;
@@ -675,7 +697,15 @@ impl Planner for RrtStarPlanner {
                 GRID_LATERALS,
                 QMC_BUDGET,
             ) {
-                try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, path.frenet_to_xy(s, d));
+                try_extend(
+                    &mut nodes,
+                    &mut tree,
+                    &path,
+                    s0,
+                    v,
+                    ctx,
+                    path.frenet_to_xy(s, d),
+                );
             }
         });
 

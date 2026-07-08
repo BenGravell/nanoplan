@@ -364,7 +364,12 @@ mod tests {
         let p = predict(&a, Some(&lane), 2.0);
         // advanced ~speed·t along the lane and eased back toward the center
         assert!((p.x - 40.0).abs() < 1e-6, "x {}", p.x);
-        assert!(p.y > 0.0 && p.y < a.y, "y {} not between 0 and {}", p.y, a.y);
+        assert!(
+            p.y > 0.0 && p.y < a.y,
+            "y {} not between 0 and {}",
+            p.y,
+            a.y
+        );
         assert!((p.y - 2.0 * (-1.0f64).exp()).abs() < 1e-6, "y {}", p.y);
     }
 
@@ -502,7 +507,10 @@ mod tests {
         assert!(bias > 0.0 && bias < 0.8, "biased lane keeping {bias}");
         // … and straddling the lane line the whole way scores worse still
         let straddle = lk(&biased(1.7));
-        assert!(straddle < bias, "straddle {straddle} not worse than bias {bias}");
+        assert!(
+            straddle < bias,
+            "straddle {straddle} not worse than bias {bias}"
+        );
     }
 
     #[test]

@@ -249,7 +249,6 @@ fn control_at(knots: &[Knot], t: usize, span: usize) -> Knot {
     ]
 }
 
-
 /// A receding-horizon sampling planner parameterized by its judo optimizer:
 /// `SamplingPlanner<PredictiveSampling>`, `SamplingPlanner<Cem>`, and
 /// `SamplingPlanner<Mppi>` are the three planners the registry exposes. The
@@ -321,7 +320,10 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// previously applied control, exactly as the plant will.
     fn command(path: &Path, x: &State, dev: Knot, ctx: &Context) -> Control {
         let base = Self::base_policy(path, x, ctx);
-        Control { accel: base[0] + dev[0], curvature: base[1] + dev[1] }
+        Control {
+            accel: base[0] + dev[0],
+            curvature: base[1] + dev[1],
+        }
     }
 
     /// Cost of being at `x` at tick `t` having just applied `u` — the
@@ -405,8 +407,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         let mut nominal = ctx.time("warm_start", || match self.nominal.take() {
             Some(n)
                 if n.len() == num_nodes
-                    && (self.expected_next.x - ego.x).hypot(self.expected_next.y - ego.y)
-                        < 1.0 =>
+                    && (self.expected_next.x - ego.x).hypot(self.expected_next.y - ego.y) < 1.0 =>
             {
                 n
             }
@@ -473,11 +474,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
 }
 
 #[cfg(test)]
-pub(crate) fn run_planner<O: Optimizer>(
-    ego: State,
-    actors: &[State],
-    ticks: usize,
-) -> Vec<State> {
+pub(crate) fn run_planner<O: Optimizer>(ego: State, actors: &[State], ticks: usize) -> Vec<State> {
     crate::planning::test_run(&mut SamplingPlanner::<O>::default(), ego, actors, ticks)
 }
 
@@ -503,7 +500,11 @@ mod tests {
         let path = Path::new(&road.centerline);
         // from y = +2 (left of the lane), the base policy steers right
         // (negative curvature) and accelerates toward the target speed
-        let x = State { y: 2.0, speed: 8.0, ..Default::default() };
+        let x = State {
+            y: 2.0,
+            speed: 8.0,
+            ..Default::default()
+        };
         let base = SamplingPlanner::<PredictiveSampling>::base_policy(&path, &x, &ctx);
         assert!(base[1] < 0.0, "curvature {}", base[1]);
         assert!(base[0] > 0.0, "accel {}", base[0]);
@@ -518,26 +519,46 @@ mod tests {
     /// From an initial lateral offset, converge to the lane and hold the
     /// target speed — the basic "can it track the road" bar.
     fn tracks_centerline_and_speed<O: Optimizer>() {
-        let ego = State { y: 2.0, speed: 6.0, ..Default::default() };
+        let ego = State {
+            y: 2.0,
+            speed: 6.0,
+            ..Default::default()
+        };
         let trace = run_planner::<O>(ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.2, "{} offset {}", O::NAME, end.y);
-        assert!((end.speed - 10.0).abs() < 2.5, "{} speed {}", O::NAME, end.speed);
+        assert!(
+            (end.speed - 10.0).abs() < 2.5,
+            "{} speed {}",
+            O::NAME,
+            end.speed
+        );
     }
 
     /// Swerve around a stationary obstacle straddling the centerline, keep
     /// real clearance, and still make it past — the point of the whole
     /// exercise.
     fn avoids_stopped_obstacle<O: Optimizer>() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
         let trace = run_planner::<O>(ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
             .map(|s| (s.x - 40.0).hypot(s.y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "{} min gap {min_gap}", O::NAME);
-        assert!(trace.last().unwrap().x > 50.0, "{} did not pass, x {}", O::NAME, trace.last().unwrap().x);
+        assert!(
+            trace.last().unwrap().x > 50.0,
+            "{} did not pass, x {}",
+            O::NAME,
+            trace.last().unwrap().x
+        );
     }
 
     /// The knot noise is QMC (a pure function of the sample index), the
@@ -545,8 +566,14 @@ mod tests {
     /// fresh planners replanning from the identical state must produce the
     /// identical plan, like RRT* and unlike PI²-DDP.
     fn is_a_pure_function_of_state<O: Optimizer>() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
@@ -597,7 +624,10 @@ mod tests {
     #[test]
     fn records_diagnostics_when_requested() {
         use crate::planning::Diagnostics;
-        let ego = State { speed: 8.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
         let diag = Diagnostics::default();
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let mut ctx = crate::planning::test_ctx(&road, &[]);

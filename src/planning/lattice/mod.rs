@@ -237,7 +237,12 @@ impl Planner for LatticePlanner {
                 } else {
                     let idx = node - 1;
                     let l = idx / LATERALS;
-                    (Some(l), s0 + stations_m[l], lateral(idx % LATERALS), idx % LATERALS)
+                    (
+                        Some(l),
+                        s0 + stations_m[l],
+                        lateral(idx % LATERALS),
+                        idx % LATERALS,
+                    )
                 };
                 if layer == Some(STATION_LAYERS - 1) {
                     goal = Some(node); // settled the cheapest final-layer node
@@ -264,7 +269,10 @@ impl Planner for LatticePlanner {
                     if nd < dist[succ] {
                         dist[succ] = nd;
                         parent[succ] = node;
-                        heap.push(QItem { cost: nd, node: succ });
+                        heap.push(QItem {
+                            cost: nd,
+                            node: succ,
+                        });
                     }
                 }
             }
@@ -373,7 +381,10 @@ mod tests {
         };
         let trace = test_run_on(&mut LatticePlanner, &narrow, ego, &[obstacle], 150);
         assert!(peak(&trace) <= 3.5, "left the road, peak {}", peak(&trace));
-        assert!(trace.last().unwrap().x > 60.0, "never got past the obstacle");
+        assert!(
+            trace.last().unwrap().x > 60.0,
+            "never got past the obstacle"
+        );
 
         // A road too tight to fit the detour: rather than plan off the
         // surface to get around, the planner holds inside the road edge
@@ -383,8 +394,15 @@ mod tests {
             ..base
         };
         let trace = test_run_on(&mut LatticePlanner, &too_tight, ego, &[obstacle], 150);
-        assert!(peak(&trace) <= 2.0, "left the tight road, peak {}", peak(&trace));
-        assert!(trace.last().unwrap().x < 38.0, "drove into/around the obstacle");
+        assert!(
+            peak(&trace) <= 2.0,
+            "left the tight road, peak {}",
+            peak(&trace)
+        );
+        assert!(
+            trace.last().unwrap().x < 38.0,
+            "drove into/around the obstacle"
+        );
     }
 
     #[test]
@@ -406,7 +424,11 @@ mod tests {
         // full grid. The exact count is search-dependent, but there is at
         // least the root and the first layer's fan-out, and points and
         // connectors are recorded in lockstep.
-        assert!(data.points.len() > LATERALS, "only {} points", data.points.len());
+        assert!(
+            data.points.len() > LATERALS,
+            "only {} points",
+            data.points.len()
+        );
         assert_eq!(data.points.len(), data.trajectories.len() + 1); // +1 for the root point
         assert!(
             data.trajectories

@@ -116,10 +116,7 @@ fn vec_add<const N: usize>(a: [f64; N], b: [f64; N]) -> [f64; N] {
     std::array::from_fn(|i| a[i] + b[i])
 }
 
-fn mat_add<const M: usize, const N: usize>(
-    a: [[f64; N]; M],
-    b: [[f64; N]; M],
-) -> [[f64; N]; M] {
+fn mat_add<const M: usize, const N: usize>(a: [[f64; N]; M], b: [[f64; N]; M]) -> [[f64; N]; M] {
     std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
 }
 
@@ -132,7 +129,12 @@ fn to_v4(x: &State) -> V4 {
 }
 
 fn of_v4(v: V4) -> State {
-    State { x: v[0], y: v[1], yaw: v[2], speed: v[3] }
+    State {
+        x: v[0],
+        y: v[1],
+        yaw: v[2],
+        speed: v[3],
+    }
 }
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
@@ -263,8 +265,16 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     let s_hint = ocp.path.project([x.x, x.y]).0;
     let z0 = [x.x, x.y, x.yaw, x.speed, u.accel, u.curvature];
     let eval = |z: [f64; 6]| {
-        let xs = State { x: z[0], y: z[1], yaw: z[2], speed: z[3] };
-        let us = Control { accel: z[4], curvature: z[5] };
+        let xs = State {
+            x: z[0],
+            y: z[1],
+            yaw: z[2],
+            speed: z[3],
+        };
+        let us = Control {
+            accel: z[4],
+            curvature: z[5],
+        };
         ocp.stage_cost(&xs, &us, t, Some(s_hint))
     };
     let (grad, hess) = fd_grad_hess(&eval, z0);
@@ -345,12 +355,24 @@ fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M44, M42) {
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
     let ca = col(
-        Control { accel: u.accel + H_DYN, ..*u },
-        Control { accel: u.accel - H_DYN, ..*u },
+        Control {
+            accel: u.accel + H_DYN,
+            ..*u
+        },
+        Control {
+            accel: u.accel - H_DYN,
+            ..*u
+        },
     );
     let ck = col(
-        Control { curvature: u.curvature + H_DYN, ..*u },
-        Control { curvature: u.curvature - H_DYN, ..*u },
+        Control {
+            curvature: u.curvature + H_DYN,
+            ..*u
+        },
+        Control {
+            curvature: u.curvature - H_DYN,
+            ..*u
+        },
     );
     let b: M42 = std::array::from_fn(|i| [ca[i], ck[i]]);
     (a, b)
@@ -399,8 +421,17 @@ pub(crate) struct Solution {
 fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Gains>, Ecc)> {
     let n = us.len();
     let (mut vx, mut vxx) = terminal_derivs(ocp, &xs[n]);
-    let mut gains = vec![Gains { k: [0.0; 2], kk: [[0.0; 4]; 2] }; n];
-    let mut ecc = Ecc { term1: 0.0, term2: 0.0 };
+    let mut gains = vec![
+        Gains {
+            k: [0.0; 2],
+            kk: [[0.0; 4]; 2]
+        };
+        n
+    ];
+    let mut ecc = Ecc {
+        term1: 0.0,
+        term2: 0.0,
+    };
 
     for t in (0..n).rev() {
         let sd = stage_derivs(ocp, &xs[t], &us[t], t);
@@ -437,10 +468,12 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         let kt: M42 = transpose(&kk);
         let w: M42 = mat_add(mat_mul(&kt, &quu), qxu);
         vx = vec_add(qx, vec_add(mat_vec(&w, &k), mat_vec(&kt, &qu)));
-        let vxx_new: M44 = mat_add(qxx, mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))));
-        vxx = std::array::from_fn(|i| {
-            std::array::from_fn(|j| 0.5 * (vxx_new[i][j] + vxx_new[j][i]))
-        });
+        let vxx_new: M44 = mat_add(
+            qxx,
+            mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))),
+        );
+        vxx =
+            std::array::from_fn(|i| std::array::from_fn(|j| 0.5 * (vxx_new[i][j] + vxx_new[j][i])));
 
         ecc.term1 += dot(k, qu);
         ecc.term2 += dot(k, mat_vec(&quu, &k));
@@ -521,12 +554,12 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
         let mut attempts = 0;
         for attempt in 1..=MAX_FFGS_ATTEMPTS {
             attempts = attempt;
-            if let Some((nxs, nus, ncost)) =
-                ocp.ctx.time("rollout", || forward(ocp, &xs, &us, &gains, scale))
+            if let Some((nxs, nus, ncost)) = ocp
+                .ctx
+                .time("rollout", || forward(ocp, &xs, &us, &gains, scale))
             {
                 let change = cost_now - ncost;
-                let acceptable =
-                    COST_CHANGE_RATIO_MIN * ecc.evaluate(scale) - COST_CHANGE_TOL;
+                let acceptable = COST_CHANGE_RATIO_MIN * ecc.evaluate(scale) - COST_CHANGE_TOL;
                 if change > acceptable {
                     accepted = Some((nxs, nus, ncost));
                     break;
@@ -541,7 +574,11 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
                 xs = nxs;
                 us = nus;
                 cost_now = ncost;
-                let factor = if attempts <= 1 { REG_DECREASE } else { REG_INCREASE };
+                let factor = if attempts <= 1 {
+                    REG_DECREASE
+                } else {
+                    REG_INCREASE
+                };
                 reg = (reg * factor).clamp(REG_MIN, REG_MAX);
                 if improved < COST_CHANGE_TOL {
                     break; // converged (treetop `checkConvergence`)
@@ -558,7 +595,11 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
     // is consistent and honors the limits (treetop does exactly this).
     let (fxs, fus) = rollout_constrained(xs[0], &us, dt);
     let fcost = ocp.ctx.time("rollout", || ocp.traj_cost(&fxs, &fus));
-    Solution { states: fxs, controls: fus, cost: fcost }
+    Solution {
+        states: fxs,
+        controls: fus,
+        cost: fcost,
+    }
 }
 
 /// The base lane-keeping guess the standalone planner starts from when it
@@ -612,7 +653,12 @@ impl Planner for IlqrPlanner {
                 .unwrap_or_else(|| base_guess(&path, ego, ctx))
         });
 
-        let ocp = Ocp { path: &path, start: ego, goal, ctx };
+        let ocp = Ocp {
+            path: &path,
+            start: ego,
+            goal,
+            ctx,
+        };
         let sol = ctx.time("optimize", || solve(&ocp, &init, SOLO_ITERS));
 
         if let Some(diag) = ctx.diagnostics {
@@ -653,8 +699,16 @@ mod tests {
     fn fd_dynamics_jacobian_matches_the_analytic_one() {
         // the kinematic model's Jacobian is known in closed form (treetop
         // `Dynamics::jacobian`); the FD version must reproduce it
-        let x = State { x: 1.0, y: 2.0, yaw: 0.3, speed: 8.0 };
-        let u = Control { accel: 0.5, curvature: 0.05 };
+        let x = State {
+            x: 1.0,
+            y: 2.0,
+            yaw: 0.3,
+            speed: 8.0,
+        };
+        let u = Control {
+            accel: 0.5,
+            curvature: 0.05,
+        };
         let dt = 0.1;
         let (a, b) = dynamics_jacobian(&x, &u, dt);
         let expect_a = [
@@ -679,9 +733,18 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(&road.centerline);
-        let ego = State { y: 2.0, speed: 6.0, ..Default::default() };
+        let ego = State {
+            y: 2.0,
+            speed: 6.0,
+            ..Default::default()
+        };
         let goal = goal_state(&path, ego, &ctx);
-        let ocp = Ocp { path: &path, start: ego, goal, ctx: &ctx };
+        let ocp = Ocp {
+            path: &path,
+            start: ego,
+            goal,
+            ctx: &ctx,
+        };
         // a lazy guess: coast straight, ignoring the lane offset and speed
         let init = vec![Control::default(); TICKS];
         let (xs0, us0) = rollout_constrained(ego, &init, ctx.road.dt);
@@ -697,7 +760,11 @@ mod tests {
 
     #[test]
     fn tracks_centerline_and_speed() {
-        let ego = State { y: 2.0, speed: 6.0, ..Default::default() };
+        let ego = State {
+            y: 2.0,
+            speed: 6.0,
+            ..Default::default()
+        };
         let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.2, "offset {}", end.y);
@@ -706,10 +773,15 @@ mod tests {
 
     #[test]
     fn avoids_stopped_obstacle() {
-        let ego = State { speed: 8.0, ..Default::default() };
-        let obstacle = State { x: 40.0, ..Default::default() };
-        let trace =
-            crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[obstacle], 150);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let obstacle = State {
+            x: 40.0,
+            ..Default::default()
+        };
+        let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
             .map(|s| (s.x - 40.0).hypot(s.y))
@@ -719,7 +791,10 @@ mod tests {
 
     #[test]
     fn plan_is_a_pure_function_of_state() {
-        let ego = State { speed: 8.0, ..Default::default() };
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let a = IlqrPlanner::default().plan(ego, &ctx);

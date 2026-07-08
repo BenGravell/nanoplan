@@ -67,7 +67,10 @@ impl Path {
     pub fn project_near(&self, p: [f64; 2], s_hint: f64, window_m: f64) -> (f64, f64) {
         // segment `i` spans arc length [s[i], s[i+1]]; keep those overlapping
         // [s_hint - window, s_hint + window]
-        let lo = self.s.partition_point(|&x| x < s_hint - window_m).saturating_sub(1);
+        let lo = self
+            .s
+            .partition_point(|&x| x < s_hint - window_m)
+            .saturating_sub(1);
         let hi = self.s.partition_point(|&x| x <= s_hint + window_m);
         self.project_range(p, lo, hi.max(lo + 1))
     }
@@ -418,7 +421,13 @@ mod tests {
             [40.0, -3.0],
             [50.0, 0.0],
         ]);
-        for &p in &[[5.0, 1.0], [15.0, 3.0], [24.0, 6.0], [37.0, -5.0], [48.0, 2.0]] {
+        for &p in &[
+            [5.0, 1.0],
+            [15.0, 3.0],
+            [24.0, 6.0],
+            [37.0, -5.0],
+            [48.0, 2.0],
+        ] {
             let (s, d) = path.project(p);
             // even with a deliberately rough station hint, a generous window
             // reproduces the full projection exactly
