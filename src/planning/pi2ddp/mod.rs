@@ -293,13 +293,13 @@ impl Planner for Pi2DdpPlanner {
                     // Σ_τ ← (1−α)Σ_τ + α Σₖ pₖ δτ δτᵀ, δτ relative to the nominal
                     let mut s_tau = [[0.0; 6]; 6];
                     for k in 0..ROLLOUTS {
-                        let xn = planner_math::state4(&x_nom[j]);
-                        let xk = planner_math::state4(&xs[k][j]);
+                        let xn = &x_nom[j];
+                        let xk = &xs[k][j];
                         let dtau = [
-                            xk[0] - xn[0],
-                            xk[1] - xn[1],
-                            xk[2] - xn[2],
-                            xk[3] - xn[3],
+                            xk.x - xn.x,
+                            xk.y - xn.y,
+                            xk.yaw - xn.yaw,
+                            xk.speed - xn.speed,
                             us[k][j][0] - pol.u[j][0],
                             us[k][j][1] - pol.u[j][1],
                         ];

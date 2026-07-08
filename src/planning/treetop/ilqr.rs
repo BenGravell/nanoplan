@@ -72,7 +72,7 @@
 
 use super::{TICKS, goal_state, rollout_constrained, take_warm};
 use crate::planning::planner_math::{
-    self, M22, M26, M62, M66, V2, V6, dot, mat_add, mat_mul, mat_vec, state_from_v6, state6,
+    self, M22, M26, M62, M66, V2, V6, dot, mat_add, mat_mul, mat_vec, state, state_from_v6,
     transpose, vec_add,
 };
 use crate::planning::{Context, Planner, cost};
@@ -227,7 +227,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
 fn terminal_derivs(ocp: &Ocp, x: &State) -> (V6, M66) {
     let (grad, hess) = fd_grad_hess(
         &|z: [f64; 6]| ocp.terminal_cost(&state_from_v6(z)),
-        state6(x),
+        state(x),
     );
     (grad, hess)
 }
@@ -278,19 +278,19 @@ fn fd_grad_hess<const N: usize>(
 fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M66, M62) {
     let mut a = [[0.0; 6]; 6];
     for j in 0..6 {
-        let mut zp = state6(x);
+        let mut zp = state(x);
         zp[j] += H_DYN;
-        let mut zm = state6(x);
+        let mut zm = state(x);
         zm[j] -= H_DYN;
-        let sp = state6(&step(state_from_v6(zp), *u, dt));
-        let sm = state6(&step(state_from_v6(zm), *u, dt));
+        let sp = state(&step(state_from_v6(zp), *u, dt));
+        let sm = state(&step(state_from_v6(zm), *u, dt));
         for i in 0..6 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
     let col = |up: Control, um: Control| -> V6 {
-        let sp = state6(&step(*x, up, dt));
-        let sm = state6(&step(*x, um, dt));
+        let sp = state(&step(*x, up, dt));
+        let sm = state(&step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
     let cj = col(
@@ -444,7 +444,7 @@ fn forward(
     nxs.push(x);
     let mut cost_total = 0.0;
     for t in 0..n {
-        let dx: V6 = std::array::from_fn(|i| state6(&x)[i] - state6(&xs[t])[i]);
+        let dx: V6 = std::array::from_fn(|i| state(&x)[i] - state(&xs[t])[i]);
         let fb = mat_vec(&gains[t].kk, &dx);
         let u = Control {
             jerk: us[t].jerk + scale * gains[t].k[0] + fb[0],
