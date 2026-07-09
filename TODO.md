@@ -36,6 +36,13 @@ Make the real CommonRoad scenarios available. Vendor them.
 
 ## UX
 
+
+-- 
+camera controls in scenarios mode
+
+--
+enhanced camera controls - pan, rotate, follow/detach from ego, reset
+
 --
 UX
 Give nanoplan a unique icon/favicon.
@@ -112,6 +119,3 @@ Draw ego future carpet. Carpet represents the region of space that will be occup
 
 --
 Give the various actors in the scene minimal polyhedral 3d meshes representative of the semantic class (car, truck, cycle, pedestrian, etc)
-
-Add basic ultra fast 3D rendering along with 3d camera controls.
-First and third person ego follower cameras.
