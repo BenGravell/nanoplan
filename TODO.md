@@ -1,5 +1,18 @@
 # TODO
 
+## World modeling
+
+Roads in world map have straight sections that jut into the junctions.
+We need proper junction modeling and procedural creation that links lanes using corridors and has curved ease in/out sections.
+
+Ego can accelerate indefinitely in the simulation model.
+Real vehicles experience friction due to rolling resistance and air drag.
+Use simple realistic models for these terms so that we get a real terminal velocity limit in the simulator.
+
+Ego can run off the road.
+Model physical barriers on the road sides and make ego collide with them.
+Use basic elastic/inelastic collision physics
+
 ## Performance
 
 Planner latency has gotten way too high in the world mode, upwards of 300ms.
