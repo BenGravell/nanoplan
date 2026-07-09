@@ -22,7 +22,7 @@ src/planning/treetop/mod.rs
 And especially the ones that are shared across other planners - single source of truth. 
 
 --
-Unify all quasi Monte Carlo sampling to use the same sequences and source code. Halton, van der corput
+Unify all quasi Monte Carlo sampling to use the same sequences and source code. Halton, van der corput, sobol
 
 --
 Integrate interfaces of judo more thoroughly. Reuse sampling.
@@ -36,8 +36,8 @@ Use the expert human tuned cost weights by default.
 
 --
 Add a new basic planner.
-Use quintic polynomial of time steering function and plan a single trajectory that steers from current ego pose to the lane centerline.
-Use heuristics for deciding how far along the centerline ahead of ego to steer to, based on current speed, speed limit, and current lateral offset from centerline, and current ego yaw.
+Use quintic polynomial of time steering function and plan a single trajectory that steers from current ego pose to the lane centerline, then steers along centerline forever.
+Use heuristics for deciding how far along the centerline ahead of ego to steer to, based on road speed limit and current ego state.
 
 --
 Make the real CommonRoad scenarios available. Vendor them.
@@ -78,7 +78,7 @@ Viewer visibility settings
 Metrics
 Diagnostics
 
-Take inspo from racing video games and fighter pilot HUD.
+Take inspiration from racing video games and fighter pilot HUD.
 
 --
 UX
