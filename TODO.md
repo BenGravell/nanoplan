@@ -1,11 +1,5 @@
 # TODO
 
-## Simplify
-
-Consider reverting back to a 4-dim state space (x,y,yaw,v) and actions: accel, curvature and getting rid of the jerk and curvature rate constraints/modeling.
-
-The point of this repo is to be minimal and fun, not perfectly realistic.
-
 ## World modeling
 
 Roads in world map have straight sections that jut into the junctions.
