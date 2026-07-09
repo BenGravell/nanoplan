@@ -1,5 +1,11 @@
 # TODO
 
+## Simplify
+
+Consider reverting back to a 4-dim state space (x,y,yaw,v) and actions: accel, curvature and getting rid of the jerk and curvature rate constraints/modeling.
+
+The point of this repo is to be minimal and fun, not perfectly realistic.
+
 ## World modeling
 
 Roads in world map have straight sections that jut into the junctions.
@@ -12,12 +18,6 @@ Use simple realistic models for these terms so that we get a real terminal veloc
 Ego can run off the road.
 Model physical barriers on the road sides and make ego collide with them.
 Use basic elastic/inelastic collision physics
-
-## Performance
-
-Planner latency has gotten way too high in the world mode, upwards of 300ms.
-Need to tackle the root causes by profiling more granularly and using industry best practices for low hanging fruit.
-Since it affects multiple planners and seems to be worst in the world mdoe, I suspect the root cause is due to actors or environment business logic getting slow e.g. too many actors (proximity, cost function, predictions), too many road segments, etc. Need to take inspiration from video game devs and cull irrelevant actors and world entities.
 
 ## Business logic and design
 
@@ -40,17 +40,14 @@ Unify all quasi Monte Carlo sampling to use the same sequences and source code. 
 --
 Integrate interfaces of judo more thoroughly. Reuse sampling.
 
+--
+Re-tune the expert human cost weights using nuPlan.
 
 -- 
 Use the expert human tuned cost weights by default.
 
 
 ## FEATURES
-
---
-Add a new basic planner.
-Use quintic polynomial of time steering function and plan a single trajectory that steers from current ego pose to the lane centerline, then steers along centerline forever.
-Use heuristics for deciding how far along the centerline ahead of ego to steer to, based on road speed limit and current ego state.
 
 --
 Make the real CommonRoad scenarios available. Vendor them.
