@@ -4,6 +4,7 @@
 
 Planner latency has gotten way too high in the world mode, upwards of 300ms.
 Need to tackle the root causes by profiling more granularly and using industry best practices for low hanging fruit.
+Since it affects multiple planners and seems to be worst in the world mdoe, I suspect the root cause is due to actors or environment business logic getting slow e.g. too many actors (proximity, cost function, predictions), too many road segments, etc. Need to take inspiration from video game devs and cull irrelevant actors and world entities.
 
 ## Business logic and design
 
@@ -32,6 +33,14 @@ Use the expert human tuned cost weights by default.
 
 
 ## FEATURES
+
+--
+Add a new basic planner.
+Use quintic polynomial of time steering function and plan a single trajectory that steers from current ego pose to the lane centerline.
+Use heuristics for deciding how far along the centerline ahead of ego to steer to, based on current speed, speed limit, and current lateral offset from centerline, and current ego yaw.
+
+--
+Make the real CommonRoad scenarios available. Vendor them.
 
 
 ## UX
