@@ -29,16 +29,39 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
 
     pub(crate) fn stage(&self, x: &State, u: Control, t: usize, s_hint: Option<f64>) -> f64 {
         let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        self.stage_sample(sample, u, self.ctx.actors, Some(self.path))
+    }
+
+    pub(crate) fn stage_with_predicted_actors(
+        &self,
+        x: &State,
+        u: Control,
+        t: usize,
+        s_hint: Option<f64>,
+        predicted_actors: &[State],
+    ) -> f64 {
+        let (_, mut sample) =
+            super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        sample.t = 0.0;
+        self.stage_sample(sample, u, predicted_actors, None)
+    }
+
+    fn stage_sample(
+        &self,
+        sample: cost::Sample,
+        u: Control,
+        actors: &[State],
+        lane: Option<&Path>,
+    ) -> f64 {
         let target = self.ctx.road.target_speed;
-        let constraints =
-            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
+        let constraints = cost::HardConstraints::new(self.ctx.road.half_width, actors, lane);
         let shared = if self.weights.timed_shared_cost {
             self.ctx
                 .time("cost", || constraints.soft_point_cost(&sample, target))
         } else {
             constraints.soft_point_cost(&sample, target)
         };
-        let dv = x.speed - target;
+        let dv = sample.speed - target;
         let structural = self.weights.center * sample.lateral * sample.lateral
             + self.weights.speed * dv * dv
             + self.weights.jerk * u.jerk * u.jerk

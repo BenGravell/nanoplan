@@ -22,8 +22,8 @@
 //! ([`cost::HardConstraints`]) and dynamics ([`step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/planning/README.md`). So this port differentiates **numerically**:
-//! central finite differences for the cost gradient/Hessian
-//! ([`stage_derivs`], [`terminal_derivs`]) and the dynamics Jacobians
+//! central finite differences for the state-cost gradient/Hessian
+//! ([`stage_derivs`]) and the dynamics Jacobians
 //! ([`dynamics_jacobian`]) — the planners still consume exactly the same
 //! scalar interfaces every sampling planner does, they just probe them a
 //! few dozen times per timestep instead of once. FD Hessians of a
@@ -140,6 +140,23 @@ impl Ocp<'_, '_> {
         TrajectoryCost::new(self.path, self.ctx, STAGE_COST_WEIGHTS).stage(x, *u, t, s_hint)
     }
 
+    fn stage_cost_with_predicted_actors(
+        &self,
+        x: &State,
+        u: &Control,
+        t: usize,
+        s_hint: Option<f64>,
+        predicted_actors: &[State],
+    ) -> f64 {
+        TrajectoryCost::new(self.path, self.ctx, STAGE_COST_WEIGHTS).stage_with_predicted_actors(
+            x,
+            *u,
+            t,
+            s_hint,
+            predicted_actors,
+        )
+    }
+
     /// Quadratic pull of the trajectory endpoint toward the goal state.
     fn terminal_cost(&self, x: &State) -> f64 {
         let (dx, dy) = (x.x - self.goal.x, x.y - self.goal.y);
@@ -170,9 +187,9 @@ const H_COST: f64 = 1e-3;
 const H_DYN: f64 = 1e-5;
 
 /// Quadratic expansion of the running cost at one `(x, u)` — treetop's
-/// `Loss::gradientAndHessian`, by central finite differences over the
-/// packed 8-vector `z = (x, y, yaw, v, accel, curvature, jerk,
-/// curvature_rate)`.
+/// `Loss::gradientAndHessian`. The expensive shared cost depends on state;
+/// control effort is an explicit quadratic in `u`, so only the six state
+/// coordinates need finite differences.
 struct StageDerivs {
     lx: V6,
     lu: V2,
@@ -185,47 +202,56 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     // one projection of the unperturbed state anchors every probe's
     // Frenet lookup (the probes move by ±H_COST, far less than the window)
     let s_hint = ocp.path.project([x.x, x.y]).0;
-    let z0 = [
-        x.x,
-        x.y,
-        x.yaw,
-        x.speed,
-        x.accel,
-        x.curvature,
-        u.jerk,
-        u.curvature_rate,
-    ];
-    let eval = |z: [f64; 8]| {
-        let xs = State {
-            x: z[0],
-            y: z[1],
-            yaw: z[2],
-            speed: z[3],
-            accel: z[4],
-            curvature: z[5],
-        };
-        let us = Control {
-            jerk: z[6],
-            curvature_rate: z[7],
-        };
-        ocp.stage_cost(&xs, &us, t, Some(s_hint))
+    let t_s = t as f64 * ocp.ctx.road.dt;
+    let predicted_actors: Vec<State> = ocp
+        .ctx
+        .actors
+        .iter()
+        .map(|a| crate::metrics::predict(a, Some(ocp.path), t_s))
+        .collect();
+    let eval = |z: V6| {
+        ocp.stage_cost_with_predicted_actors(
+            &state_from_v6(z),
+            &Control::default(),
+            t,
+            Some(s_hint),
+            &predicted_actors,
+        )
     };
-    let (grad, hess) = fd_grad_hess(&eval, z0);
+    let (grad, hess) = fd_grad_hess(&eval, state(x));
+    let scale = STAGE_COST_WEIGHTS.scale;
     StageDerivs {
-        lx: [grad[0], grad[1], grad[2], grad[3], grad[4], grad[5]],
-        lu: [grad[6], grad[7]],
-        lxx: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][j])),
-        lxu: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][6 + j])),
-        luu: std::array::from_fn(|i| std::array::from_fn(|j| hess[6 + i][6 + j])),
+        lx: grad,
+        lu: [
+            2.0 * scale * STAGE_COST_WEIGHTS.jerk * u.jerk,
+            2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate * u.curvature_rate,
+        ],
+        lxx: hess,
+        lxu: [[0.0; 2]; 6],
+        luu: [
+            [2.0 * scale * STAGE_COST_WEIGHTS.jerk, 0.0],
+            [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate],
+        ],
     }
 }
 
-/// Terminal gradient and Hessian, likewise by finite differences.
+/// Terminal gradient and Hessian. The terminal cost is a plain quadratic
+/// pull to the goal, so no finite differences are needed here.
 fn terminal_derivs(ocp: &Ocp, x: &State) -> (V6, M66) {
-    let (grad, hess) = fd_grad_hess(
-        &|z: [f64; 6]| ocp.terminal_cost(&state_from_v6(z)),
-        state(x),
-    );
+    let dyaw = wrap_angle(x.yaw - ocp.goal.yaw);
+    let grad = [
+        2.0 * TERM_XY_W * (x.x - ocp.goal.x),
+        2.0 * TERM_XY_W * (x.y - ocp.goal.y),
+        2.0 * TERM_YAW_W * dyaw,
+        2.0 * TERM_SPEED_W * (x.speed - ocp.goal.speed),
+        0.0,
+        0.0,
+    ];
+    let mut hess = [[0.0; 6]; 6];
+    hess[0][0] = 2.0 * TERM_XY_W;
+    hess[1][1] = 2.0 * TERM_XY_W;
+    hess[2][2] = 2.0 * TERM_YAW_W;
+    hess[3][3] = 2.0 * TERM_SPEED_W;
     (grad, hess)
 }
 
@@ -696,6 +722,78 @@ mod tests {
         let d0 = super::super::state_distance(xs0.last().unwrap(), &goal);
         let d1 = super::super::state_distance(end, &goal);
         assert!(d1 < d0, "endpoint got no closer: {d1} vs {d0}");
+    }
+
+    #[test]
+    fn stage_derivs_use_analytic_control_quadratic() {
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let path = Path::new(&road.centerline);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let ocp = Ocp {
+            path: &path,
+            start: ego,
+            goal: goal_state(&path, ego, &ctx),
+            ctx: &ctx,
+        };
+        let u = Control {
+            jerk: 3.0,
+            curvature_rate: -0.2,
+        };
+
+        let d = stage_derivs(&ocp, &ego, &u, 0);
+        let scale = STAGE_COST_WEIGHTS.scale;
+        assert_eq!(
+            d.lu,
+            [
+                2.0 * scale * STAGE_COST_WEIGHTS.jerk * u.jerk,
+                2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate * u.curvature_rate,
+            ]
+        );
+        assert_eq!(
+            d.luu,
+            [
+                [2.0 * scale * STAGE_COST_WEIGHTS.jerk, 0.0],
+                [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate],
+            ]
+        );
+        assert!(d.lxu.iter().flatten().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn predicted_actor_stage_cost_matches_regular_stage_cost() {
+        let actor = State {
+            x: 40.0,
+            speed: 8.0,
+            ..Default::default()
+        };
+        let actors = [actor];
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &actors);
+        let path = Path::new(&road.centerline);
+        let tc = TrajectoryCost::new(&path, &ctx, STAGE_COST_WEIGHTS);
+        let x = State {
+            x: 5.0,
+            speed: 8.0,
+            ..Default::default()
+        };
+        let u = Control {
+            jerk: 0.3,
+            curvature_rate: 0.02,
+        };
+        let t = 3;
+        let predicted = [crate::metrics::predict(
+            &actor,
+            Some(&path),
+            t as f64 * road.dt,
+        )];
+
+        let regular = tc.stage(&x, u, t, None);
+        let reused = tc.stage_with_predicted_actors(&x, u, t, None, &predicted);
+        assert!((regular - reused).abs() < 1e-9, "{regular} vs {reused}");
     }
 
     #[test]
