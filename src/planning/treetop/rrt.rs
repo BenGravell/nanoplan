@@ -58,10 +58,10 @@ use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{
     parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained,
 };
-use crate::planning::steering::QuinticSteer;
+use crate::planning::steering::{QuinticSteer, steer_controls};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State, step};
 use crate::wrap_angle;
 
 /// Lateral half-width cold samples span. Inside the shared cost's hard
@@ -486,33 +486,17 @@ impl Grower<'_, '_> {
 
 // ---- The steering function (treetop `steer.h`) --------------------------
 
-const STEER_ACCEL_TARGET_MAX: f64 = 3.0;
-
 /// treetop's steering action generator: fit the shared quintic flat-output
 /// connector matching both states' position, velocity, and acceleration
-/// vector, then read the actions off the curve — acceleration is the
-/// tangential derivative of speed, curvature is `(x'y'' - y'x'') / v^3` —
-/// sampling each segment at its midpoint. A secant against the start
+/// vector, then read the analytic jerk and curvature-rate actions off the
+/// curve, sampling each segment at its midpoint. A secant against the start
 /// heading infers whether the curve is driven forward or in reverse,
-/// flipping curvature accordingly.
-/// Returns [`STEER_TICKS`] raw actions; the caller projects them onto the
-/// actuation limits during rollout.
+/// flipping curvature rate accordingly.
+/// Returns [`STEER_TICKS`] bounded actions.
 fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
     let steer = QuinticSteer::from_states(start, goal, duration);
     let dir = steer.forward_sign(start.yaw, dt);
-
-    let mut x = *start;
-    (0..STEER_TICKS)
-        .map(|i| {
-            // midpoint of the segment: slightly more accurate than either end
-            let t = (i as f64 + 0.5) * dt;
-            let (_, accel, curvature) = steer.kinematics(t);
-            let accel = accel.clamp(-STEER_ACCEL_TARGET_MAX, STEER_ACCEL_TARGET_MAX);
-            let u = action_toward(x, accel, dir * curvature, dt);
-            x = step(x, u, dt);
-            u
-        })
-        .collect()
+    steer_controls(*start, &steer, dt, STEER_TICKS, dir).0
 }
 
 /// The standalone tree planner: grow, take the best path candidate, drive

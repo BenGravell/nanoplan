@@ -7,6 +7,7 @@
 //! - [`scenarios`]: scenario data, road geometry, loading, and generation
 //! - [`world`]: infinite chunked procedural street world, mixed traffic, realtime interactive world
 
+pub(crate) mod math;
 pub mod metrics;
 pub mod planning;
 pub mod scenarios;
@@ -16,9 +17,9 @@ pub mod world;
 
 pub use metrics::Metrics;
 pub use planning::{
-    BezierIdmPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
-    PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner,
-    TreetopPlanner,
+    BasicPlanner, BezierIdmPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner,
+    Planner, PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner,
+    StraightPlanner, TreetopPlanner,
 };
 pub use scenarios::{Path, Road, Scenario};
 pub use simulation::{Control, IncrementalSim, Rollout, Simulator, State, simulate, step};

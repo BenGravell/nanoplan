@@ -11,7 +11,7 @@ use std::collections::BinaryHeap;
 
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, MIN_LON_ACCEL, State, action_toward, step};
 use crate::wrap_angle;
 
 pub(crate) struct RoadFrame {
@@ -156,6 +156,18 @@ pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Contr
     let mut x = ego;
     (0..ctx.horizon)
         .map(|_| {
+            let u = action_toward(x, accel, 0.0, ctx.road.dt);
+            x = step(x, u, ctx.road.dt);
+            u
+        })
+        .collect()
+}
+
+pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Control> {
+    let mut x = ego;
+    (0..horizon)
+        .map(|_| {
+            let accel = MIN_LON_ACCEL.max(-x.speed / ctx.road.dt);
             let u = action_toward(x, accel, 0.0, ctx.road.dt);
             x = step(x, u, ctx.road.dt);
             u

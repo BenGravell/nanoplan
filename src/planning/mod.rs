@@ -1,5 +1,6 @@
 //! The planner interface and one module per planner.
 
+pub mod basic;
 pub mod bezier_idm;
 pub(crate) mod constraints;
 pub(crate) mod cost;
@@ -16,6 +17,7 @@ pub(crate) mod steering;
 pub mod straight;
 pub mod treetop;
 
+pub use basic::BasicPlanner;
 pub use bezier_idm::BezierIdmPlanner;
 pub use diagnostics::{Diagnostics, DiagnosticsData};
 pub use latency::{Latency, LatencyStats, SeamStats};
@@ -76,6 +78,7 @@ pub trait Planner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlannerKind {
     Straight,
+    Basic,
     BezierIdm,
     Lattice,
     Pi2Ddp,
@@ -103,11 +106,17 @@ pub struct PlannerSpec {
 }
 
 /// The planner registry, indexed by `PlannerKind as usize`.
-const SPECS: [PlannerSpec; 11] = [
+const SPECS: [PlannerSpec; 12] = [
     PlannerSpec {
         kind: PlannerKind::Straight,
         name: "straight (strawman)",
         build: || Box::new(StraightPlanner),
+        has_diagnostics: false,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Basic,
+        name: "basic quintic",
+        build: || Box::new(BasicPlanner),
         has_diagnostics: false,
     },
     PlannerSpec {
@@ -173,8 +182,9 @@ const SPECS: [PlannerSpec; 11] = [
 ];
 
 impl PlannerKind {
-    pub const ALL: [PlannerKind; 11] = [
+    pub const ALL: [PlannerKind; 12] = [
         PlannerKind::Straight,
+        PlannerKind::Basic,
         PlannerKind::BezierIdm,
         PlannerKind::Lattice,
         PlannerKind::Pi2Ddp,
