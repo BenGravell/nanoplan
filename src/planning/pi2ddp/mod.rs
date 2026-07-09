@@ -31,13 +31,13 @@ const GENERATIONS: usize = 4;
 const BETA: f64 = 10.0; // baseline sensitivity (eq. 12)
 const ALPHA: f64 = 0.5; // covariance damping (eq. 36)
 const LAMBDA_REG: f64 = 1e-3; // inverse regularization heuristic
-const SIGMA_JERK: f64 = 4.0; // [m/s³] exploration std
+const SIGMA_ACCEL: f64 = 4.0; // [m/s²] exploration std
 const LANE_HALF_M: f64 = 1.75;
 const STATE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
     center: 0.5,
     speed: 0.0,
-    jerk: 0.0,
-    curvature_rate: 0.0,
+    acceleration: 0.0,
+    curvature: 0.0,
     scale: 1.0,
     timed_shared_cost: true,
 };
@@ -123,7 +123,7 @@ impl Pi2DdpPlanner {
     fn init_policy(path: &Path, ego: State, ctx: &Context, sigma_init: M2) -> Policy {
         let u = centerline_follow_controls(ego, path, ctx, HORIZON)
             .into_iter()
-            .map(|c| [c.jerk, c.curvature_rate])
+            .map(|c| [c.acceleration, c.curvature])
             .collect();
         let mut sigma_tau = [[0.0; 6]; 6];
         for (i, row) in sigma_tau.iter_mut().enumerate().take(4) {
@@ -155,15 +155,15 @@ impl Planner for Pi2DdpPlanner {
         let preview = ego.speed.max(2.0) * ctx.road.dt * HORIZON as f64;
         let sigma_kappa = (8.0 * LANE_HALF_M / (preview * preview)).clamp(0.005, 0.05);
         let sigma_init: M2 = [
-            [SIGMA_JERK * SIGMA_JERK, 0.0],
+            [SIGMA_ACCEL * SIGMA_ACCEL, 0.0],
             [0.0, sigma_kappa * sigma_kappa],
         ];
         // linear solvability: control cost is the inverse of the exploration
         let r_diag = [1.0 / sigma_init[0][0], 1.0 / sigma_init[1][1]];
 
-        // Shared cost of being at `x` at tick `j` with its current
-        // acceleration/curvature state — the road/actor/comfort terms every search
-        // planner now agrees on (`cost::HardConstraints`), plus a planner-specific
+        // Shared cost of being at `x` at tick `j` after applying a direct
+        // acceleration/curvature command — the road/actor/comfort terms every
+        // search planner agrees on (`cost::HardConstraints`), plus a planner-specific
         // centerline-pull term (no metric measures "distance from
         // centerline" directly — it's a structural bias toward the lane the
         // lattice and RRT* also keep as their own terms, not part of the
@@ -189,8 +189,8 @@ impl Planner for Pi2DdpPlanner {
                 x = step(
                     x,
                     Control {
-                        jerk: uj[0],
-                        curvature_rate: uj[1],
+                        acceleration: uj[0],
+                        curvature: uj[1],
                     },
                     ctx.road.dt,
                 );
@@ -395,8 +395,6 @@ impl Planner for Pi2DdpPlanner {
                         y: mean(|s| s.y),
                         yaw: mean(|s| s.yaw),
                         speed: mean(|s| s.speed),
-                        accel: mean(|s| s.accel),
-                        curvature: mean(|s| s.curvature),
                     };
                 }
             });

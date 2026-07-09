@@ -15,7 +15,7 @@ use crate::planning::{
     Context, Latency, PLANNING_HORIZON_S, Planner, PlannerKind, bezier_idm::idm_accel,
 };
 use crate::scenarios::{Path, Road};
-use crate::simulation::{State, action_toward, step};
+use crate::simulation::{Control, State, step};
 
 /// Standard lane width; a street's half-width is `lanes × LANE_W_M`.
 pub const LANE_W_M: f64 = 3.5;
@@ -1129,7 +1129,10 @@ impl LiveWorld {
         if self.road.is_none() {
             // goalless: brake smoothly to a stop and wait for a click
             let accel = (-2.0f64).max(-self.ego.speed / self.dt);
-            let u = action_toward(self.ego, accel, 0.0, self.dt);
+            let u = Control {
+                acceleration: accel,
+                curvature: 0.0,
+            };
             self.ego = step(self.ego, u, self.dt);
             self.plan.clear();
             self.last_planner_actors = 0;

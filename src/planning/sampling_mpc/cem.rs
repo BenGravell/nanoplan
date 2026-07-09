@@ -10,7 +10,7 @@ use super::{Knot, NU, Optimizer, OptimizerConfig, SIGMA_SCALE, noised_knots, ram
 /// contracts around whatever region keeps scoring well.
 pub struct Cem {
     cfg: OptimizerConfig,
-    /// Per-node dimensionless sampling std, `[jerk, curvature_rate]` each,
+    /// Per-node dimensionless sampling std, `[acceleration, curvature]` each,
     /// scaled by [`SIGMA_SCALE`] at sampling time. Adapted in
     /// `update_nominal_knots`; there is one entry per knot.
     sigma: Vec<[f64; NU]>,

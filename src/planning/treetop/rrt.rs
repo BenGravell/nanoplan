@@ -13,10 +13,9 @@
 //!   obstacles come free: a layer's states have a known absolute time, so
 //!   collision checks price actors where they will be, not where they are.
 //! - **Steering in action space.** [`steer_actions`] fits the shared
-//!   quintic flat-output connector between two states' position, velocity,
-//!   and acceleration boundary conditions, reads acceleration and curvature
-//!   off the polynomial derivatives, then converts those
-//!   targets into jerk/curvature-rate actions before rollout
+//!   cubic flat-output connector between two states' position and velocity
+//!   boundary conditions, reads acceleration and curvature off the polynomial
+//!   derivatives, then rolls those direct commands out
 //!   ([`rollout_constrained`]).
 //! - **Zero-action-point parenting.** A sample attaches to the previous
 //!   layer's node whose coasting endpoint ([`zero_action_point`]) is
@@ -58,7 +57,7 @@ use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{
     parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained,
 };
-use crate::planning::steering::{QuinticSteer, steer_controls};
+use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;
 use crate::simulation::{Control, State, step};
@@ -460,13 +459,17 @@ impl Grower<'_, '_> {
             cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
         for i in 0..us.len() {
             let x = &xs[i + 1];
-            let (_, sample) =
+            let (_, mut sample) =
                 planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
+            sample.accel = us[i].acceleration;
+            sample.curvature = us[i].curvature;
             let shared = self.ctx.time("cost", || {
                 constraints.point_cost(&sample, self.ctx.road.target_speed)
             });
             // treetop softLoss: magnitude of (lon, lat) acceleration
-            let effort = x.accel.hypot(x.speed * x.speed * x.curvature);
+            let effort = us[i]
+                .acceleration
+                .hypot(x.speed * x.speed * us[i].curvature);
             let pull = CENTER_W * sample.lateral * sample.lateral;
             let speed_err = x.speed - self.ctx.road.target_speed;
             let speed_cost = 0.5 * speed_err * speed_err;
@@ -486,15 +489,14 @@ impl Grower<'_, '_> {
 
 // ---- The steering function (treetop `steer.h`) --------------------------
 
-/// treetop's steering action generator: fit the shared quintic flat-output
-/// connector matching both states' position, velocity, and acceleration
-/// vector, then read the analytic jerk and curvature-rate actions off the
-/// curve, sampling each segment at its midpoint. A secant against the start
-/// heading infers whether the curve is driven forward or in reverse,
-/// flipping curvature rate accordingly.
+/// treetop's steering action generator: fit the shared cubic flat-output
+/// connector matching both states' position and velocity vector, then read
+/// direct acceleration/curvature commands off the curve, sampling each segment
+/// at its midpoint. A secant against the start heading infers whether the curve
+/// is driven forward or in reverse, flipping curvature accordingly.
 /// Returns [`STEER_TICKS`] bounded actions.
 fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
-    let steer = QuinticSteer::from_states(start, goal, duration);
+    let steer = CubicSteer::from_states(start, goal, duration);
     let dir = steer.forward_sign(start.yaw, dt);
     steer_controls(*start, &steer, dt, STEER_TICKS, dir).0
 }
@@ -535,7 +537,13 @@ impl Planner for RrtPlanner {
             let best = &tree.path_candidates(1)[0];
             tree.actions_of(best)
         });
-        let out = repeat_last_controls(&controls, ctx.horizon);
+        let mut out = repeat_last_controls(&controls, ctx.horizon);
+        let mut x = ego;
+        for u in &mut out {
+            let speed_hold = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-4.0, 1.5);
+            u.acceleration = u.acceleration.min(speed_hold);
+            x = step(x, *u, ctx.road.dt);
+        }
         self.expected_next = step(ego, out[0], ctx.road.dt);
         self.prev = Some(controls);
         out

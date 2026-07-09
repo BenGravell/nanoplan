@@ -11,7 +11,7 @@ use std::collections::BinaryHeap;
 
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::scenarios::Path;
-use crate::simulation::{Control, MIN_LON_ACCEL, State, action_toward, step};
+use crate::simulation::{Control, MIN_LON_ACCEL, State, step};
 use crate::wrap_angle;
 
 pub(crate) struct RoadFrame {
@@ -156,7 +156,10 @@ pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Contr
     let mut x = ego;
     (0..ctx.horizon)
         .map(|_| {
-            let u = action_toward(x, accel, 0.0, ctx.road.dt);
+            let u = Control {
+                acceleration: accel,
+                curvature: 0.0,
+            };
             x = step(x, u, ctx.road.dt);
             u
         })
@@ -168,7 +171,10 @@ pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Co
     (0..horizon)
         .map(|_| {
             let accel = MIN_LON_ACCEL.max(-x.speed / ctx.road.dt);
-            let u = action_toward(x, accel, 0.0, ctx.road.dt);
+            let u = Control {
+                acceleration: accel,
+                curvature: 0.0,
+            };
             x = step(x, u, ctx.road.dt);
             u
         })
@@ -209,7 +215,10 @@ pub(crate) fn centerline_follow_controls(
         let heading_err = wrap_angle(x.yaw - lane_yaw);
         let curvature = -(0.02 * d + 0.3 * heading_err);
         let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-        let u = action_toward(x, accel, curvature, ctx.road.dt);
+        let u = Control {
+            acceleration: accel,
+            curvature,
+        };
         x = step(x, u, ctx.road.dt);
         controls.push(u);
     }
@@ -217,8 +226,8 @@ pub(crate) fn centerline_follow_controls(
 }
 
 // Pure-pursuit extraction for sampled tree geometry. The curvature gain is
-// deliberately assertive because `action_toward` and `step` still clamp the
-// request to the plant's curvature and curvature-rate limits.
+// deliberately assertive because `step` still clamps impossible curvature
+// requests to the plant's steering and lateral-grip limits.
 const PATH_TRACK_LOOKAHEAD_TICKS: f64 = 8.0;
 const PATH_TRACK_LOOKAHEAD_MIN_M: f64 = 3.0;
 const PATH_TRACK_LOOKAHEAD_MAX_M: f64 = 10.0;
@@ -240,7 +249,10 @@ pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Contex
             let ld2 = (dx * dx + dy * dy).max(1e-6);
             let curvature = 2.0 * PATH_TRACK_CURVATURE_GAIN * local_y / ld2;
             let accel = (0.5 * (speed - x.speed)).clamp(-4.0, 2.0);
-            let u = action_toward(x, accel, curvature, dt);
+            let u = Control {
+                acceleration: accel,
+                curvature,
+            };
             x = step(x, u, dt);
             u
         })
@@ -269,7 +281,10 @@ pub(crate) fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Contr
             } else {
                 0.0
             };
-            let u = action_toward(x, accel, curvature, dt);
+            let u = Control {
+                acceleration: accel,
+                curvature,
+            };
             x = step(x, u, dt);
             (v, yaw, prev) = (new_v, new_yaw, p);
             u

@@ -125,12 +125,12 @@ fn scenarios() -> Vec<Scenario> {
             "curving lead",
             state(0.0, 0.0, 0.0, 8.0),
             vec![Actor {
-                init: State {
-                    curvature: 0.02,
-                    ..state(20.0, 0.0, 0.0, 8.0)
-                },
+                init: state(20.0, 0.0, 0.0, 8.0),
                 // curves away; constant-velocity prediction visibly diverges
-                control: Control::default(),
+                control: Control {
+                    acceleration: 0.0,
+                    curvature: 0.02,
+                },
                 trajectory: vec![],
             }],
             straight_road(),

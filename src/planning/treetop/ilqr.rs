@@ -71,8 +71,8 @@
 
 use super::{TICKS, goal_state, take_warm};
 use crate::planning::planner_math::{
-    M22, M26, M62, M66, TrajectoryCost, TrajectoryCostWeights, V2, V6, dot, mat_add, mat_mul,
-    mat_vec, state, state_from_v6, transpose, vec_add,
+    M4, M22, M24, M42, TrajectoryCost, TrajectoryCostWeights, V2, V4, dot, mat_add, mat_mul,
+    mat_vec, state, state_from_v4, transpose, vec_add,
 };
 use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
@@ -109,8 +109,8 @@ const EFFORT_CURV_W: f64 = 10.0;
 const STAGE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
     center: CENTER_W,
     speed: SPEED_W,
-    jerk: EFFORT_ACCEL_W,
-    curvature_rate: EFFORT_CURV_W,
+    acceleration: EFFORT_ACCEL_W,
+    curvature: EFFORT_CURV_W,
     scale: 1.0 / TICKS as f64,
     timed_shared_cost: false,
 };
@@ -177,9 +177,9 @@ impl Ocp<'_, '_> {
 
 // ---- Finite-difference derivatives ----------------------------------------
 
-/// FD step for cost derivatives. All six problem coordinates (meters,
-/// radians, m/s, m/s², 1/m) are O(0.1–10) here, so one step suits them
-/// all; ~eps^(1/4) is the classic sweet spot for second differences.
+/// FD step for cost derivatives. All four state coordinates (meters,
+/// radians, m/s) are O(0.1-10) here, so one step suits them all;
+/// ~eps^(1/4) is the classic sweet spot for second differences.
 const H_COST: f64 = 1e-3;
 
 /// FD step for dynamics Jacobians (first differences only, so a smaller
@@ -191,10 +191,10 @@ const H_DYN: f64 = 1e-5;
 /// control effort is an explicit quadratic in `u`, so only the six state
 /// coordinates need finite differences.
 struct StageDerivs {
-    lx: V6,
+    lx: V4,
     lu: V2,
-    lxx: M66,
-    lxu: M62,
+    lxx: M4,
+    lxu: M42,
     luu: M22,
 }
 
@@ -209,9 +209,9 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
         .iter()
         .map(|a| crate::metrics::predict(a, Some(ocp.path), t_s))
         .collect();
-    let eval = |z: V6| {
+    let eval = |z: V4| {
         ocp.stage_cost_with_predicted_actors(
-            &state_from_v6(z),
+            &state_from_v4(z),
             &Control::default(),
             t,
             Some(s_hint),
@@ -223,31 +223,29 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     StageDerivs {
         lx: grad,
         lu: [
-            2.0 * scale * STAGE_COST_WEIGHTS.jerk * u.jerk,
-            2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate * u.curvature_rate,
+            2.0 * scale * STAGE_COST_WEIGHTS.acceleration * u.acceleration,
+            2.0 * scale * STAGE_COST_WEIGHTS.curvature * u.curvature,
         ],
         lxx: hess,
-        lxu: [[0.0; 2]; 6],
+        lxu: [[0.0; 2]; 4],
         luu: [
-            [2.0 * scale * STAGE_COST_WEIGHTS.jerk, 0.0],
-            [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate],
+            [2.0 * scale * STAGE_COST_WEIGHTS.acceleration, 0.0],
+            [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature],
         ],
     }
 }
 
 /// Terminal gradient and Hessian. The terminal cost is a plain quadratic
 /// pull to the goal, so no finite differences are needed here.
-fn terminal_derivs(ocp: &Ocp, x: &State) -> (V6, M66) {
+fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M4) {
     let dyaw = wrap_angle(x.yaw - ocp.goal.yaw);
     let grad = [
         2.0 * TERM_XY_W * (x.x - ocp.goal.x),
         2.0 * TERM_XY_W * (x.y - ocp.goal.y),
         2.0 * TERM_YAW_W * dyaw,
         2.0 * TERM_SPEED_W * (x.speed - ocp.goal.speed),
-        0.0,
-        0.0,
     ];
-    let mut hess = [[0.0; 6]; 6];
+    let mut hess = [[0.0; 4]; 4];
     hess[0][0] = 2.0 * TERM_XY_W;
     hess[1][1] = 2.0 * TERM_XY_W;
     hess[2][2] = 2.0 * TERM_YAW_W;
@@ -298,45 +296,45 @@ fn fd_grad_hess<const N: usize>(
 /// Dynamics Jacobians `A = ∂step/∂x`, `B = ∂step/∂u` by central finite
 /// differences on [`step`] — treetop's closed-form `Dynamics::jacobian`,
 /// derived numerically instead.
-fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M66, M62) {
-    let mut a = [[0.0; 6]; 6];
-    for j in 0..6 {
+fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M4, M42) {
+    let mut a = [[0.0; 4]; 4];
+    for j in 0..4 {
         let mut zp = state(x);
         zp[j] += H_DYN;
         let mut zm = state(x);
         zm[j] -= H_DYN;
-        let sp = state(&step(state_from_v6(zp), *u, dt));
-        let sm = state(&step(state_from_v6(zm), *u, dt));
-        for i in 0..6 {
+        let sp = state(&step(state_from_v4(zp), *u, dt));
+        let sm = state(&step(state_from_v4(zm), *u, dt));
+        for i in 0..4 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
-    let col = |up: Control, um: Control| -> V6 {
+    let col = |up: Control, um: Control| -> V4 {
         let sp = state(&step(*x, up, dt));
         let sm = state(&step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
-    let cj = col(
+    let ca = col(
         Control {
-            jerk: u.jerk + H_DYN,
+            acceleration: u.acceleration + H_DYN,
             ..*u
         },
         Control {
-            jerk: u.jerk - H_DYN,
-            ..*u
-        },
-    );
-    let cr = col(
-        Control {
-            curvature_rate: u.curvature_rate + H_DYN,
-            ..*u
-        },
-        Control {
-            curvature_rate: u.curvature_rate - H_DYN,
+            acceleration: u.acceleration - H_DYN,
             ..*u
         },
     );
-    let b: M62 = std::array::from_fn(|i| [cj[i], cr[i]]);
+    let ck = col(
+        Control {
+            curvature: u.curvature + H_DYN,
+            ..*u
+        },
+        Control {
+            curvature: u.curvature - H_DYN,
+            ..*u
+        },
+    );
+    let b: M42 = std::array::from_fn(|i| [ca[i], ck[i]]);
     (a, b)
 }
 
@@ -346,7 +344,7 @@ fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M66, M62) {
 #[derive(Clone, Copy)]
 struct Gains {
     k: V2,
-    kk: M26,
+    kk: M24,
 }
 
 /// treetop's `ExpectedCostChange`: the expansion's prediction of the cost
@@ -386,7 +384,7 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
     let mut gains = vec![
         Gains {
             k: [0.0; 2],
-            kk: [[0.0; 6]; 2]
+            kk: [[0.0; 4]; 2]
         };
         n
     ];
@@ -404,13 +402,13 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         });
         let at = transpose(&a);
         let bt = transpose(&b);
-        let atv: M66 = mat_mul(&at, &vxx);
-        let btv: M26 = mat_mul(&bt, &vxx);
+        let atv: M4 = mat_mul(&at, &vxx);
+        let btv: M24 = mat_mul(&bt, &vxx);
 
-        let qx: V6 = vec_add(sd.lx, mat_vec(&at, &vx));
+        let qx: V4 = vec_add(sd.lx, mat_vec(&at, &vx));
         let qu: V2 = vec_add(sd.lu, mat_vec(&bt, &vx));
-        let qxx: M66 = mat_add(sd.lxx, mat_mul(&atv, &a));
-        let qxu: M62 = mat_add(sd.lxu, mat_mul(&atv, &b));
+        let qxx: M4 = mat_add(sd.lxx, mat_mul(&atv, &a));
+        let qxu: M42 = mat_add(sd.lxu, mat_mul(&atv, &b));
         let quu: M22 = mat_add(sd.luu, mat_mul(&btv, &b));
 
         // regularize with treetop's gradient-norm scaling, then check PD
@@ -427,14 +425,14 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         ];
 
         let k: V2 = mat_vec(&inv, &qu).map(|v| -v);
-        let kk: M26 = mat_mul(&inv, &transpose(&qxu)).map(|row| row.map(|v| -v));
+        let kk: M24 = mat_mul(&inv, &transpose(&qxu)).map(|row| row.map(|v| -v));
 
         // value-function update (treetop `updateV`), symmetrized to shed
         // FD asymmetry before it compounds across 100 steps
-        let kt: M62 = transpose(&kk);
-        let w: M62 = mat_add(mat_mul(&kt, &quu), qxu);
+        let kt: M42 = transpose(&kk);
+        let w: M42 = mat_add(mat_mul(&kt, &quu), qxu);
         vx = vec_add(qx, vec_add(mat_vec(&w, &k), mat_vec(&kt, &qu)));
-        let vxx_new: M66 = mat_add(
+        let vxx_new: M4 = mat_add(
             qxx,
             mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))),
         );
@@ -471,11 +469,11 @@ fn forward(
     nxs.push(x);
     let mut cost_total = 0.0;
     for t in 0..n {
-        let dx: V6 = std::array::from_fn(|i| state(&x)[i] - state(&xs[t])[i]);
+        let dx: V4 = std::array::from_fn(|i| state(&x)[i] - state(&xs[t])[i]);
         let fb = mat_vec(&gains[t].kk, &dx);
         let u = Control {
-            jerk: us[t].jerk + scale * gains[t].k[0] + fb[0],
-            curvature_rate: us[t].curvature_rate + scale * gains[t].k[1] + fb[1],
+            acceleration: us[t].acceleration + scale * gains[t].k[0] + fb[0],
+            curvature: us[t].curvature + scale * gains[t].k[1] + fb[1],
         };
         cost_total += ocp.stage_cost(&x, &u, t, None);
         x = step(x, u, ocp.ctx.road.dt);
@@ -644,48 +642,22 @@ mod tests {
             y: 2.0,
             yaw: 0.3,
             speed: 8.0,
-            accel: 0.2,
-            curvature: 0.03,
         };
         let u = Control {
-            jerk: 0.5,
-            curvature_rate: 0.05,
+            acceleration: 0.5,
+            curvature: 0.03,
         };
         let dt = 0.1;
         let (a, b) = dynamics_jacobian(&x, &u, dt);
-        let next_curvature = x.curvature + u.curvature_rate * dt;
         let expect_a = [
-            [
-                1.0,
-                0.0,
-                -x.speed * dt * x.yaw.sin(),
-                dt * x.yaw.cos(),
-                0.0,
-                0.0,
-            ],
-            [
-                0.0,
-                1.0,
-                x.speed * dt * x.yaw.cos(),
-                dt * x.yaw.sin(),
-                0.0,
-                0.0,
-            ],
-            [0.0, 0.0, 1.0, dt * next_curvature, 0.0, x.speed * dt],
-            [0.0, 0.0, 0.0, 1.0, dt, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, -x.speed * dt * x.yaw.sin(), dt * x.yaw.cos()],
+            [0.0, 1.0, x.speed * dt * x.yaw.cos(), dt * x.yaw.sin()],
+            [0.0, 0.0, 1.0, dt * u.curvature],
+            [0.0, 0.0, 0.0, 1.0],
         ];
-        let expect_b = [
-            [0.0, 0.0],
-            [0.0, 0.0],
-            [0.0, x.speed * dt * dt],
-            [dt * dt, 0.0],
-            [dt, 0.0],
-            [0.0, dt],
-        ];
-        for i in 0..6 {
-            for j in 0..6 {
+        let expect_b = [[0.0, 0.0], [0.0, 0.0], [0.0, x.speed * dt], [dt, 0.0]];
+        for i in 0..4 {
+            for j in 0..4 {
                 assert!((a[i][j] - expect_a[i][j]).abs() < 1e-6, "A[{i}][{j}]");
             }
             for j in 0..2 {
@@ -740,8 +712,8 @@ mod tests {
             ctx: &ctx,
         };
         let u = Control {
-            jerk: 3.0,
-            curvature_rate: -0.2,
+            acceleration: 3.0,
+            curvature: -0.2,
         };
 
         let d = stage_derivs(&ocp, &ego, &u, 0);
@@ -749,15 +721,15 @@ mod tests {
         assert_eq!(
             d.lu,
             [
-                2.0 * scale * STAGE_COST_WEIGHTS.jerk * u.jerk,
-                2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate * u.curvature_rate,
+                2.0 * scale * STAGE_COST_WEIGHTS.acceleration * u.acceleration,
+                2.0 * scale * STAGE_COST_WEIGHTS.curvature * u.curvature,
             ]
         );
         assert_eq!(
             d.luu,
             [
-                [2.0 * scale * STAGE_COST_WEIGHTS.jerk, 0.0],
-                [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature_rate],
+                [2.0 * scale * STAGE_COST_WEIGHTS.acceleration, 0.0],
+                [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature],
             ]
         );
         assert!(d.lxu.iter().flatten().all(|v| *v == 0.0));
@@ -781,8 +753,8 @@ mod tests {
             ..Default::default()
         };
         let u = Control {
-            jerk: 0.3,
-            curvature_rate: 0.02,
+            acceleration: 0.3,
+            curvature: 0.02,
         };
         let t = 3;
         let predicted = [crate::metrics::predict(

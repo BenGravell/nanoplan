@@ -22,11 +22,10 @@
 //!
 //! This file also owns what treetop keeps in `core/` — the pieces *both*
 //! halves stand on: the trajectory-length constants and the goal state
-//! (shared rollout lives in [`crate::planning::search_tree`]). nanoplan's kinematic model now
-//! carries actuator position in state (`accel`, `curvature`) and takes
-//! actuator velocity as action (`jerk`, `curvature_rate`), so the treetop
-//! port converts its flat-output accel/curvature targets into those actions
-//! before every rollout.
+//! (shared rollout lives in [`crate::planning::search_tree`]). nanoplan's
+//! kinematic model keeps only pose/speed in state and uses direct
+//! acceleration/curvature commands, so the treetop port reads those commands
+//! from its flat-output curves before every rollout.
 //!
 //! ## Fitting treetop into the nanoplan framework
 //!
@@ -113,8 +112,6 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
         y: gy,
         yaw: gyaw,
         speed: ctx.road.target_speed,
-        accel: 0.0,
-        curvature: 0.0,
     }
 }
 
@@ -306,8 +303,8 @@ mod tests {
             ..Default::default()
         };
         let actions = [Control {
-            jerk: 2.0,
-            curvature_rate: 0.1,
+            acceleration: 2.0,
+            curvature: 0.1,
         }];
         let (xs, us) = crate::planning::search_tree::rollout_constrained(x0, &actions, 0.1);
         assert_eq!(us, actions);

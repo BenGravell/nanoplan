@@ -20,84 +20,63 @@ pub struct State {
     pub y: f64,
     pub yaw: f64,
     pub speed: f64,
-    pub accel: f64,
-    pub curvature: f64,
 }
 
 pub struct Control {
-    pub jerk: f64,
-    pub curvature_rate: f64,
+    pub acceleration: f64,
+    pub curvature: f64,
 }
 ```
 
 Deliberately not a full bicycle model with a wheelbase parameter — curvature
-is used directly as the steering actuator position, which is what every
-planner in this repo already reasons about (Frenet curvature, Bezier
-curvature, sampled curvature). The action is actuator velocity:
-longitudinal jerk and curvature rate.
+is used directly, which is what every planner in this repo already computes
+(Frenet curvature, Bezier curvature, sampled curvature). The planner-facing
+action is just longitudinal acceleration and curvature.
 
-`step()` is one semi-implicit Euler integration step: clamp the action,
-update acceleration/curvature, clamp those state fields, then integrate pose
-and speed with the applied actuator positions.
+`step()` is one Euler integration step with an already-applied direct
+control. It clamps acceleration and curvature, then integrates pose and
+speed:
 
 ```rust
 pub fn step(s: State, u: Control, dt: f64) -> State {
-    let accel = (s.accel + u.jerk * dt).clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
-    let curvature = clamp_curvature(s.curvature + u.curvature_rate * dt, s.speed);
+    let u = clamp_control(u, s.speed);
     State {
         x: s.x + s.speed * s.yaw.cos() * dt,
         y: s.y + s.speed * s.yaw.sin() * dt,
-        yaw: s.yaw + s.speed * curvature * dt,
-        speed: s.speed + accel * dt,
-        accel,
-        curvature,
+        yaw: s.yaw + s.speed * u.curvature * dt,
+        speed: (s.speed + u.acceleration * dt).max(0.0),
     }
 }
 ```
 
-`Control::default()` holds the current acceleration and curvature. With the
-default state (zero acceleration, zero curvature), that drives straight ahead
-at whatever speed the state already has.
+`Control::default()` coasts straight at the current speed.
 
-`step()` is also reused outside the closed loop: actors without a logged
-trajectory integrate under a constant `Control` this same way (see
-[`src/scenarios/README.md`](../scenarios/README.md#actor-motion)), and the
-viewer's future-preview overlay rolls a plan forward into positions with it.
+`step()` deliberately has no actuator memory. Closed-loop simulation uses
+`Simulator`'s internal command limiter before calling `step()`; planner
+rollouts use the direct model and do not receive or optimize actuator state.
 
 ### Actuation limits
 
-`step()` is also the physical constraint boundary. These are capability
-limits, *not* comfort limits: the simulator models what the car can
-physically do, and how gently it *ought* to be driven is a separate concern
-the `comfort` metric and the planners' cost express. Each bound is tuned to
-published passenger-car test data and cited in the source:
+These are capability limits, *not* comfort limits. The public planner command
+is acceleration/curvature; the simulator privately slews the applied command
+toward it so impossible command jumps are softened without making planners
+model jerk or curvature rate.
 
-- **longitudinal acceleration** `MAX_LON_ACCEL = 4.0` m/s² (~0.41 g,
-  traction/engine limited — 0–100 km/h in ~7–11 s) and **braking**
-  `MIN_LON_ACCEL = -9.0` m/s² (~0.9 g, dry-asphalt ABS grip);
-- **longitudinal jerk** `MAX_ABS_LON_JERK = 20.0` m/s³ (actuator force-rate
-  capability, far above the ~4 m/s³ the comfort metric calls smooth);
+- **longitudinal acceleration** `MAX_LON_ACCEL = 4.0` m/s² and **braking**
+  `MIN_LON_ACCEL = -9.0` m/s²;
 - **steering angle** `MAX_ABS_CURVATURE = 0.2` /m (a ~5 m turning radius);
 - **lateral acceleration** `MAX_ABS_LAT_ACCEL = 9.0` m/s² (~0.9 g skidpad
   grip), which tightens the curvature limit as speed rises so the car can't
   hold a hairpin at highway speed;
-- **curvature rate** `MAX_ABS_CURVATURE_RATE = 0.4` /(m·s), a quick emergency
-  steer (the whole steering range in ~1 s) — the steering analogue of the
-  jerk limit.
-
-Jerk and curvature rate are `Control` bounds. Acceleration, curvature, and
-the lateral-acceleration-derived curvature cap are `State` bounds. No
-previous-control value is threaded through the simulator anymore; actuator
-position is just part of `State`.
+- **longitudinal jerk** and **curvature rate** are private `Simulator`
+  guard rails inside `CommandLimiter`, deliberately not planner inputs.
 
 ### One forward model, used everywhere
 
-`step(state, action, dt) -> State` is the single forward model — the plant
-advances the ego with it, and planners roll candidate trajectories out
-through the same function. Planners that naturally compute desired
-acceleration/curvature targets use `action_toward(state, accel, curvature,
-dt)` to convert those targets into bounded jerk/rate actions, then still
-advance through `step`.
+`step(state, control, dt) -> State` is the simple direct kinematic model used
+for planner rollouts. `Simulator::tick` wraps it with private actuator slew
+for the actual ego, and scenario actors without a logged trajectory use the
+same limiter before stepping.
 
 ## `Simulator`
 
@@ -141,8 +120,8 @@ This is the seam between all four components. In order:
 
 1. Build every actor's trace up front for the full duration
    (`Actor::trace`, in [`scenarios`](../scenarios/README.md#actor-motion)) —
-   either replaying a logged trajectory or integrating a constant action from
-   the actor's initial actuator state.
+   either replaying a logged trajectory or integrating a constant
+   acceleration/curvature command through the same private command limiter.
    Actors are **not** replanned during the loop; only the ego is.
 2. Build `kind.build()` into a fresh `Box<dyn Planner>`, a `Simulator`
    seeded at `sc.ego`, and the run's fixed
@@ -179,7 +158,7 @@ the whole closed loop). Neither consumer duplicates the tick loop.
   must match).
 - **Actors are precomputed, not replanned**, because nothing in this
   codebase currently models multi-agent interactive prediction — actors are
-  either scripted (constant action from initial actuator state) or logged
+  either scripted (constant acceleration/curvature command) or logged
   (replay). If interactive
   actor behavior is ever added, it would change step 1 into something that
   runs alongside the ego loop rather than before it.

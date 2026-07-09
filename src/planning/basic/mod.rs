@@ -1,8 +1,8 @@
-//! Basic centerline-return planner using the shared quintic steering curve.
+//! Basic centerline-return planner using the shared cubic steering curve.
 
 use crate::math::smoothstep;
 use crate::planning::search_tree::{centerline_follow_controls, stop_controls};
-use crate::planning::steering::{QuinticSteer, steer_controls};
+use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
 use crate::simulation::{Control, MIN_LON_ACCEL, State};
@@ -45,7 +45,7 @@ impl Planner for BasicPlanner {
                 cruise_goal_state(&path, target_s.min(path.length()), ctx.road.target_speed)
             };
             (
-                QuinticSteer::from_states(&ego, &target, duration),
+                CubicSteer::from_states(&ego, &target, duration),
                 duration,
                 stop_at_goal,
             )
@@ -103,8 +103,6 @@ fn route_goal_state(path: &Path) -> State {
         y,
         yaw,
         speed: 0.0,
-        accel: 0.0,
-        curvature: 0.0,
     }
 }
 
@@ -115,8 +113,6 @@ fn cruise_goal_state(path: &Path, s: f64, target_speed: f64) -> State {
         y,
         yaw,
         speed: target_speed,
-        accel: 0.0,
-        curvature: 0.0,
     }
 }
 
@@ -217,7 +213,7 @@ mod tests {
         let goal = route_goal_state(&path);
         let ([x, y], yaw) = path.pose_at(path.length());
         assert_eq!((goal.x, goal.y, goal.yaw), (x, y, yaw));
-        assert_eq!((goal.speed, goal.accel, goal.curvature), (0.0, 0.0, 0.0));
+        assert_eq!(goal.speed, 0.0);
     }
 
     #[test]

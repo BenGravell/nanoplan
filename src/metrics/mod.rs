@@ -51,7 +51,7 @@ pub struct TickCtx<'a> {
     pub station: &'a [f64],
     /// Ego signed lateral offset from the centerline at every tick.
     pub lateral: &'a [f64],
-    /// Tickwise ego kinematics (accels, jerks, yaw rates).
+    /// Tickwise ego kinematics (accels and yaw rates).
     pub kinematics: &'a comfort::Kinematics,
     pub speed_limit: f64,
     /// Drivable half-width of the road, from [`Road::half_width`] — the

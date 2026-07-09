@@ -3,7 +3,7 @@
 
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State, step};
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
 /// Also drives the open-world traffic actors ([`crate::world`]).
@@ -75,7 +75,10 @@ impl Planner for BezierIdmPlanner {
                 .map(|_| {
                     let accel = idm_accel(x.speed, ctx.road.target_speed, lead);
                     let curvature = bezier_curvature(&b, t);
-                    let u = action_toward(x, accel, curvature, ctx.road.dt);
+                    let u = Control {
+                        acceleration: accel,
+                        curvature,
+                    };
                     x = step(x, u, ctx.road.dt);
                     let d1 = bezier_d1(&b, t);
                     t = (t + x.speed * ctx.road.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);

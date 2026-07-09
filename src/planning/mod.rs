@@ -64,8 +64,9 @@ impl Context<'_> {
     }
 }
 
-/// A planner turns the current state into a control trajectory.
-/// The simulator applies the first control each tick (receding horizon).
+/// A planner turns the current 4D state into a direct acceleration/curvature
+/// command trajectory. It does not receive actuator state; the simulator may
+/// slew-rate limit the first command before applying it.
 pub trait Planner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
 }
@@ -115,7 +116,7 @@ const SPECS: [PlannerSpec; 12] = [
     },
     PlannerSpec {
         kind: PlannerKind::Basic,
-        name: "basic quintic",
+        name: "basic cubic",
         build: || Box::new(BasicPlanner),
         has_diagnostics: false,
     },

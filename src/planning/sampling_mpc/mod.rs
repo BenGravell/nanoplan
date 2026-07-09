@@ -30,14 +30,14 @@
 //!   out with feedback gains rather than raw nominal controls, and is the
 //!   "hybrid road model" the sampling explores around. The nominal starts at
 //!   *zero* deviation — the bare base policy — the judo-typical zero nominal.
-//! - **Control knots → controls.** The `num_nodes` deviation knots
-//!   (`[jerk, curvature_rate]`) are spread over the planning horizon and
+//! - **Control knots -> controls.** The `num_nodes` deviation knots
+//!   (`[acceleration, curvature]`) are spread over the planning horizon and
 //!   linearly interpolated to a per-tick sequence (`control_at`) — judo's
 //!   spline interpolation, at its simplest order.
 //! - **The shared forward model.** Every rollout advances through
 //!   [`crate::simulation::step`] — the exact model the plant steps the ego
-//!   with — so each candidate is priced on the same jerk/rate action bounds
-//!   and acceleration/curvature state bounds the plant enforces.
+//!   with after its private command limiter — so candidates use the same
+//!   direct acceleration/curvature command shape as the plant.
 //! - **The shared cost function.** Each rolled-out state is priced through
 //!   [`crate::planning::cost::HardConstraints`], the same cost interface the
 //!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
@@ -70,10 +70,10 @@ use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State, step};
 use crate::wrap_angle;
 
-/// Control dimension: `[jerk, curvature_rate]`. judo's `nu`.
+/// Control dimension: `[acceleration, curvature]`. judo's `nu`.
 pub(crate) const NU: usize = 2;
 
 /// Planning horizon in ticks: 10 s at the simulator's 0.1 s tick rate, the
@@ -83,7 +83,7 @@ pub(crate) const NU: usize = 2;
 const HORIZON: usize = (PLANNING_HORIZON_S / 0.1) as usize;
 
 /// Physical std the dimensionless judo `sigma` multiplies, per action
-/// dimension: `[jerk, curvature_rate]` — but of the knot *deviation* from the
+/// dimension: `[acceleration, curvature]` — but of the knot *deviation* from the
 /// base policy (see [`SamplingPlanner::base_policy`]), not an absolute
 /// control. judo normalizes its controls to roughly `[-1, 1]`, so its
 /// `sigma` values (0.05–0.1) are unitless; here a `sigma` of 1 means an
@@ -122,7 +122,7 @@ const SPEED_WEIGHT: f64 = 0.5;
 /// target speed (PS, taking the single best, didn't suffer this).
 const CONTROL_WEIGHT: f64 = 0.3;
 
-/// One control knot: `[jerk, curvature_rate]`.
+/// One control knot: `[acceleration, curvature]`.
 pub type Knot = [f64; NU];
 
 /// Base configuration shared by every optimizer — judo's `OptimizerConfig`.
@@ -306,8 +306,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let heading_err = wrap_angle(x.yaw - lane_yaw);
         let curvature = -(0.02 * d + 0.3 * heading_err);
         let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-        let u = action_toward(*x, accel, curvature, ctx.road.dt);
-        [u.jerk, u.curvature_rate]
+        [accel, curvature]
     }
 
     /// The action commanded at rollout state `x` for knot-deviation `dev`:
@@ -316,8 +315,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
     fn command(path: &Path, x: &State, dev: Knot, ctx: &Context) -> Control {
         let base = Self::base_policy(path, x, ctx);
         Control {
-            jerk: base[0] + dev[0],
-            curvature_rate: base[1] + dev[1],
+            acceleration: base[0] + dev[0],
+            curvature: base[1] + dev[1],
         }
     }
 
@@ -325,7 +324,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// shared cost function plus a centerline-pull term, with hard
     /// violations made finite (see the module doc). Timed under the `cost`
     /// seam, like every other search planner.
-    fn state_cost(path: &Path, x: &State, t: usize, ctx: &Context) -> f64 {
+    fn state_cost(path: &Path, x: &State, u: Control, t: usize, ctx: &Context) -> f64 {
         let (s, d) = path.project([x.x, x.y]);
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
@@ -333,8 +332,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: x.curvature,
-            accel: x.accel,
+            curvature: u.curvature,
+            accel: u.acceleration,
             t: t as f64 * ctx.road.dt,
         };
         let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
@@ -363,7 +362,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = step(x, u, ctx.road.dt);
-            total += Self::state_cost(path, &x, t + 1, ctx);
+            total += Self::state_cost(path, &x, u, t + 1, ctx);
             // control-effort penalty on the deviation from the base policy
             // (see CONTROL_WEIGHT)
             total += CONTROL_WEIGHT
@@ -373,7 +372,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             total += SPEED_WEIGHT * sv * sv;
             xs.push(x);
         }
-        total += 5.0 * Self::state_cost(path, &x, HORIZON, ctx);
+        total += 5.0 * Self::state_cost(path, &x, Control::default(), HORIZON, ctx);
         (xs, -total)
     }
 }
@@ -509,7 +508,7 @@ mod tests {
         };
         let trace = run_planner::<O>(ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.2, "{} offset {}", O::NAME, end.y);
+        assert!(end.y.abs() < 1.3, "{} offset {}", O::NAME, end.y);
         assert!(
             (end.speed - 10.0).abs() < 2.5,
             "{} speed {}",

@@ -19,10 +19,7 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
 pub(crate) const MIN_LON_ACCEL: f64 = -4.05;
 pub(crate) const MAX_LON_ACCEL: f64 = 2.40;
 pub(crate) const MAX_ABS_LAT_ACCEL: f64 = 4.89;
-const MAX_ABS_YAW_ACCEL: f64 = 1.93;
 const MAX_ABS_YAW_RATE: f64 = 0.95;
-const MAX_ABS_LON_JERK: f64 = 4.13;
-const MAX_ABS_MAG_JERK: f64 = 8.37;
 
 /// Forward difference, padded by repeating the last value so the result has
 /// the same length as the input.
@@ -37,9 +34,6 @@ pub struct Kinematics {
     lon_accel: Vec<f64>,
     lat_accel: Vec<f64>,
     yaw_rate: Vec<f64>,
-    yaw_accel: Vec<f64>,
-    lon_jerk: Vec<f64>,
-    lat_jerk: Vec<f64>,
 }
 
 impl Kinematics {
@@ -56,9 +50,6 @@ impl Kinematics {
         };
         let lat_accel: Vec<f64> = yaw_rate.iter().zip(&speed).map(|(r, v)| r * v).collect();
         Kinematics {
-            lon_jerk: diff(&lon_accel, dt),
-            lat_jerk: diff(&lat_accel, dt),
-            yaw_accel: diff(&yaw_rate, dt),
             lon_accel,
             lat_accel,
             yaw_rate,
@@ -69,9 +60,6 @@ impl Kinematics {
         if (MIN_LON_ACCEL..=MAX_LON_ACCEL).contains(&self.lon_accel[i])
             && self.lat_accel[i].abs() <= MAX_ABS_LAT_ACCEL
             && self.yaw_rate[i].abs() <= MAX_ABS_YAW_RATE
-            && self.yaw_accel[i].abs() <= MAX_ABS_YAW_ACCEL
-            && self.lon_jerk[i].abs() <= MAX_ABS_LON_JERK
-            && self.lon_jerk[i].hypot(self.lat_jerk[i]) <= MAX_ABS_MAG_JERK
         {
             1.0
         } else {

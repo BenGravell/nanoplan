@@ -98,7 +98,7 @@ pub struct Actor {
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `init` | `State` | required | The actor's state at scenario time `0`. |
-| `control` | `Control` | `{jerk: 0, curvature_rate: 0}` | Constant action the actor drives under from `init`, if `trajectory` is empty. |
+| `control` | `Control` | `{acceleration: 0, curvature: 0}` | Constant command the actor drives under from `init`, if `trajectory` is empty. Actor tracing uses the simulator's private command limiter before stepping. |
 | `trajectory` | `Vec<Waypoint>` | `[]` | A logged path to replay instead of integrating `control`. Must be sorted by `t`. See [Trajectory replay](#trajectory-replay). |
 
 ### `Waypoint`

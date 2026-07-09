@@ -15,7 +15,7 @@ planning/
 ├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-├── rrt_star/      RRT*, quintic differential-flatness steering
+├── rrt_star/      RRT*, cubic differential-flatness steering
 ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
 └── treetop/       treetop-derived: RRT motion sampling tree, finite-difference iLQR, and the RRT+iLQR treetop planner
 ```
@@ -29,12 +29,14 @@ pub trait Planner {
 ```
 
 A planner is given the current ego `State` and a `Context`, and returns a
-control trajectory. The [`Simulator`](../simulation/README.md) applies only
-the **first** control and re-invokes `plan()` next tick — this is a receding
-horizon / MPC-style loop, not open-loop trajectory execution. `&mut self`
-lets a planner keep state between calls (PI²-DDP warm-starts its policy this
-way); planners with no state to keep, like `StraightPlanner`, are
-zero-sized unit structs.
+direct acceleration/curvature command trajectory. It does **not** receive
+actuator state, jerk, or curvature rate; the [`Simulator`](../simulation/README.md)
+may slew-rate limit the first command privately before applying it. The
+simulator applies only the **first** control and re-invokes `plan()` next tick
+— this is a receding horizon / MPC-style loop, not open-loop trajectory
+execution. `&mut self` lets a planner keep state between calls (PI²-DDP
+warm-starts its policy this way); planners with no state to keep, like
+`StraightPlanner`, are zero-sized unit structs.
 
 An empty return value is treated as "coast" (zero control) by the simulator,
 not an error — no planner currently exercises this, but it's a legal escape
@@ -260,7 +262,7 @@ drift away from it. Where a planner needs curvature as an input, it gets it
 one of two ways, both compatible with that constraint:
 
 - **A closed-form fact about an already-*fixed* candidate curve.** RRT*'s
-  `QuinticSteer::curvature` evaluates the curvature of a specific flat-output
+  `CubicSteer::curvature` evaluates the curvature of a specific flat-output
   polynomial it already committed to — a geometric property of one
   candidate, not a gradient used to choose the next one.
 - **A purely numerical estimate off sampled points.** `cost::curvature_of`
@@ -352,7 +354,7 @@ sampling_mpc/
 
 **The judo interface, verbatim.** An `Optimizer` is exactly judo's two-method
 strategy over control *knots* — `num_nodes` control points of dimension
-`nu = 2` (`[jerk, curvature_rate]`):
+`nu = 2` (`[acceleration, curvature]`):
 
 ```rust
 fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize) -> Vec<Vec<Knot>>;
@@ -568,8 +570,9 @@ curvature exploration variance `σ_κ` is sized so sampled trajectories span
 roughly the lane half-width (`LANE_HALF_M = 1.75` m) by the preview
 distance, rather than an arbitrary constant. The running cost prices the
 rolled-out state against the [shared cost function](#the-shared-cost-function)
-— acceleration and curvature live in `State`, while `u` is jerk/rate — plus
-PI²-DDP's own centerline-pull term and a control-effort quadratic tied to
+— `State` is just `(x, y, yaw, speed)`, while `u` is direct
+acceleration/curvature — plus PI²-DDP's own centerline-pull term and a
+control-effort quadratic tied to
 the sampling covariance (the paper's "linear solvability" trick). Unlike
 the lattice and RRT*, which reject a colliding or off-road
 candidate outright, PI²-DDP has no such hard accept/reject step in its
@@ -585,9 +588,8 @@ one step and continues refining; otherwise it re-initializes from scratch.
 failures (see the `stays_finite_and_safe_over_full_scenario` regression
 test):
 
-- `clamp_u` bounds jerk and curvature rate to physical limits
-  (`MAX_ABS_LON_JERK`, `MAX_ABS_CURVATURE_RATE`) — near-stationary rollouts have
-  little state diversity, which makes the `Σₓₓ` inverse in the gain
+- `clamp_u` bounds direct acceleration and curvature commands — near-stationary
+  rollouts have little state diversity, which makes the `Σₓₓ` inverse in the gain
   computation nearly singular and can otherwise blow the policy up.
 - A PSD guard on the perturbation covariance: if `Σᵤ`'s Schur complement
   loses positive-definiteness (noisy statistics), it's replaced with the
@@ -636,10 +638,9 @@ existing node instead of failing for lack of one.
 **The steering function is differential flatness, not a straight line or an
 arc.** A unicycle/bicycle's heading (`atan2(y', x')`) and curvature
 (`(x'y'' - y'x'') / |·|^3`) are both fully determined by its flat outputs
-`(x, y)` and their derivatives — so `QuinticSteer` fits independent quintic
-polynomials to `x(s)` and `y(s)`, matching position, heading direction, and
-curvature boundary conditions. The connection is guaranteed kinematically
-smooth without ever solving for heading or curvature directly.
+`(x, y)` and their derivatives — so `CubicSteer` fits independent cubic
+polynomials to `x(s)` and `y(s)`, matching position and heading direction.
+Acceleration is read back as a control, not treated as a state boundary.
 
 **Steering-angle limiting, not post-hoc curvature rejection, is what makes
 the tree grow at all.** Early on, this module aimed each new edge straight
@@ -648,7 +649,7 @@ independently-chosen directions connected by a short flat-output curve can
 need far more curvature than any real car has, and nearly every candidate
 steer failed the curvature check. `max_yaw_change(step_len)` caps how far a
 new edge's direction may turn away from its parent's own heading before the
-quintic is even built; the finished edge is still checked against
+cubic is even built; the finished edge is still checked against
 `MAX_ABS_CURVATURE`. A real swerve is therefore built from several small,
 individually gentle turns rather than one edge trying to do it all.
 
@@ -736,7 +737,7 @@ discrete points, so the true closest approach between samples can dip a
 little further than what gets tested. `edge_cost` keeps its own arc-length
 accumulation (the actual quantity the "star" rewiring minimizes) and
 lateral-offset pull, adding the shared cost per sampled point on top;
-curvature comes from `QuinticSteer::curvature`, a closed-form fact about the
+curvature comes from `CubicSteer::curvature`, a closed-form fact about the
 already-fixed candidate curve, not a search gradient.
 
 **Effective progress — not raw distance, and biased toward the side already
@@ -802,8 +803,8 @@ treetop/
 ```
 
 nanoplan's kinematic model uses treetop's same pose/speed kinematics, but
-with actuator position in state (`accel`, `curvature`) and actuator velocity
-as action (`jerk`, `curvature_rate`). Three adaptations recur throughout
+with a four-dimensional state `(x, y, yaw, speed)` and direct
+acceleration/curvature commands. Three adaptations recur throughout
 (see the module doc): treetop's fixed user-placed goal pose becomes a **rolling lane
 target** (`goal_state`: the centerline pose a planning horizon ahead, at
 the target speed); treetop's static circular obstacles become **moving
@@ -833,15 +834,14 @@ optimizer — rather than by asymptotic optimality (contrast
   `TICKS` controls — precisely the input the iLQR pass wants. Moving
   obstacles come free: a layer's states have a known absolute time, so
   collision checks price actors where they *will be*.
-- **Steering in action space.** `steer_actions` fits the shared quintic
-  flat-output connector between two states' position, velocity, and
-  acceleration boundary conditions, reads acceleration and curvature off
-  the polynomial derivatives — the same differential-flatness idea as
-  RRT*'s `QuinticSteer` — then converts those targets into
-  jerk/curvature-rate actions and realizes them through the shared rollout.
+- **Steering in action space.** `steer_actions` fits the shared cubic
+  flat-output connector between two states' position and velocity boundary
+  conditions, reads acceleration and curvature off the polynomial derivatives
+  — the same differential-flatness idea as RRT*'s `CubicSteer` — and
+  realizes those direct commands through the shared rollout.
   A secant against the start heading infers forward/reverse. The steer
   executes only its first segment; goal-directed samples steer along a
-  quintic spanning the whole remaining horizon and keep just the first
+  cubic spanning the whole remaining horizon and keep just the first
   second of it.
 - **Zero-action-point parenting.** A sample attaches to the previous
   layer's node whose coasting endpoint is nearest in `(x, y, yaw, v)` —

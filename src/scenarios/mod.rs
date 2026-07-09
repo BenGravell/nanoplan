@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::simulation::{Control, State, step};
+use crate::simulation::{CommandLimiter, Control, State};
 use crate::wrap_angle;
 
 /// A polyline path with arc-length lookup and Frenet projection.
@@ -135,9 +135,10 @@ impl Actor {
     pub fn trace(&self, steps: usize, dt: f64) -> Vec<State> {
         if self.trajectory.is_empty() {
             let mut s = self.init;
+            let mut limiter = CommandLimiter::new();
             std::iter::once(s)
                 .chain((0..steps).map(|_| {
-                    s = step(s, self.control, dt);
+                    s = limiter.step(s, self.control, dt);
                     s
                 }))
                 .collect()
@@ -175,8 +176,6 @@ pub(crate) fn replay(trajectory: &[Waypoint], t: f64) -> State {
         y: a.state.y + (b.state.y - a.state.y) * u,
         yaw: a.state.yaw + wrap_angle(b.state.yaw - a.state.yaw) * u,
         speed: a.state.speed + (b.state.speed - a.state.speed) * u,
-        accel: a.state.accel + (b.state.accel - a.state.accel) * u,
-        curvature: a.state.curvature + (b.state.curvature - a.state.curvature) * u,
     }
 }
 

@@ -1,63 +1,50 @@
-//! Shared flat-output steering primitives for sampling-tree planners.
+//! Shared flat-output steering primitives for planners.
 //!
-//! Both tree planners connect sampled states by choosing `x(t)` and `y(t)`
-//! polynomials, then reading heading, acceleration, and curvature back from
-//! their derivatives. This module owns that math once. RRT* uses pose
-//! boundaries over a unit interval; treetop RRT uses full [`State`] boundary
-//! conditions over physical time.
+//! Planners connect sampled states by choosing cubic Hermite `x(t)` and
+//! `y(t)` polynomials, then reading acceleration and curvature back from
+//! their derivatives. The curve matches only pose and velocity: acceleration
+//! stays a control, not hidden planner state.
 
-use crate::simulation::{Control, State, clamp_control, clamp_state, step};
+use crate::simulation::{Control, State, clamp_control, step};
 
-/// Quintic flat-output connector between two states/poses.
+/// Cubic flat-output connector between two states/poses.
 ///
-/// The polynomial in each coordinate matches position, velocity, and
-/// acceleration at both endpoints:
+/// The polynomial in each coordinate matches position and velocity at both
+/// endpoints:
 ///
-/// `p(t) = c0 + c1*t + c2*t^2 + c3*t^3 + c4*t^4 + c5*t^5`
-pub(crate) struct QuinticSteer {
-    cx: [f64; 6],
-    cy: [f64; 6],
+/// `p(t) = c0 + c1*t + c2*t^2 + c3*t^3`
+pub(crate) struct CubicSteer {
+    cx: [f64; 4],
+    cy: [f64; 4],
     duration: f64,
 }
 
-impl QuinticSteer {
+impl CubicSteer {
     /// Fit a time-parametrized connector between full vehicle states.
     pub(crate) fn from_states(start: &State, goal: &State, duration: f64) -> Self {
         let duration = duration.max(1e-6);
-        let (v0, a0) = state_derivatives(start);
-        let (v1, a1) = state_derivatives(goal);
+        let v0 = state_velocity(start);
+        let v1 = state_velocity(goal);
         Self {
-            cx: quintic_coeffs(start.x, v0[0], a0[0], goal.x, v1[0], a1[0], duration),
-            cy: quintic_coeffs(start.y, v0[1], a0[1], goal.y, v1[1], a1[1], duration),
+            cx: cubic_coeffs(start.x, v0[0], goal.x, v1[0], duration),
+            cy: cubic_coeffs(start.y, v0[1], goal.y, v1[1], duration),
             duration,
         }
     }
 
     /// Fit a unit-interval connector between oriented positions. The
-    /// derivative magnitude is tied to chord length, while endpoint curvature
-    /// supplies the second derivative normal to each heading.
-    pub(crate) fn from_poses(
-        p0: [f64; 2],
-        yaw0: f64,
-        curvature0: f64,
-        p1: [f64; 2],
-        yaw1: f64,
-        curvature1: f64,
-    ) -> Self {
+    /// derivative magnitude is tied to chord length.
+    pub(crate) fn from_poses(p0: [f64; 2], yaw0: f64, p1: [f64; 2], yaw1: f64) -> Self {
         let k = dist(p0, p1).max(1e-3) / 2.0;
-        let boundary = |yaw: f64, curvature: f64| {
+        let boundary = |yaw: f64| {
             let tangent = [yaw.cos(), yaw.sin()];
-            let normal = [-yaw.sin(), yaw.cos()];
-            (
-                [k * tangent[0], k * tangent[1]],
-                [k * k * curvature * normal[0], k * k * curvature * normal[1]],
-            )
+            [k * tangent[0], k * tangent[1]]
         };
-        let (v0, a0) = boundary(yaw0, curvature0);
-        let (v1, a1) = boundary(yaw1, curvature1);
+        let v0 = boundary(yaw0);
+        let v1 = boundary(yaw1);
         Self {
-            cx: quintic_coeffs(p0[0], v0[0], a0[0], p1[0], v1[0], a1[0], 1.0),
-            cy: quintic_coeffs(p0[1], v0[1], a0[1], p1[1], v1[1], a1[1], 1.0),
+            cx: cubic_coeffs(p0[0], v0[0], p1[0], v1[0], 1.0),
+            cy: cubic_coeffs(p0[1], v0[1], p1[1], v1[1], 1.0),
             duration: 1.0,
         }
     }
@@ -75,30 +62,26 @@ impl QuinticSteer {
         (dx * ddy - dy * ddx) / speed.powi(3)
     }
 
-    /// Flat-output action `(longitudinal jerk, curvature rate)`.
+    /// Flat-output action `(longitudinal acceleration, curvature)`.
     pub(crate) fn control(&self, t: f64) -> Control {
-        let (_, _, _, jerk, curvature_rate) = self.flat_motion(t);
+        let (_, acceleration, curvature) = self.flat_motion(t);
         Control {
-            jerk,
-            curvature_rate,
+            acceleration,
+            curvature,
         }
     }
 
-    fn flat_motion(&self, t: f64) -> (f64, f64, f64, f64, f64) {
+    fn flat_motion(&self, t: f64) -> (f64, f64, f64) {
         let t = t.clamp(0.0, self.duration);
         let (dx, dy) = (eval_d1(&self.cx, t), eval_d1(&self.cy, t));
         let (ddx, ddy) = (eval_d2(&self.cx, t), eval_d2(&self.cy, t));
-        let (dddx, dddy) = (eval_d3(&self.cx, t), eval_d3(&self.cy, t));
         let speed = dx.hypot(dy);
         if speed <= 0.01 {
-            return (speed, ddx.hypot(ddy), 0.0, 0.0, 0.0);
+            return (speed, ddx.hypot(ddy), 0.0);
         }
         let accel = (dx * ddx + dy * ddy) / speed;
         let curvature = (dx * ddy - dy * ddx) / speed.powi(3);
-        let jerk = (ddx * ddx + ddy * ddy + dx * dddx + dy * dddy - accel * accel) / speed;
-        let curvature_rate =
-            (dx * dddy - dy * dddx) / speed.powi(3) - 3.0 * curvature * accel / speed;
-        (speed, accel, curvature, jerk, curvature_rate)
+        (speed, accel, curvature)
     }
 
     pub(crate) fn forward_sign(&self, yaw: f64, probe_t: f64) -> f64 {
@@ -119,12 +102,12 @@ impl QuinticSteer {
     }
 }
 
-/// Convert a fitted quintic's analytic flat-output action into bounded
+/// Convert a fitted cubic's analytic flat-output action into direct
 /// controls, sampling each segment at its midpoint. `curvature_sign` lets
 /// callers flip the curve when they intentionally drive it in reverse.
 pub(crate) fn steer_controls(
     start: State,
-    steer: &QuinticSteer,
+    steer: &CubicSteer,
     dt: f64,
     ticks: usize,
     curvature_sign: f64,
@@ -134,64 +117,42 @@ pub(crate) fn steer_controls(
         .map(|i| {
             let t = (i as f64 + 0.5) * dt;
             let mut u = steer.control(t);
-            u.curvature_rate *= curvature_sign;
-            let u = clamp_control(u);
-            let state = clamp_state(x);
-            let next_accel = state.accel + u.jerk * dt;
-            let accel_floor = -state.speed / dt;
-            let u = if next_accel < accel_floor {
-                clamp_control(Control {
-                    jerk: (accel_floor - state.accel) / dt,
-                    ..u
-                })
-            } else {
-                u
-            };
-            x = step(state, u, dt);
+            u.curvature *= curvature_sign;
+            let accel_floor = -x.speed / dt;
+            u.acceleration = u.acceleration.max(accel_floor);
+            let u = clamp_control(u, x.speed);
+            x = step(x, u, dt);
             u
         })
         .collect();
     (controls, x)
 }
 
-fn state_derivatives(x: &State) -> ([f64; 2], [f64; 2]) {
+fn state_velocity(x: &State) -> [f64; 2] {
     let tangent = [x.yaw.cos(), x.yaw.sin()];
-    let normal = [-x.yaw.sin(), x.yaw.cos()];
-    (
-        [x.speed * tangent[0], x.speed * tangent[1]],
-        [
-            x.accel * tangent[0] + x.speed * x.speed * x.curvature * normal[0],
-            x.accel * tangent[1] + x.speed * x.speed * x.curvature * normal[1],
-        ],
-    )
+    [x.speed * tangent[0], x.speed * tangent[1]]
 }
 
-fn quintic_coeffs(p0: f64, v0: f64, a0: f64, p1: f64, v1: f64, a1: f64, t: f64) -> [f64; 6] {
-    let (t2, t3, t4, t5) = (t * t, t * t * t, t * t * t * t, t * t * t * t * t);
+fn cubic_coeffs(p0: f64, v0: f64, p1: f64, v1: f64, t: f64) -> [f64; 4] {
+    let (t2, t3) = (t * t, t * t * t);
     [
         p0,
         v0,
-        0.5 * a0,
-        (20.0 * (p1 - p0) - (8.0 * v1 + 12.0 * v0) * t - (3.0 * a0 - a1) * t2) / (2.0 * t3),
-        (30.0 * (p0 - p1) + (14.0 * v1 + 16.0 * v0) * t + (3.0 * a0 - 2.0 * a1) * t2) / (2.0 * t4),
-        (12.0 * (p1 - p0) - (6.0 * v1 + 6.0 * v0) * t - (a0 - a1) * t2) / (2.0 * t5),
+        (3.0 * (p1 - p0) - (2.0 * v0 + v1) * t) / t2,
+        (2.0 * (p0 - p1) + (v0 + v1) * t) / t3,
     ]
 }
 
-fn eval(c: &[f64; 6], t: f64) -> f64 {
-    c[0] + t * (c[1] + t * (c[2] + t * (c[3] + t * (c[4] + t * c[5]))))
+fn eval(c: &[f64; 4], t: f64) -> f64 {
+    c[0] + t * (c[1] + t * (c[2] + t * c[3]))
 }
 
-fn eval_d1(c: &[f64; 6], t: f64) -> f64 {
-    c[1] + t * (2.0 * c[2] + t * (3.0 * c[3] + t * (4.0 * c[4] + t * 5.0 * c[5])))
+fn eval_d1(c: &[f64; 4], t: f64) -> f64 {
+    c[1] + t * (2.0 * c[2] + t * 3.0 * c[3])
 }
 
-fn eval_d2(c: &[f64; 6], t: f64) -> f64 {
-    2.0 * c[2] + t * (6.0 * c[3] + t * (12.0 * c[4] + t * 20.0 * c[5]))
-}
-
-fn eval_d3(c: &[f64; 6], t: f64) -> f64 {
-    6.0 * c[3] + t * (24.0 * c[4] + t * 60.0 * c[5])
+fn eval_d2(c: &[f64; 4], t: f64) -> f64 {
+    2.0 * c[2] + t * 6.0 * c[3]
 }
 
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -203,11 +164,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quintic_matches_state_endpoints() {
+    fn cubic_matches_state_endpoints() {
         let start = State {
             speed: 5.0,
-            accel: 0.4,
-            curvature: 0.02,
             ..Default::default()
         };
         let goal = State {
@@ -215,10 +174,8 @@ mod tests {
             y: 1.0,
             yaw: 0.1,
             speed: 6.0,
-            accel: -0.2,
-            curvature: 0.01,
         };
-        let steer = QuinticSteer::from_states(&start, &goal, 1.2);
+        let steer = CubicSteer::from_states(&start, &goal, 1.2);
 
         let p0 = steer.point(0.0);
         let p1 = steer.point(1.2);
@@ -226,16 +183,12 @@ mod tests {
         assert!((p0[1] - start.y).abs() < 1e-9);
         assert!((p1[0] - goal.x).abs() < 1e-9);
         assert!((p1[1] - goal.y).abs() < 1e-9);
-        assert!((steer.flat_motion(0.0).2 - start.curvature).abs() < 1e-9);
-        assert!((steer.flat_motion(1.2).2 - goal.curvature).abs() < 1e-9);
     }
 
     #[test]
-    fn quintic_control_matches_kinematic_derivatives() {
+    fn cubic_control_reports_acceleration_and_curvature() {
         let start = State {
             speed: 5.0,
-            accel: 0.4,
-            curvature: 0.02,
             ..Default::default()
         };
         let goal = State {
@@ -243,26 +196,20 @@ mod tests {
             y: 1.0,
             yaw: 0.1,
             speed: 6.0,
-            accel: -0.2,
-            curvature: 0.01,
         };
-        let steer = QuinticSteer::from_states(&start, &goal, 1.2);
+        let steer = CubicSteer::from_states(&start, &goal, 1.2);
         let t = 0.6;
-        let h = 1e-5;
-        let (_, accel_prev, curvature_prev, _, _) = steer.flat_motion(t - h);
-        let (_, accel_next, curvature_next, _, _) = steer.flat_motion(t + h);
+        let (_, accel, curvature) = steer.flat_motion(t);
         let u = steer.control(t);
 
-        assert!(((accel_next - accel_prev) / (2.0 * h) - u.jerk).abs() < 1e-5);
-        assert!(((curvature_next - curvature_prev) / (2.0 * h) - u.curvature_rate).abs() < 1e-5);
+        assert!((u.acceleration - accel).abs() < 1e-9);
+        assert!((u.curvature - curvature).abs() < 1e-9);
     }
 
     #[test]
     fn steer_controls_sample_analytic_control() {
         let start = State {
             speed: 5.0,
-            accel: 0.4,
-            curvature: 0.02,
             ..Default::default()
         };
         let goal = State {
@@ -270,12 +217,10 @@ mod tests {
             y: 1.0,
             yaw: 0.1,
             speed: 6.0,
-            accel: -0.2,
-            curvature: 0.01,
         };
-        let steer = QuinticSteer::from_states(&start, &goal, 1.2);
+        let steer = CubicSteer::from_states(&start, &goal, 1.2);
         let (controls, _) = steer_controls(start, &steer, 0.1, 1, 1.0);
 
-        assert_eq!(controls[0], clamp_control(steer.control(0.05)));
+        assert_eq!(controls[0], clamp_control(steer.control(0.05), start.speed));
     }
 }

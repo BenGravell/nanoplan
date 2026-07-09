@@ -22,7 +22,7 @@ metrics/
 ├── making_progress/     making-progress boolean          (threshold on progress)
 ├── progress/            progress ratio                   (smooth, average)
 ├── speed_limit/         speed limit compliance           (smooth, average)
-└── comfort/             comfort (accel/jerk/yaw bounds)   (smooth, average)
+└── comfort/             comfort (accel/yaw bounds)        (smooth, average)
 ```
 
 Threshold values throughout are taken from the vendored
@@ -115,7 +115,7 @@ reports).
 | 4 | TTC within bound | `ttc` | min | Constant-velocity projections of ego and every actor, sampled every `0.1` s out to `3.0` s, never come within `2 × CAR_RADIUS_M`. | `LEAST_MIN_TTC_S = 0.95` |
 | 5 | Progress ratio | `progress` | average | Station rate at this tick relative to driving at the speed limit, clamped to `[0, 1]`. | — (no expert trajectory available, so the speed limit stands in for it — see the `ponytail:` comment in `progress/mod.rs`) |
 | 6 | Speed limit | `speed_limit` | average | Overspeed above the limit, normalized. | `MAX_OVERSPEED_MS = 2.23` |
-| 7 | Comfort | `comfort` | average | Longitudinal accel, lateral accel, yaw rate, yaw accel, longitudinal jerk, and jerk magnitude all within nuPlan's empirically-derived expert bounds. | see `comfort/mod.rs` — seven separate bounds |
+| 7 | Comfort | `comfort` | average | Longitudinal accel, lateral accel, and yaw rate all within smooth-driving bounds. | see `comfort/mod.rs` |
 | 8 | Lane keeping | `lane_keeping` | average | Ego holds the center of its lane: penalizes a *sustained* one-sided bias (mean offset over a trailing window) and *instantaneous* straddling of the lane line into the next lane. | `LANE_HALF_WIDTH_M = 1.75`, `CENTER_TOLERANCE_M = 0.5` |
 
 The `METRICS` table holds the same nine rows in this order — its `label`
@@ -132,7 +132,7 @@ pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics
 Builds a `TickCtx` once per rollout — the precomputed series every metric
 scores from: the ego trace, per-tick actor states, the ego's Frenet station
 and lateral-offset series (via one `scenarios::Path` projection pass), and
-the `comfort::Kinematics` (forward-differenced accel/jerk/yaw-rate/yaw-accel)
+the `comfort::Kinematics` (forward-differenced accel/yaw-rate)
 — then loops over ticks calling each `METRICS` row's
 `score(&TickCtx, tick)` function and composing. The per-metric aggregation
 (each row's `aggregate` function over its score column) and the final

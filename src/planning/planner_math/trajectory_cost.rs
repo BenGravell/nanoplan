@@ -6,8 +6,8 @@ use crate::simulation::{Control, State};
 pub(crate) struct TrajectoryCostWeights {
     pub center: f64,
     pub speed: f64,
-    pub jerk: f64,
-    pub curvature_rate: f64,
+    pub acceleration: f64,
+    pub curvature: f64,
     pub scale: f64,
     pub timed_shared_cost: bool,
 }
@@ -53,6 +53,9 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         actors: &[State],
         lane: Option<&Path>,
     ) -> f64 {
+        let mut sample = sample;
+        sample.accel = u.acceleration;
+        sample.curvature = u.curvature;
         let target = self.ctx.road.target_speed;
         let constraints = cost::HardConstraints::new(self.ctx.road.half_width, actors, lane);
         let shared = if self.weights.timed_shared_cost {
@@ -64,8 +67,8 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         let dv = sample.speed - target;
         let structural = self.weights.center * sample.lateral * sample.lateral
             + self.weights.speed * dv * dv
-            + self.weights.jerk * u.jerk * u.jerk
-            + self.weights.curvature_rate * u.curvature_rate * u.curvature_rate;
+            + self.weights.acceleration * u.acceleration * u.acceleration
+            + self.weights.curvature * u.curvature * u.curvature;
         (shared + structural) * self.weights.scale
     }
 }
