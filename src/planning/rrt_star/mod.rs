@@ -104,8 +104,8 @@ const STEER_SAMPLES: usize = 16;
 // linear neighbour scans).
 const PROJECT_WINDOW_M: f64 = 20.0;
 const LATERAL_COST_WEIGHT: f64 = 0.5;
-// planner-specific safety margin, a bit more than the shared cost
-// function's hard-collision threshold (`cost::COLLISION_DIAMETER_M` = 2.5 m)
+// planner-specific safety margin, a bit more than the shared constraint
+// hard-collision threshold (`constraints::COLLISION_DIAMETER_M` = 2.5 m)
 // to leave headroom for the discrete curve sampling below (the true closest
 // approach between two sampled points can dip a little further than what
 // gets checked)

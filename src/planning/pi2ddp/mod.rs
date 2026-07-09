@@ -169,7 +169,7 @@ impl Planner for Pi2DdpPlanner {
         // lattice and RRT* also keep as their own terms, not part of the
         // shared cost). A hard
         // violation (collision, or off the drivable area) becomes a large but
-        // finite `cost::HARD_VIOLATION_PENALTY · (1 + depth)` via
+        // finite `constraints::HARD_VIOLATION_PENALTY · (1 + depth)` via
         // `HardConstraints::soft_point_cost` rather than `f64::INFINITY` — the
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the

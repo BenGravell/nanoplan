@@ -1,6 +1,7 @@
 //! The planner interface and one module per planner.
 
 pub mod bezier_idm;
+pub(crate) mod constraints;
 pub(crate) mod cost;
 pub mod diagnostics;
 pub mod latency;

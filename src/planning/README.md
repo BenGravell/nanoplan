@@ -8,7 +8,8 @@ subdirectory per planner implementation.
 planning/
 ├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
-├── cost.rs        shared trajectory-cost function — see "The shared cost function" below
+├── constraints.rs hard collision/off-road rules for shared trajectory cost
+├── cost.rs        shared soft trajectory-cost terms — see "The shared cost function" below
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── straight/      strawman: zero control, always
 ├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
@@ -195,15 +196,15 @@ a candidate with its own inline formula, hand-tuned independently, with its
 own actor-prediction code, its own collision radius, and its own idea of
 "off the road" — several different, undocumented definitions of "good."
 
-`cost.rs` factors the metrics-motivated part of that formula into one
-function, `point_cost(sample, target_speed, road_half_width, actors, lane)`,
-called by every one of them under the same seam name, `"cost"` (see "Latency
+`cost.rs` factors the metrics-motivated soft-cost formula into one shared
+cost interface, `HardConstraints::point_cost(sample, target_speed)`, called
+by every one of them under the same seam name, `"cost"` (see "Latency
 diagnostics" above). It's deliberately grounded in the same quantities
 [`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
 than inventing new ones:
 
-- **Hard collision and off-road rejection** — `f64::INFINITY` if a sampled
-  point is closer than `metrics::collisions`' own threshold
+- **Hard collision and off-road rejection** — `constraints.rs` returns
+  `f64::INFINITY` if a sampled point is closer than `metrics::collisions`' own threshold
   (`2 × CAR_RADIUS_M`) to any actor's predicted position, or further than
   `road_half_width` from the centerline. That bound is the road's *actual*
   drivable half-width (`Road::half_width`, the same value `drivable_area`
@@ -282,7 +283,7 @@ not what counts as a good outcome, and that no metric measures:
   covariance (the paper's "linear solvability" trick) — specific to how
   PI²-DDP's sampling distribution is parameterized, not a quality judgment.
 - PI²-DDP also converts `point_cost`'s `f64::INFINITY` into a large finite
-  `cost::HARD_VIOLATION_PENALTY` instead: its rollout weighting (eq. 12)
+  `constraints::HARD_VIOLATION_PENALTY` instead: its rollout weighting (eq. 12)
   min/max-normalizes cost across rollouts at each timestep, which breaks if
   the range is infinite. The lattice and RRT* have no such statistic and
   propagate the actual infinity, rejecting the candidate outright.
@@ -398,8 +399,8 @@ supplies them the nanoplan way, so each optimizer stays a pure strategy:
   (`control_at`), added to the base policy, clamped to physical actuation
   limits, and rolled out through the shared kinematic `step`.
 - **The shared cost function.** Each rolled-out state is priced by
-  [`cost::point_cost`](#the-shared-cost-function), with a hard violation made
-  finite (`cost::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward
+  `HardConstraints::point_cost`, with a hard violation made
+  finite (`constraints::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward
   aggregation can't divide by an infinity — exactly PI²-DDP's reasoning. On
   top sit three planner-specific terms, each echoing one PI²-DDP keeps: an
   undiscounted speed-tracking term (the shared cost prices overspeed only
