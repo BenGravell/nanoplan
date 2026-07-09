@@ -59,12 +59,11 @@
 //!   [`goal_state`](super::goal_state).
 //!
 //! **Seams**: `route`, `warm_start`, `optimize` (the whole solve), with
-//! `derivs` (all backward-pass FD work) and `rollout` (the line-search
-//! forward passes) nested inside, and `extract`. Unlike the other search
-//! planners there is no per-call `cost` seam: the FD probes call the
-//! shared cost ~10⁵ times per plan, and timing each call individually
-//! would cost more than the call — `derivs`/`rollout` are where those
-//! calls live.
+//! `derivs` (all backward-pass FD work), `fd_cost`, `fd_dynamics`, and
+//! `rollout` (the line-search forward passes) nested inside, and `extract`.
+//! Unlike the other search planners there is no per-call `cost` seam for
+//! iLQR's FD probes: timing each shared-cost probe individually would cost
+//! more than the call, so `fd_cost` is the aggregated useful split.
 //!
 //! **Diagnostics**: the initial-guess rollout and the optimized trajectory
 //! as polylines (what the optimizer bought), the optimized states as
@@ -357,7 +356,7 @@ pub(crate) struct Solution {
 /// loss.
 fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Gains>, Ecc)> {
     let n = us.len();
-    let (mut vx, mut vxx) = terminal_derivs(ocp, &xs[n]);
+    let (mut vx, mut vxx) = ocp.ctx.time("fd_cost", || terminal_derivs(ocp, &xs[n]));
     let mut gains = vec![
         Gains {
             k: [0.0; 2],
@@ -371,8 +370,12 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
     };
 
     for t in (0..n).rev() {
-        let sd = stage_derivs(ocp, &xs[t], &us[t], t);
-        let (a, b) = dynamics_jacobian(&xs[t], &us[t], ocp.ctx.road.dt);
+        let sd = ocp
+            .ctx
+            .time("fd_cost", || stage_derivs(ocp, &xs[t], &us[t], t));
+        let (a, b) = ocp.ctx.time("fd_dynamics", || {
+            dynamics_jacobian(&xs[t], &us[t], ocp.ctx.road.dt)
+        });
         let at = transpose(&a);
         let bt = transpose(&b);
         let atv: M66 = mat_mul(&at, &vxx);

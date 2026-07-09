@@ -140,10 +140,6 @@ impl<'a> HardConstraints<'a> {
         }
     }
 
-    pub(crate) fn is_violated(&self, sample: &Sample) -> bool {
-        self.drivable.is_violated(sample) || self.collision.is_violated(sample)
-    }
-
     pub(crate) fn violation_depth(&self, sample: &Sample) -> f64 {
         self.drivable.violation_depth(sample) + self.collision.violation_depth(sample)
     }
@@ -152,16 +148,16 @@ impl<'a> HardConstraints<'a> {
     /// Each feature is already squared/hinged so the cost is linear in
     /// [`WEIGHTS`] — the form the IRL tuner learns.
     pub(crate) fn features(&self, sample: &Sample, target_speed: f64) -> Option<[f64; N_FEATURES]> {
-        if self.is_violated(sample) {
+        if self.drivable.is_violated(sample) {
             return None;
         }
 
+        let proximity = actor_proximity(sample, self.collision.actors, self.collision.lane)?;
         Some(soft_features(
             sample,
             target_speed,
             self.drivable.half_width,
-            self.collision.actors,
-            self.collision.lane,
+            proximity,
         ))
     }
 
@@ -243,25 +239,8 @@ fn soft_features(
     sample: &Sample,
     target_speed: f64,
     road_half_width: f64,
-    actors: &[State],
-    lane: Option<&Path>,
+    proximity: f64,
 ) -> [f64; N_FEATURES] {
-    let mut proximity = 0.0;
-    for a in actors {
-        let predicted = crate::metrics::predict(a, lane, sample.t);
-        let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
-        // smooth inverse-square repulsion inside the safe zone, so a search
-        // that samples near an actor without touching it still prefers
-        // more clearance. Weighted heavily for the same reason as the
-        // road-edge hinge below: the lattice and RRT* both hard-reject a
-        // colliding candidate outright (via the `None` above) and never
-        // select one, so this soft term barely matters to them — but
-        // PI²-DDP's continuous, sampling-based search has no such hard
-        // accept/reject step, so a weak gradient here is its only actor-
-        // avoidance margin.
-        proximity += 1.0 / (gap * gap);
-    }
-
     // drivable-area proximity: soft push away from the road edge, on top of
     // the hard reject above. Weighted heavily: planners with their own
     // tighter hard bound (RRT*'s `DRIVABLE_HALF_WIDTH_M`) or a sampling grid
@@ -312,6 +291,28 @@ fn soft_features(
         lat_over * lat_over,
         lane_over * lane_over,
     ]
+}
+
+fn actor_proximity(sample: &Sample, actors: &[State], lane: Option<&Path>) -> Option<f64> {
+    let mut proximity = 0.0;
+    for a in actors {
+        let predicted = crate::metrics::predict(a, lane, sample.t);
+        let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
+        if gap < COLLISION_DIAMETER_M {
+            return None;
+        }
+        // smooth inverse-square repulsion inside the safe zone, so a search
+        // that samples near an actor without touching it still prefers
+        // more clearance. Weighted heavily for the same reason as the
+        // road-edge hinge below: the lattice and RRT* both hard-reject a
+        // colliding candidate outright (via the `None` above) and never
+        // select one, so this soft term barely matters to them — but
+        // PI²-DDP's continuous, sampling-based search has no such hard
+        // accept/reject step, so a weak gradient here is its only actor-
+        // avoidance margin.
+        proximity += 1.0 / (gap * gap);
+    }
+    Some(proximity)
 }
 
 #[cfg(test)]

@@ -21,6 +21,10 @@
 //! `rollouts`). Seams may nest — they are
 //! independent named spans, not a partition of `total`. A seam recorded
 //! several times within one `plan()` call is summed for that call.
+//!
+//! Open-world profiling also records `world_*` seams around live-world setup
+//! work that feeds the planner: window maintenance, traffic stepping,
+//! goal-distance update, and route-aware actor culling.
 
 use web_time::Instant;
 

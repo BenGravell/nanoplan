@@ -1,7 +1,7 @@
 //! Planner latency profiler: every planner over a batch of scenarios, CSV to stdout.
 //!
 //! Usage:
-//!   profile_latency [--mode scenarios|world] [--count N] [--seed S] [--dir PATH]...
+//!   profile_latency [--mode scenarios|world] [--planner NAME] [--count N] [--seed S] [--dir PATH]...
 //!
 //! The default `scenarios` mode uses the same sources as the batch runner:
 //! the synthetic generator (`--count`, default 20) and/or directories of
@@ -35,6 +35,7 @@ struct Args {
     dirs: Vec<String>,
     duration_s: f64,
     max_actors: usize,
+    planners: Vec<PlannerKind>,
 }
 
 impl Default for Args {
@@ -47,6 +48,7 @@ impl Default for Args {
             dirs: vec![],
             duration_s: DURATION_S,
             max_actors: WORLD_MAX_ACTORS,
+            planners: PlannerKind::ALL.to_vec(),
         }
     }
 }
@@ -67,6 +69,10 @@ impl Aggregate {
 #[derive(Clone, Default)]
 struct PlannerSummary {
     seams: Vec<(&'static str, Aggregate)>,
+    actor_samples: usize,
+    active_actors_total: usize,
+    planner_actors_total: usize,
+    planner_actors_max: usize,
 }
 
 impl PlannerSummary {
@@ -93,6 +99,21 @@ impl PlannerSummary {
     fn seam(&self, name: &str) -> Option<&Aggregate> {
         self.seams.iter().find(|(n, _)| *n == name).map(|(_, a)| a)
     }
+
+    fn absorb_world_actors(&mut self, active: usize, planner: usize) {
+        self.actor_samples += 1;
+        self.active_actors_total += active;
+        self.planner_actors_total += planner;
+        self.planner_actors_max = self.planner_actors_max.max(planner);
+    }
+
+    fn mean_active_actors(&self) -> f64 {
+        self.active_actors_total as f64 / self.actor_samples.max(1) as f64
+    }
+
+    fn mean_planner_actors(&self) -> f64 {
+        self.planner_actors_total as f64 / self.actor_samples.max(1) as f64
+    }
 }
 
 fn main() {
@@ -102,7 +123,8 @@ fn main() {
     };
 
     println!("planner,seam,calls,total_ms,mean_ms,max_ms");
-    for (i, kind) in PlannerKind::ALL.into_iter().enumerate() {
+    for &kind in &args.planners {
+        let i = kind as usize;
         for (name, agg) in &summaries[i].seams {
             println!(
                 "{},{},{},{:.3},{:.3},{:.3}",
@@ -118,9 +140,25 @@ fn main() {
 
     std::io::stdout().flush().unwrap();
     eprintln!("\nmean total latency {label}:");
-    for (i, kind) in PlannerKind::ALL.into_iter().enumerate() {
+    for &kind in &args.planners {
+        let i = kind as usize;
         if let Some(total) = summaries[i].seam("total") {
             eprintln!("  {:22} {:8.3} ms/plan", kind.name(), total.mean_ms());
+        }
+    }
+    if summaries.iter().any(|s| s.actor_samples > 0) {
+        eprintln!("\nmean world actors passed to planner:");
+        for &kind in &args.planners {
+            let summary = &summaries[kind as usize];
+            if summary.actor_samples > 0 {
+                eprintln!(
+                    "  {:22} {:5.1}/{:5.1} actors (max {})",
+                    kind.name(),
+                    summary.mean_planner_actors(),
+                    summary.mean_active_actors(),
+                    summary.planner_actors_max
+                );
+            }
         }
     }
 }
@@ -159,10 +197,29 @@ fn parse_args() -> Args {
                     .parse()
                     .expect("--max-actors: not a number");
             }
+            "--planner" => {
+                let planner = parse_planner(&value("--planner"));
+                out.planners = vec![planner];
+            }
             other => panic!("unknown argument {other}"),
         }
     }
     out
+}
+
+fn parse_planner(name: &str) -> PlannerKind {
+    let needle = normalize(name);
+    PlannerKind::ALL
+        .into_iter()
+        .find(|&kind| normalize(kind.name()) == needle || normalize(&format!("{kind:?}")) == needle)
+        .unwrap_or_else(|| panic!("unknown --planner {name}"))
+}
+
+fn normalize(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn run(args: &Args) -> Option<(Vec<PlannerSummary>, String)> {
@@ -181,8 +238,8 @@ fn run_scenarios(args: &Args) -> Option<(Vec<PlannerSummary>, String)> {
 
     let mut summaries = vec![PlannerSummary::default(); PlannerKind::ALL.len()];
     for sc in &scenarios {
-        for (i, kind) in PlannerKind::ALL.into_iter().enumerate() {
-            summaries[i].absorb(&simulate(sc, kind, args.duration_s, DT).latency);
+        for &kind in &args.planners {
+            summaries[kind as usize].absorb(&simulate(sc, kind, args.duration_s, DT).latency);
         }
     }
 
@@ -199,7 +256,7 @@ fn run_scenarios(args: &Args) -> Option<(Vec<PlannerSummary>, String)> {
 fn run_world(args: &Args) -> (Vec<PlannerSummary>, String) {
     let ticks = (args.duration_s / DT) as usize;
     let mut summaries = vec![PlannerSummary::default(); PlannerKind::ALL.len()];
-    for (i, kind) in PlannerKind::ALL.into_iter().enumerate() {
+    for &kind in &args.planners {
         let mut world = LiveWorld::new(args.world_seed, kind, args.max_actors, DT);
         let recorder = Latency::default();
         let mut stats = LatencyStats::default();
@@ -208,9 +265,11 @@ fn run_world(args: &Args) -> (Vec<PlannerSummary>, String) {
                 set_live_goal(&mut world);
             }
             world.tick_recording_latency(&recorder);
+            summaries[kind as usize]
+                .absorb_world_actors(world.actors.len(), world.last_planner_actors);
             stats.absorb(recorder.take());
         }
-        summaries[i].absorb(&stats);
+        summaries[kind as usize].absorb(&stats);
     }
 
     (
@@ -270,5 +329,12 @@ mod tests {
         assert!((total.total_ms - 22.0).abs() < 1e-12);
         assert!((total.max_ms - 6.0).abs() < 1e-12);
         assert!((total.mean_ms() - 4.4).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parses_planner_by_registry_or_variant_name() {
+        assert_eq!(parse_planner("frenet lattice"), PlannerKind::Lattice);
+        assert_eq!(parse_planner("Pi2Ddp"), PlannerKind::Pi2Ddp);
+        assert_eq!(parse_planner("rrt-star"), PlannerKind::RrtStar);
     }
 }

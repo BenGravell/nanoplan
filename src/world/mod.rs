@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::Rng;
-use crate::planning::{Context, Latency, Planner, PlannerKind, bezier_idm::idm_accel};
+use crate::planning::{
+    Context, Latency, PLANNING_HORIZON_S, Planner, PlannerKind, bezier_idm::idm_accel,
+};
 use crate::scenarios::{Path, Road};
 use crate::simulation::{State, action_toward, step};
 
@@ -853,6 +855,22 @@ const PLAN_PREVIEW_TICKS: usize = 30;
 
 /// Comfortable decel used to taper the target speed into the goal.
 const GOAL_DECEL: f64 = 1.5;
+/// Actors closer than this to the ego are always planner-visible, regardless
+/// of route projection edge cases near junctions.
+const PLANNER_ACTOR_ALWAYS_KEEP_M: f64 = 35.0;
+/// Extra route distance behind the ego that remains planner-visible.
+const PLANNER_ACTOR_BEHIND_M: f64 = 25.0;
+/// Static headroom around the route corridor before actor speed reach is
+/// added. The live world has sidewalks, crosswalks, and turning traffic, so
+/// this is intentionally wider than the road half-width.
+const PLANNER_ACTOR_ROUTE_MARGIN_M: f64 = 12.0;
+
+fn maybe_time<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T) -> T {
+    match latency {
+        Some(latency) => latency.time(name, f),
+        None => f(),
+    }
+}
 
 /// The realtime interactive world: the active street window, the ego
 /// (replanned and stepped every tick), the traffic, and the user's current
@@ -875,6 +893,9 @@ pub struct LiveWorld {
     pub plan: Vec<State>,
     /// Wall-clock cost of the most recent `plan()` call.
     pub last_plan_ms: f64,
+    /// Number of actors passed to the most recent planner call after
+    /// route-aware culling.
+    pub last_planner_actors: usize,
     /// Cruise speed for the next route; live-tunable from the UI.
     pub target_speed: f64,
     pub dt: f64,
@@ -919,6 +940,7 @@ impl LiveWorld {
             road: None,
             plan: vec![],
             last_plan_ms: 0.0,
+            last_planner_actors: 0,
             target_speed: 8.0,
             dt,
             route_path: None,
@@ -1004,6 +1026,30 @@ impl LiveWorld {
         Some(path.length() - path.project([self.ego.x, self.ego.y]).0)
     }
 
+    fn planner_actor_states(&self, path: &Path) -> Vec<State> {
+        let (ego_s, _) = path.project([self.ego.x, self.ego.y]);
+        let ego_reach = self.ego.speed.max(self.target_speed).max(1.0) * PLANNING_HORIZON_S
+            + PLANNER_ACTOR_ROUTE_MARGIN_M;
+        self.actors
+            .iter()
+            .filter_map(|actor| {
+                let s = actor.state;
+                let ego_gap = dist([self.ego.x, self.ego.y], [s.x, s.y]);
+                if ego_gap <= PLANNER_ACTOR_ALWAYS_KEEP_M {
+                    return Some(s);
+                }
+
+                let (actor_s, actor_d) = path.project([s.x, s.y]);
+                let actor_reach =
+                    s.speed.max(0.0) * PLANNING_HORIZON_S + PLANNER_ACTOR_ROUTE_MARGIN_M;
+                let in_station_window = actor_s >= ego_s - PLANNER_ACTOR_BEHIND_M - actor_reach
+                    && actor_s <= ego_s + ego_reach + actor_reach;
+                let in_route_corridor = actor_d.abs() <= actor_reach + PLANNER_ACTOR_ROUTE_MARGIN_M;
+                (in_station_window && in_route_corridor).then_some(s)
+            })
+            .collect()
+    }
+
     /// Swap the planner (fresh instance; warm starts don't carry across
     /// planner kinds). No-op if `kind` is already running.
     pub fn set_planner(&mut self, kind: PlannerKind) {
@@ -1029,60 +1075,78 @@ impl LiveWorld {
 
     fn tick_with_latency(&mut self, latency: Option<&Latency>) {
         self.t += self.dt;
-        // recenter once the ego is decisively outside the center chunk
-        let [cx, cy] = self.map.center;
-        let outside = self.ego.x < cx as f64 * CHUNK_M - RECENTER_HYST_M
-            || self.ego.x > (cx + 1) as f64 * CHUNK_M + RECENTER_HYST_M
-            || self.ego.y < cy as f64 * CHUNK_M - RECENTER_HYST_M
-            || self.ego.y > (cy + 1) as f64 * CHUNK_M + RECENTER_HYST_M;
-        if outside {
-            self.map = StreetMap::window(self.seed, chunk_of([self.ego.x, self.ego.y]));
-            self.populate();
-        }
-        // despawn actors that stay outside the active bounds past the grace
-        let [cx, cy] = self.map.center;
-        let lo = [
-            (cx - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
-            (cy - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
-        ];
-        let hi = [
-            (cx + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
-            (cy + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
-        ];
-        let t = self.t;
-        self.actors.retain_mut(|a| {
-            let inside = (lo[0]..hi[0]).contains(&a.state.x) && (lo[1]..hi[1]).contains(&a.state.y);
-            if inside {
-                a.out_since = None;
-                true
-            } else {
-                t - *a.out_since.get_or_insert(t) < DESPAWN_GRACE_S
+        maybe_time(latency, "world_window", || {
+            // recenter once the ego is decisively outside the center chunk
+            let [cx, cy] = self.map.center;
+            let outside = self.ego.x < cx as f64 * CHUNK_M - RECENTER_HYST_M
+                || self.ego.x > (cx + 1) as f64 * CHUNK_M + RECENTER_HYST_M
+                || self.ego.y < cy as f64 * CHUNK_M - RECENTER_HYST_M
+                || self.ego.y > (cy + 1) as f64 * CHUNK_M + RECENTER_HYST_M;
+            if outside {
+                self.map = StreetMap::window(self.seed, chunk_of([self.ego.x, self.ego.y]));
+                self.populate();
             }
         });
-        let snapshot: Vec<(State, ActorKind)> = std::iter::once((self.ego, ActorKind::Car))
-            .chain(self.actors.iter().map(|a| (a.state, a.kind)))
-            .collect();
-        for (i, actor) in self.actors.iter_mut().enumerate() {
-            let others: Vec<(State, ActorKind)> = snapshot
-                .iter()
-                .enumerate()
-                .filter_map(|(j, &s)| (j != i + 1).then_some(s))
+
+        maybe_time(latency, "world_despawn", || {
+            // despawn actors that stay outside the active bounds past the grace
+            let [cx, cy] = self.map.center;
+            let lo = [
+                (cx - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
+                (cy - 1) as f64 * CHUNK_M - DESPAWN_MARGIN_M,
+            ];
+            let hi = [
+                (cx + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
+                (cy + 2) as f64 * CHUNK_M + DESPAWN_MARGIN_M,
+            ];
+            let t = self.t;
+            self.actors.retain_mut(|a| {
+                let inside =
+                    (lo[0]..hi[0]).contains(&a.state.x) && (lo[1]..hi[1]).contains(&a.state.y);
+                if inside {
+                    a.out_since = None;
+                    true
+                } else {
+                    t - *a.out_since.get_or_insert(t) < DESPAWN_GRACE_S
+                }
+            });
+        });
+
+        maybe_time(latency, "world_traffic", || {
+            let snapshot: Vec<(State, ActorKind)> = std::iter::once((self.ego, ActorKind::Car))
+                .chain(self.actors.iter().map(|a| (a.state, a.kind)))
                 .collect();
-            actor.step(self.seed, &others, self.dt, &mut self.rng);
-        }
-        let actor_states: Vec<State> = self.actors.iter().map(|a| a.state).collect();
-        let Some(road) = &mut self.road else {
+            for (i, actor) in self.actors.iter_mut().enumerate() {
+                let others: Vec<(State, ActorKind)> = snapshot
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, &s)| (j != i + 1).then_some(s))
+                    .collect();
+                actor.step(self.seed, &others, self.dt, &mut self.rng);
+            }
+        });
+
+        if self.road.is_none() {
             // goalless: brake smoothly to a stop and wait for a click
             let accel = (-2.0f64).max(-self.ego.speed / self.dt);
             let u = action_toward(self.ego, accel, 0.0, self.dt);
             self.ego = step(self.ego, u, self.dt);
             self.plan.clear();
+            self.last_planner_actors = 0;
             return;
-        };
+        }
+
         // taper the target speed so the ego arrives stopped instead of
         // sailing through the goal at cruise speed
         let path = self.route_path.as_ref().unwrap();
-        let remaining = path.length() - path.project([self.ego.x, self.ego.y]).0;
+        let remaining = maybe_time(latency, "world_goal", || {
+            path.length() - path.project([self.ego.x, self.ego.y]).0
+        });
+        let actor_states = maybe_time(latency, "world_actor_cull", || {
+            self.planner_actor_states(path)
+        });
+        self.last_planner_actors = actor_states.len();
+        let road = self.road.as_mut().unwrap();
         road.target_speed = self
             .target_speed
             .min((2.0 * GOAL_DECEL * remaining).max(0.0).sqrt());
@@ -1122,6 +1186,21 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    fn test_actor(state: State) -> SmartActor {
+        SmartActor {
+            kind: ActorKind::Car,
+            state,
+            id: 0,
+            home: [0, 0],
+            out_since: None,
+            walk: vec![[0, 0], [1, 0]],
+            path: Path::new(&[[state.x, state.y], [state.x + 1.0, state.y]]),
+            s: 0.0,
+            target_speed: state.speed,
+            side: 1.0,
+        }
+    }
 
     #[test]
     fn windows_are_deterministic_and_seamless() {
@@ -1257,6 +1336,34 @@ mod tests {
                 a.state.y
             );
         }
+    }
+
+    #[test]
+    fn planner_actor_states_cull_far_off_route_traffic() {
+        let mut w = LiveWorld::new(1, PlannerKind::Straight, 0, 0.1);
+        w.set_goal([
+            w.ego.x + 300.0 * w.ego.yaw.cos(),
+            w.ego.y + 300.0 * w.ego.yaw.sin(),
+        ]);
+        let near = {
+            let path = w.route_path.as_ref().unwrap();
+            let (s0, _) = path.project([w.ego.x, w.ego.y]);
+            let xy = path.frenet_to_xy(s0 + 20.0, 0.0);
+            State {
+                x: xy[0],
+                y: xy[1],
+                ..Default::default()
+            }
+        };
+        let far = State {
+            x: w.ego.x + 900.0,
+            y: w.ego.y + 900.0,
+            ..Default::default()
+        };
+        w.actors = vec![test_actor(near), test_actor(far)];
+
+        let seen = w.planner_actor_states(w.route_path.as_ref().unwrap());
+        assert_eq!(seen, vec![near]);
     }
 
     #[test]
