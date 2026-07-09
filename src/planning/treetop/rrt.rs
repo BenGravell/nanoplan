@@ -50,12 +50,14 @@
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
 use super::{
-    GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, rollout_constrained, state_distance,
-    take_warm, zero_action_point,
+    GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, state_distance, take_warm,
+    zero_action_point,
 };
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
-use crate::planning::search_tree::{parent_chain, record_diagnostics, repeat_last_controls};
+use crate::planning::search_tree::{
+    parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained,
+};
 use crate::planning::steering::QuinticSteer;
 use crate::planning::{Context, Planner, cost};
 use crate::scenarios::Path;

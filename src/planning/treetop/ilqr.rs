@@ -70,15 +70,17 @@
 //! as polylines (what the optimizer bought), the optimized states as
 //! points.
 
-use super::{TICKS, goal_state, rollout_constrained, take_warm};
+use super::{TICKS, goal_state, take_warm};
 use crate::planning::planner_math::{
     M22, M26, M62, M66, TrajectoryCost, TrajectoryCostWeights, V2, V6, dot, mat_add, mat_mul,
     mat_vec, state, state_from_v6, transpose, vec_add,
 };
-use crate::planning::search_tree::repeat_last_controls;
+use crate::planning::search_tree::{
+    centerline_follow_controls, repeat_last_controls, rollout_constrained,
+};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State, step};
 use crate::wrap_angle;
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
@@ -537,29 +539,6 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
     }
 }
 
-/// The base lane-keeping guess the standalone planner starts from when it
-/// has no warm start: the same critically-damped PD lane keeper + speed
-/// hold the judo planners use as their base policy, rolled out under the
-/// constraints and recorded as actions.
-fn base_guess(path: &Path, ego: State, ctx: &Context) -> Vec<Control> {
-    let mut x = ego;
-    let mut actions = Vec::with_capacity(TICKS);
-    for _ in 0..TICKS {
-        let (s, d) = path.project([x.x, x.y]);
-        let (_, lane_yaw) = path.pose_at(s);
-        let heading_err = wrap_angle(x.yaw - lane_yaw);
-        let u = action_toward(
-            x,
-            (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5),
-            -(0.02 * d + 0.3 * heading_err),
-            ctx.road.dt,
-        );
-        x = step(x, u, ctx.road.dt);
-        actions.push(u);
-    }
-    actions
-}
-
 /// The standalone iLQR planner: optimize from a lane-keeping initial guess
 /// (or last tick's shifted solution), no tree in front. This is trajectory
 /// optimization at its most exposed — a purely local method whose result
@@ -584,7 +563,7 @@ impl Planner for IlqrPlanner {
         let goal = goal_state(&path, ego, ctx);
         let init = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
-                .unwrap_or_else(|| base_guess(&path, ego, ctx))
+                .unwrap_or_else(|| centerline_follow_controls(ego, &path, ctx, TICKS))
         });
 
         let ocp = Ocp {

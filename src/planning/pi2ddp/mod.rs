@@ -10,7 +10,8 @@
 //! generation is discarded entirely).
 //!
 //! The sampling distribution is road-model informed: the initial nominal
-//! control sequence tracks the lane centerline (pure pursuit + speed hold)
+//! control sequence tracks the lane centerline (shared PD lane keeper +
+//! speed hold)
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
@@ -18,9 +19,10 @@ use crate::Rng;
 use crate::planning::planner_math::{
     self, M2, M4, M6, M24, TrajectoryCost, TrajectoryCostWeights, V2,
 };
+use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, action_toward, step};
+use crate::simulation::{Control, State, step};
 
 // 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
 const HORIZON: usize = 100;
@@ -116,22 +118,13 @@ impl Default for Pi2DdpPlanner {
 }
 
 impl Pi2DdpPlanner {
-    /// Road-informed nominal: pure pursuit toward the centerline plus a
+    /// Road-informed nominal: shared centerline tracking plus a
     /// proportional speed hold, rolled out over the horizon.
     fn init_policy(path: &Path, ego: State, ctx: &Context, sigma_init: M2) -> Policy {
-        let mut x = ego;
-        let mut u = Vec::with_capacity(HORIZON);
-        for _ in 0..HORIZON {
-            let lookahead = (2.0 * x.speed).max(8.0);
-            let (s, _) = path.project([x.x, x.y]);
-            let (target, _) = path.pose_at(s + lookahead);
-            let heading_err = (target[1] - x.y).atan2(target[0] - x.x) - x.yaw;
-            let curvature = 2.0 * heading_err.sin() / lookahead;
-            let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-            let c = action_toward(x, accel, curvature, ctx.road.dt);
-            u.push([c.jerk, c.curvature_rate]);
-            x = step(x, c, ctx.road.dt);
-        }
+        let u = centerline_follow_controls(ego, path, ctx, HORIZON)
+            .into_iter()
+            .map(|c| [c.jerk, c.curvature_rate])
+            .collect();
         let mut sigma_tau = [[0.0; 6]; 6];
         for (i, row) in sigma_tau.iter_mut().enumerate().take(4) {
             row[i] = 1e-4;

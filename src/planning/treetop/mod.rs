@@ -21,8 +21,8 @@
 //!   tree.
 //!
 //! This file also owns what treetop keeps in `core/` — the pieces *both*
-//! halves stand on: the trajectory-length constants, the constrained
-//! open-loop rollout, and the goal state. nanoplan's kinematic model now
+//! halves stand on: the trajectory-length constants and the goal state
+//! (shared rollout lives in [`crate::planning::search_tree`]). nanoplan's kinematic model now
 //! carries actuator position in state (`accel`, `curvature`) and takes
 //! actuator velocity as action (`jerk`, `curvature_rate`), so the treetop
 //! port converts its flat-output accel/curvature targets into those actions
@@ -82,28 +82,6 @@ pub(crate) const STEER_TICKS: usize = 10;
 /// Steering segments per trajectory — treetop's `NUM_STEER_SEGMENTS`; also
 /// the number of tree layers past the root.
 pub(crate) const SEGMENTS: usize = TICKS / STEER_TICKS;
-
-/// Roll `actions` out open-loop from `x0` through the kinematic model,
-/// letting [`step`] enforce the state and action limits.
-/// Returns the visited states (`actions.len() + 1`, starting at `x0`) and
-/// the actions — treetop's `rolloutOpenLoopConstrained`, with the projection
-/// collapsed into the shared simulator step.
-pub(crate) fn rollout_constrained(
-    x0: State,
-    actions: &[Control],
-    dt: f64,
-) -> (Vec<State>, Vec<Control>) {
-    let mut xs = Vec::with_capacity(actions.len() + 1);
-    let mut us = Vec::with_capacity(actions.len());
-    xs.push(x0);
-    let mut x = x0;
-    for &u in actions {
-        x = step(x, u, dt);
-        xs.push(x);
-        us.push(u);
-    }
-    (xs, us)
-}
 
 /// Where the vehicle ends up coasting (zero action) for `t` seconds —
 /// treetop's `rolloutZeroAction`, in closed form. The tree attaches each
@@ -331,7 +309,7 @@ mod tests {
             jerk: 2.0,
             curvature_rate: 0.1,
         }];
-        let (xs, us) = rollout_constrained(x0, &actions, 0.1);
+        let (xs, us) = crate::planning::search_tree::rollout_constrained(x0, &actions, 0.1);
         assert_eq!(us, actions);
         assert_eq!(xs[1], step(x0, actions[0], 0.1));
     }

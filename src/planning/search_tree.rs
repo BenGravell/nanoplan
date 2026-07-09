@@ -163,6 +163,47 @@ pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Contr
         .collect()
 }
 
+/// Roll `actions` out open-loop from `x0` through the kinematic model,
+/// letting [`step`] enforce the state and action limits.
+pub(crate) fn rollout_constrained(
+    x0: State,
+    actions: &[Control],
+    dt: f64,
+) -> (Vec<State>, Vec<Control>) {
+    let mut xs = Vec::with_capacity(actions.len() + 1);
+    let mut us = Vec::with_capacity(actions.len());
+    xs.push(x0);
+    let mut x = x0;
+    for &u in actions {
+        x = step(x, u, dt);
+        xs.push(x);
+        us.push(u);
+    }
+    (xs, us)
+}
+
+/// Road-centerline PD base policy for local trajectory optimizers.
+pub(crate) fn centerline_follow_controls(
+    ego: State,
+    path: &Path,
+    ctx: &Context,
+    horizon: usize,
+) -> Vec<Control> {
+    let mut x = ego;
+    let mut controls = Vec::with_capacity(horizon);
+    for _ in 0..horizon {
+        let (s, d) = path.project([x.x, x.y]);
+        let (_, lane_yaw) = path.pose_at(s);
+        let heading_err = wrap_angle(x.yaw - lane_yaw);
+        let curvature = -(0.02 * d + 0.3 * heading_err);
+        let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
+        let u = action_toward(x, accel, curvature, ctx.road.dt);
+        x = step(x, u, ctx.road.dt);
+        controls.push(u);
+    }
+    controls
+}
+
 // Pure-pursuit extraction for sampled tree geometry. The curvature gain is
 // deliberately assertive because `action_toward` and `step` still clamp the
 // request to the plant's curvature and curvature-rate limits.
