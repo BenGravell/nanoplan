@@ -9,8 +9,18 @@ something.
 
 ```
 simulation/
-└── mod.rs   State, Control, step(), Simulator, simulate()/Rollout
+├── collision.rs       actor footprint collision response
+├── integration.rs     private world plant step and command limiter
+├── physics.rs         formulas around limits, drag, and clamping
+├── state_control.rs   State and Control
+└── mod.rs             Simulator, IncrementalSim, simulate()/Rollout
 ```
+
+Roadside barrier entities live at crate level in `crate::barrier`; simulation
+re-exports them for existing callers.
+
+Vehicle capability constants live in `crate::vehicle`; `simulation` consumes
+them and re-exports the public ones for existing callers.
 
 ## The kinematic model
 
@@ -33,37 +43,48 @@ is used directly, which is what every planner in this repo already computes
 (Frenet curvature, Bezier curvature, sampled curvature). The planner-facing
 action is just longitudinal acceleration and curvature.
 
-`step()` is one Euler integration step with an already-applied direct
-control. It clamps acceleration and curvature, then integrates pose and
-speed:
+The planner-internal model lives in `crate::planning::model`: pure kinematics
+plus state/control-space vehicle limits. `simulation` owns the higher-fidelity
+world plant. Its private `world_step()` clamps acceleration and curvature,
+subtracts passive rolling resistance and aerodynamic drag, then integrates
+pose and speed:
 
 ```rust
-pub fn step(s: State, u: Control, dt: f64) -> State {
+fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
+    let net_accel = u.acceleration - longitudinal_resistance_accel(s.speed);
     State {
         x: s.x + s.speed * s.yaw.cos() * dt,
         y: s.y + s.speed * s.yaw.sin() * dt,
         yaw: s.yaw + s.speed * u.curvature * dt,
-        speed: (s.speed + u.acceleration * dt).max(0.0),
+        speed: s.speed + net_accel * dt,
     }
 }
 ```
 
-`Control::default()` coasts straight at the current speed.
+In the world model, `Control::default()` applies no throttle/brake input and
+coasts straight, losing speed to those passive losses. Under a constant
+positive acceleration command, drag grows with `speed²`, so the model has a
+finite terminal speed. Negative speed is allowed; passive losses oppose
+reverse motion too.
 
-`step()` deliberately has no actuator memory. Closed-loop simulation uses
-`Simulator`'s internal command limiter before calling `step()`; planner
-rollouts use the direct model and do not receive or optimize actuator state.
+`world_step()` deliberately has no actuator memory. Closed-loop simulation and
+live world use `CommandLimiter` before calling it; planner rollouts cannot call
+it and instead use `planning::model::step`.
 
-### Actuation limits
+### Vehicle capability
 
-These are capability limits, *not* comfort limits. The public planner command
-is acceleration/curvature; the simulator privately slews the applied command
-toward it so impossible command jumps are softened without making planners
-model jerk or curvature rate.
+These global constants live in `src/vehicle.rs` and are capability limits,
+*not* comfort limits. The public planner command is acceleration/curvature;
+the simulator privately slews the applied command toward it so impossible
+command jumps are softened without making planners model jerk or curvature
+rate.
 
 - **longitudinal acceleration** `MAX_LON_ACCEL = 4.0` m/s² and **braking**
   `MIN_LON_ACCEL = -9.0` m/s²;
+- **passive losses** from rolling resistance
+  (`ROLLING_RESISTANCE_COEFF = 0.012`) and air drag
+  (`0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 * v² / EGO_MASS_KG`);
 - **steering angle** `MAX_ABS_CURVATURE = 0.2` /m (a ~5 m turning radius);
 - **lateral acceleration** `MAX_ABS_LAT_ACCEL = 9.0` m/s² (~0.9 g skidpad
   grip), which tightens the curvature limit as speed rises so the car can't
@@ -71,12 +92,34 @@ model jerk or curvature rate.
 - **longitudinal jerk** and **curvature rate** are private `Simulator`
   guard rails inside `CommandLimiter`, deliberately not planner inputs.
 
-### One forward model, used everywhere
+### Two Forward Models
 
-`step(state, control, dt) -> State` is the simple direct kinematic model used
-for planner rollouts. `Simulator::tick` wraps it with private actuator slew
-for the actual ego, and scenario actors without a logged trajectory use the
-same limiter before stepping.
+`planning::model::step(state, control, dt) -> State` is the direct kinematic
+model used for planner rollouts. It has no drag dynamics, no actuator memory,
+and no collision response; speed is only clamped to the static terminal-speed
+envelope exported by `physics.rs`.
+
+`Simulator::tick`, live world ego stepping, and scenario actors without a
+logged trajectory use the world model: command slew in `CommandLimiter`,
+passive resistance in `world_step()`, and collision/barrier handling around
+the resulting state.
+
+Roadside barriers are first-class physics entities in `crate::barrier`:
+
+```rust
+pub struct Barrier {
+    pub a: [f64; 2],
+    pub b: [f64; 2],
+    pub normal: [f64; 2],
+    pub restitution: f64,
+}
+```
+
+`Road::new` generates barrier segments from the road centerline and
+half-width. `collide_with_barriers(prev, next, barriers)` sweeps the ego
+footprint against those segments from either side, clamps to the first crossed
+barrier, slides along the remaining tangent motion, and reflects the velocity
+component through it.
 
 ## `Simulator`
 
@@ -93,7 +136,8 @@ impl Simulator {
 
 One receding-horizon step: call `planner.plan(self.state, ctx)`, take only
 the **first** control (`.first().copied().unwrap_or_default()` — an empty
-plan coasts), integrate it, and store + return the new state. The `total`
+plan coasts), integrate it, collide the ego with the current road-side
+barriers, and store + return the new state. The `total`
 latency seam (see
 [`src/planning/README.md#latency-diagnostics`](../planning/README.md#latency-diagnostics))
 is recorded here, around the `plan()` call, so every planner gets it whether

@@ -1,9 +1,10 @@
 //! Steer toward the lane centerline along a cubic Bezier path, with the
 //! Intelligent Driver Model for the speed profile.
 
+use crate::planning::model::step;
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State};
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
 /// Also drives the open-world traffic actors ([`crate::world`]).
@@ -31,12 +32,12 @@ pub(crate) fn idm_accel(v: f64, target: f64, lead: Option<(f64, f64)>) -> f64 {
 }
 
 /// Nearest in-lane actor ahead of station `s0`: (gap, speed along the lane).
-fn lead_vehicle(path: &Path, s0: f64, actors: &[State]) -> Option<(f64, f64)> {
+pub(crate) fn lead_vehicle(path: &Path, s0: f64, actors: &[State]) -> Option<(f64, f64)> {
     const CAR_LENGTH_M: f64 = 5.0;
     actors
         .iter()
         .filter_map(|a| {
-            let (s, d) = path.project([a.x, a.y]);
+            let (s, d) = path.project(a.position());
             let (_, lane_yaw) = path.pose_at(s);
             (d.abs() < 2.0 && s > s0)
                 .then(|| (s - s0 - CAR_LENGTH_M, a.speed * (a.yaw - lane_yaw).cos()))
@@ -50,7 +51,7 @@ impl Planner for BezierIdmPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0) = ctx.time("route", || {
             let path = Path::new(&ctx.road.centerline);
-            let (s0, _) = path.project([ego.x, ego.y]);
+            let (s0, _) = path.project(ego.position());
             (path, s0)
         });
         // custom seam: fitting the lane-return Bezier

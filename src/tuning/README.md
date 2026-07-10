@@ -98,7 +98,7 @@ one `const`), so "applying" a tune is a one-line, reviewable diff.
   something no feature measures (e.g. centerline-hugging — deliberately not
   a shared-cost term), the fit can't express it.
 - **Model-consistent, not reality-consistent.** Features price actors via
-  the same `metrics::predict` model the planners use (lane-following where an
+  the same `prediction::predict` model the planners use (lane-following where an
   actor drives the route, constant-velocity otherwise). An expert who avoided
   a car that *actually* swerved may look unmotivated (or hard-violating)
   under the prediction; such scenarios are skipped rather than half-learned.

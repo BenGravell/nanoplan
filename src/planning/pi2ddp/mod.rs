@@ -15,17 +15,17 @@
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
-use crate::Rng;
+use crate::planning::model::step;
 use crate::planning::planner_math::{
     self, M2, M4, M6, M24, TrajectoryCost, TrajectoryCostWeights, V2,
 };
 use crate::planning::search_tree::centerline_follow_controls;
-use crate::planning::{Context, Planner};
+use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
+use crate::rng::Rng;
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State};
 
-// 10 s at the simulator's 0.1 s tick rate (see planning::PLANNING_HORIZON_S).
-const HORIZON: usize = 100;
+const HORIZON: usize = PLANNING_TICKS;
 const ROLLOUTS: usize = 32; // K in the paper; K > n + m with margin
 const GENERATIONS: usize = 4;
 const BETA: f64 = 10.0; // baseline sensitivity (eq. 12)
@@ -203,7 +203,7 @@ impl Planner for Pi2DdpPlanner {
         // warm start: shift the previous policy one step if the sim followed it
         // (custom seam: includes the road-informed re-init when the shift misses)
         let mut pol = ctx.time("warm_start", || match self.policy.take() {
-            Some(mut p) if (p.expected_next.x - ego.x).hypot(p.expected_next.y - ego.y) < 1.0 => {
+            Some(mut p) if warm_start_matches(p.expected_next, ego) => {
                 p.u.rotate_left(1);
                 p.gains.rotate_left(1);
                 p.sigma_u.rotate_left(1);

@@ -1,14 +1,15 @@
 //! Hard trajectory constraints shared by planners.
 
-use crate::metrics::CAR_RADIUS_M;
+use crate::metrics::COLLISION_CLEARANCE_M;
 use crate::planning::cost::{N_FEATURES, WEIGHTS, soft_features};
+use crate::prediction::predict;
 use crate::scenarios::Path;
 use crate::simulation::State;
 
-/// Center-to-center clearance below which two cars are treated as collided
-/// — the same threshold `metrics::collisions` and `metrics::ttc` score
-/// against.
-pub(crate) const COLLISION_DIAMETER_M: f64 = 2.0 * CAR_RADIUS_M;
+/// Center-to-center clearance below which point-sample planners treat two
+/// cars as collided. Physics and metrics use the real rectangular footprint;
+/// this is the narrow proxy for planners that only carry a point sample.
+pub(crate) const COLLISION_DIAMETER_M: f64 = COLLISION_CLEARANCE_M;
 
 /// Finite stand-in for a hard violation, for callers whose statistics can't
 /// tolerate an actual infinity propagating through them (PI²-DDP's
@@ -64,7 +65,7 @@ struct CollisionFree<'a> {
 impl HardConstraint for CollisionFree<'_> {
     fn is_violated(&self, sample: &Sample) -> bool {
         self.actors.iter().any(|a| {
-            let predicted = crate::metrics::predict(a, self.lane, sample.t);
+            let predicted = predict(a, self.lane, sample.t);
             (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y) < COLLISION_DIAMETER_M
         })
     }
@@ -73,7 +74,7 @@ impl HardConstraint for CollisionFree<'_> {
         self.actors
             .iter()
             .map(|a| {
-                let p = crate::metrics::predict(a, self.lane, sample.t);
+                let p = predict(a, self.lane, sample.t);
                 let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
                 (COLLISION_DIAMETER_M - gap).max(0.0)
             })
@@ -152,7 +153,7 @@ impl<'a> HardConstraints<'a> {
 fn actor_proximity(sample: &Sample, actors: &[State], lane: Option<&Path>) -> Option<f64> {
     let mut proximity = 0.0;
     for a in actors {
-        let predicted = crate::metrics::predict(a, lane, sample.t);
+        let predicted = predict(a, lane, sample.t);
         let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
         if gap < COLLISION_DIAMETER_M {
             return None;

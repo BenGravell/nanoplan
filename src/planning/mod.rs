@@ -7,8 +7,10 @@ pub(crate) mod cost;
 pub mod diagnostics;
 pub mod latency;
 pub mod lattice;
+pub mod model;
 pub mod pi2ddp;
 pub(crate) mod planner_math;
+pub(crate) mod policy;
 pub mod rrt_star;
 pub(crate) mod sampling;
 pub mod sampling_mpc;
@@ -36,6 +38,14 @@ use crate::simulation::{Control, State};
 /// trajectory. Not `Context::horizon`, which is just the requested length
 /// of the *returned* control trajectory — see its doc comment.
 pub const PLANNING_HORIZON_S: f64 = 10.0;
+pub const PLANNING_DT_S: f64 = 0.1;
+pub const PLANNING_TICKS: usize = (PLANNING_HORIZON_S / PLANNING_DT_S) as usize;
+
+pub(crate) const WARM_START_MAX_POSITION_ERROR_M: f64 = 1.0;
+
+pub(crate) fn warm_start_matches(expected_next: State, ego: State) -> bool {
+    (expected_next.x - ego.x).hypot(expected_next.y - ego.y) < WARM_START_MAX_POSITION_ERROR_M
+}
 
 /// Everything a planner sees besides the ego state.
 pub struct Context<'a> {
@@ -218,13 +228,11 @@ impl PlannerKind {
 }
 
 #[cfg(test)]
+pub(crate) const TEST_HALF_WIDTH_M: f64 = 5.5;
+
+#[cfg(test)]
 pub(crate) fn test_road(centerline: &[[f64; 2]]) -> Road {
-    Road {
-        centerline: centerline.to_vec(),
-        target_speed: 10.0,
-        half_width: crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
-        dt: 0.1,
-    }
+    Road::new(centerline.to_vec(), 10.0, TEST_HALF_WIDTH_M, 0.1)
 }
 
 #[cfg(test)]

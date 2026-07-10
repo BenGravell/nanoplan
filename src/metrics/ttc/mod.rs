@@ -2,7 +2,9 @@
 //! of ego and every actor stay apart for at least `LEAST_MIN_TTC_S`.
 //! Event-driven — aggregates by worst case (min).
 
-use crate::metrics::{CAR_RADIUS_M, TickCtx, gap, project};
+use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, footprints_overlap, project};
+use crate::metrics::TickCtx;
+use crate::simulation::State;
 
 const TTC_HORIZON_S: f64 = 3.0;
 const TTC_STEP_S: f64 = 0.1;
@@ -15,7 +17,7 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
         .filter_map(|a| {
             let mut t = TTC_STEP_S;
             while t <= TTC_HORIZON_S {
-                if gap(&project(ego, t), &project(a, t)) < 2.0 * CAR_RADIUS_M {
+                if collides(&project(ego, t), &project(a, t)) {
                     return Some(t);
                 }
                 t += TTC_STEP_S;
@@ -24,4 +26,8 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
         })
         .fold(f64::INFINITY, f64::min);
     if min_ttc >= LEAST_MIN_TTC_S { 1.0 } else { 0.0 }
+}
+
+fn collides(ego: &State, actor: &State) -> bool {
+    footprints_overlap(ego.pose(), EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT)
 }

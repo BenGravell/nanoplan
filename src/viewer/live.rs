@@ -10,11 +10,11 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
-use nanoplan::PlannerKind;
 use nanoplan::world::{
     ActorKind, CROSSWALK_SETBACK_M, LANE_W_M, LiveWorld, POCKET_M, POCKET_TAPER_M, has_crosswalk,
     has_pocket, has_slip,
 };
+use nanoplan::{EGO_FOOTPRINT, PlannerKind};
 
 use super::draw::{ACCENT, PX_PER_M, draw_agent, draw_car, ppx, px};
 use super::{DT, Mode, UiState};
@@ -135,8 +135,8 @@ pub(crate) fn draw_live(
         // hold the lines back from the intersections so they read as open
         // junctions instead of lines crossing through them
         let (ta, tb) = (
-            (node_w[a] + 2.0).min(0.45 * len),
-            (node_w[b] + 2.0).min(0.45 * len),
+            (node_w[a] + EGO_FOOTPRINT.length).min(0.45 * len),
+            (node_w[b] + EGO_FOOTPRINT.length).min(0.45 * len),
         );
         let at = |s: f64, d: f64| {
             ppx([
@@ -335,13 +335,7 @@ pub(crate) fn draw_live(
             ActorKind::Bike => Color::srgb(0.4, 0.7, 0.7),
             ActorKind::Pedestrian => Color::srgb(0.85, 0.7, 0.45),
         };
-        if actor.kind == ActorKind::Pedestrian {
-            gizmos.circle_2d(px(&actor.state), 0.35 * PX_PER_M, color);
-        } else {
-            let sz = actor.kind.size_m();
-            let size = Vec2::new(sz[0] as f32, sz[1] as f32);
-            draw_agent(&mut gizmos, &actor.state, size, color);
-        }
+        draw_agent(&mut gizmos, &actor.state, actor.kind.footprint(), color);
     }
     // parked-and-waiting hint: a faint ring around the ego when goalless
     if w.goal.is_none() {

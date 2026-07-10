@@ -70,6 +70,8 @@
 //! points.
 
 use super::{TICKS, goal_state, take_warm};
+use crate::math::wrap_angle;
+use crate::planning::model::step;
 use crate::planning::planner_math::{
     M4, M22, M24, M42, TrajectoryCost, TrajectoryCostWeights, V2, V4, dot, mat_add, mat_mul,
     mat_vec, state, state_from_v4, transpose, vec_add,
@@ -78,9 +80,9 @@ use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
 };
 use crate::planning::{Context, Planner};
+use crate::prediction::predict;
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
 
@@ -201,13 +203,13 @@ struct StageDerivs {
 fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     // one projection of the unperturbed state anchors every probe's
     // Frenet lookup (the probes move by ±H_COST, far less than the window)
-    let s_hint = ocp.path.project([x.x, x.y]).0;
+    let s_hint = ocp.path.project(x.position()).0;
     let t_s = t as f64 * ocp.ctx.road.dt;
     let predicted_actors: Vec<State> = ocp
         .ctx
         .actors
         .iter()
-        .map(|a| crate::metrics::predict(a, Some(ocp.path), t_s))
+        .map(|a| predict(a, Some(ocp.path), t_s))
         .collect();
     let eval = |z: V4| {
         ocp.stage_cost_with_predicted_actors(
@@ -757,11 +759,7 @@ mod tests {
             curvature: 0.02,
         };
         let t = 3;
-        let predicted = [crate::metrics::predict(
-            &actor,
-            Some(&path),
-            t as f64 * road.dt,
-        )];
+        let predicted = [predict(&actor, Some(&path), t as f64 * road.dt)];
 
         let regular = tc.stage(&x, u, t, None);
         let reused = tc.stage_with_predicted_actors(&x, u, t, None, &predicted);
@@ -792,10 +790,11 @@ mod tests {
             ..Default::default()
         };
         let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[obstacle], 150);
-        let min_gap = trace
+        let (min_gap, _) = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
-            .fold(f64::INFINITY, f64::min);
+            .map(|s| ((s.x - 40.0).hypot(s.y), *s))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");
     }
 

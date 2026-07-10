@@ -47,6 +47,7 @@ fn s_curve_road() -> Vec<[f64; 2]> {
 
 // ponytail: hardcoded synthetic scenarios cover cases the CommonRoad corpus doesn't need to
 fn scenarios() -> Vec<Scenario> {
+    const BUILTIN_HALF_WIDTH_M: f64 = 5.5;
     let state = |x, y, yaw, speed| State {
         x,
         y,
@@ -55,13 +56,16 @@ fn scenarios() -> Vec<Scenario> {
         ..Default::default()
     };
     let map = |divider_d, crosswalk_s| MapData {
+        road_half_width: BUILTIN_HALF_WIDTH_M,
         divider_d,
         crosswalk_s,
-        ..Default::default()
+        cross_streets: vec![],
     };
     let map_crossing = |cross_streets| MapData {
+        road_half_width: BUILTIN_HALF_WIDTH_M,
+        divider_d: None,
+        crosswalk_s: vec![],
         cross_streets,
-        ..Default::default()
     };
     let scenario = |name: &str, ego, actors, centerline, map| Scenario {
         name: name.into(),

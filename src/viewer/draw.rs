@@ -4,14 +4,12 @@
 use bevy::prelude::*;
 use nanoplan::planning::{Context, Diagnostics};
 use nanoplan::scenarios::Road;
-use nanoplan::{Control, Path, Scenario, State, step};
+use nanoplan::{CAR_FOOTPRINT, Control, Footprint, Path, Scenario, State, planner_step};
 
 use super::rollouts::RolloutCache;
 use super::{DT, Mode, Scenarios, UiState};
 
 pub(crate) const PX_PER_M: f32 = 6.0;
-/// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
-const CAR_SIZE_M: Vec2 = Vec2::new(5.176, 2.297);
 pub(crate) const ACCENT: Color = Color::srgb(1.0, 0.25, 0.85);
 const DIAG_POINT: Color = Color::srgb(0.95, 0.85, 0.2);
 const DIAG_TRAJECTORY: Color = Color::srgb(0.2, 0.85, 0.95);
@@ -35,7 +33,7 @@ fn rollout_controls(mut s: State, controls: &[Control]) -> Vec<State> {
     controls
         .iter()
         .map(|&u| {
-            s = step(s, u, DT);
+            s = planner_step(s, u, DT);
             s
         })
         .collect()
@@ -126,11 +124,12 @@ fn draw_map(gizmos: &mut Gizmos, sc: &Scenario) {
 }
 
 pub(crate) fn draw_car(gizmos: &mut Gizmos, s: &State, color: Color) {
-    draw_agent(gizmos, s, CAR_SIZE_M, color);
+    draw_agent(gizmos, s, CAR_FOOTPRINT, color);
 }
 
 /// A vehicle of arbitrary footprint (open-world trucks, bikes, ...).
-pub(crate) fn draw_agent(gizmos: &mut Gizmos, s: &State, size_m: Vec2, color: Color) {
+pub(crate) fn draw_agent(gizmos: &mut Gizmos, s: &State, footprint: Footprint, color: Color) {
+    let size_m = Vec2::new(footprint.length as f32, footprint.width as f32);
     let iso = Isometry2d::new(px(s), Rot2::radians(s.yaw as f32));
     gizmos.rect_2d(iso, size_m * PX_PER_M, color);
     // heading tick from center to front bumper

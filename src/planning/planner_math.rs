@@ -5,10 +5,11 @@ mod matrix;
 mod trajectory_cost;
 mod vector;
 
+use crate::math::wrap_angle;
 use crate::planning::cost;
 use crate::scenarios::Path;
-use crate::simulation::{Control, MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL, State};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
+use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 pub(crate) use linalg::{dot, mat_add, mat_mul, mat_vec, transpose, vec_add};
 pub(crate) use matrix::{M2, M4, M6, M22, M24, M42};
@@ -48,7 +49,7 @@ pub(crate) fn state_sample(
     t_s: f64,
     s_hint: Option<f64>,
 ) -> (f64, cost::Sample) {
-    let p = [x.x, x.y];
+    let p = x.position();
     let (s, d) = match s_hint {
         Some(h) => path.project_near(p, h, 15.0),
         None => path.project(p),
@@ -57,7 +58,7 @@ pub(crate) fn state_sample(
     (
         s,
         cost::Sample {
-            xy: p,
+            xy: p.xy(),
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,

@@ -1,12 +1,13 @@
 //! Basic centerline-return planner using the shared cubic steering curve.
 
 use crate::math::smoothstep;
+use crate::math::wrap_angle;
 use crate::planning::search_tree::{centerline_follow_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
 use crate::scenarios::Path;
-use crate::simulation::{Control, MIN_LON_ACCEL, State};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
+use crate::vehicle::MIN_LON_ACCEL;
 
 pub struct BasicPlanner;
 
@@ -14,7 +15,7 @@ impl Planner for BasicPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0, d0, lane_speed) = ctx.time("route", || {
             let path = Path::new(&ctx.road.centerline);
-            let (s0, d0) = path.project([ego.x, ego.y]);
+            let (s0, d0) = path.project(ego.position());
             let (_, lane_yaw) = path.pose_at(s0);
             let heading_err = wrap_angle(ego.yaw - lane_yaw);
             let lane_speed = (ego.speed * heading_err.cos()).max(0.0);
@@ -119,8 +120,8 @@ fn cruise_goal_state(path: &Path, s: f64, target_speed: f64) -> State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning::model::step;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
-    use crate::simulation::step;
 
     #[test]
     fn converges_to_centerline() {

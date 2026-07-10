@@ -4,7 +4,7 @@
 //! same quantities [`crate::metrics`] scores scenario quality by — the
 //! hard-collision threshold, the drivable-area bound, the overspeed
 //! tolerance, and the comfort accel bounds — plus a prediction of actors
-//! via [`crate::metrics::predict`]. That is the lane-aware kinematic model:
+//! via [`crate::prediction::predict`]. That is the lane-aware kinematic model:
 //! an actor travelling along the route is rolled forward following the
 //! lane's curve and eased back toward its center, so on a bend the planner
 //! prices it where it will actually be rather than off on the straight
@@ -155,8 +155,7 @@ mod tests {
     use crate::scenarios::Path;
     use crate::simulation::State;
 
-    /// Standard drivable half-width for the cost tests — the default road
-    /// width ([`crate::metrics::drivable_area::ROAD_HALF_WIDTH_M`]).
+    /// Drivable half-width used by these cost tests.
     const HW: f64 = 5.5;
 
     fn features(

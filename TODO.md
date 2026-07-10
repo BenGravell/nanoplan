@@ -1,26 +1,5 @@
 # TODO
 
-## Business logic and design
-
---
-Factor out shared types and helpers across planners in src/planning
-
---
-src/planning/treetop/rrt.rs
-ACCEL_LAT_MAX is referenced but does not exist
-
-
---
-Factor out magic numbers from
-src/planning/treetop/mod.rs
-And especially the ones that are shared across other planners - single source of truth. 
-
---
-Unify all quasi Monte Carlo sampling to use the same sequences and source code. Halton, van der corput, sobol
-
---
-Integrate interfaces of judo more thoroughly. Reuse sampling.
-
 --
 Re-tune the expert human cost weights using nuPlan.
 
@@ -118,4 +97,4 @@ App should feel like a mix of Wipeout and Gran Turismo 3 racers.
 Draw ego future carpet. Carpet represents the region of space that will be occupied by the ego at every point in the future over the planning horizon/duration of trajectory. It is the ego footprint at every tick over entire future trajectory, spatially merged and resulting polygon simplified.
 
 --
-Give the various actors in the scene minimal polyhedral 3d meshes representative of the semantic class (car, truck, cycle, pedestrian, etc)
+Give the various actors in the scene minimal meshes representative of the semantic class (car, truck, cycle, pedestrian, etc)

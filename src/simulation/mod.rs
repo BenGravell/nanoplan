@@ -1,135 +1,27 @@
 //! The kinematic vehicle model and the closed-loop simulator.
 
-use serde::{Deserialize, Serialize};
 use web_time::Instant;
 
 use crate::metrics::{self, Metrics};
 use crate::planning::{Context, Latency, LatencyStats, Planner, PlannerKind};
 use crate::scenarios::{Path, Road, Scenario};
 
-/// Vehicle state: pose and speed.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct State {
-    pub x: f64,
-    pub y: f64,
-    #[serde(default)]
-    pub yaw: f64,
-    #[serde(default)]
-    pub speed: f64,
-}
+mod collision;
+mod integration;
+pub(crate) mod physics;
+mod state_control;
 
-/// Control action: longitudinal acceleration and path curvature.
-/// The default coasts straight at the current speed.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct Control {
-    #[serde(default)]
-    pub acceleration: f64,
-    #[serde(default)]
-    pub curvature: f64,
-}
-
-/// Advance the kinematic bicycle model by one Euler step of length `dt`,
-/// using an already-applied direct control. This has no actuator memory;
-/// [`Simulator`] owns the rate limiter for closed-loop runs.
-pub fn step(s: State, u: Control, dt: f64) -> State {
-    let u = clamp_control(u, s.speed);
-    State {
-        x: s.x + s.speed * s.yaw.cos() * dt,
-        y: s.y + s.speed * s.yaw.sin() * dt,
-        yaw: s.yaw + s.speed * u.curvature * dt,
-        speed: (s.speed + u.acceleration * dt).max(0.0),
-    }
-}
-
-// The plant's limits are a small physical sanity check, not a realism project.
-// Comfort is a separate concern the `comfort` metric and planner costs express.
-
-/// Strongest forward acceleration, m/s². Traction/engine limited: a typical
-/// passenger car reaches 100 km/h (27.8 m/s) in ~7–11 s — a ~2.5–4 m/s²
-/// average — with a higher launch peak; 4.0 (~0.41 g) is a representative
-/// peak for a brisk passenger car (cf. Bosch Automotive Handbook 0–100 km/h
-/// figures). Real accel falls with speed; a single peak cap is a conservative
-/// simplification.
-pub const MAX_LON_ACCEL: f64 = 4.0;
-/// Hardest braking deceleration, m/s². Tyre-grip limited on dry asphalt with
-/// ABS: consumer/industry 100–0 km/h tests stop in ~34–38 m, i.e. ~10–11
-/// m/s² (~1.0–1.1 g); −9.0 (~0.9 g) is a conservative dry-road capability,
-/// consistent with the lateral grip limit (friction ellipse).
-pub const MIN_LON_ACCEL: f64 = -9.0;
-/// Simulator-internal longitudinal jerk capability, m/s³.
-/// Deliberately permissive: this is a plant guard rail, not a planner model.
-const MAX_ABS_LON_JERK: f64 = 80.0;
-/// Tightest steer the plant will execute — a ~5 m turning radius
-/// (κ = 1/R = 0.2 /m), matching a compact passenger car's minimum turn.
-/// Only binds at low speed; above it the lateral-grip cap is tighter.
-pub const MAX_ABS_CURVATURE: f64 = 0.2;
-/// Lateral-acceleration (tyre-grip) limit, m/s². Passenger-car skidpad tests
-/// sustain ~0.85–0.95 g on dry asphalt; 9.0 (~0.9 g) is a representative
-/// grip capability. The curvature a car can actually hold at a given speed is
-/// `MAX_ABS_LAT_ACCEL / speed²`, so this tightens the steer as speed rises
-/// (no hairpins at highway speed).
-pub const MAX_ABS_LAT_ACCEL: f64 = 9.0;
-/// Simulator-internal curvature-rate capability, in 1/(m·s).
-/// Deliberately permissive: this is a plant guard rail, not a planner model.
-const MAX_ABS_CURVATURE_RATE: f64 = 2.0;
-
-/// State curvature bound for a given speed: the tighter of steering geometry
-/// and lateral grip.
-pub fn curvature_limit(speed: f64) -> f64 {
-    let v2 = speed * speed;
-    if v2 > 1e-6 {
-        MAX_ABS_CURVATURE.min(MAX_ABS_LAT_ACCEL / v2)
-    } else {
-        MAX_ABS_CURVATURE
-    }
-}
-
-fn clamp_curvature(curvature: f64, speed: f64) -> f64 {
-    let limit = curvature_limit(speed);
-    curvature.clamp(-limit, limit)
-}
-
-/// Clamp an action to acceleration, steering, and lateral-grip limits.
-pub fn clamp_control(u: Control, speed: f64) -> Control {
-    Control {
-        acceleration: u.acceleration.clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
-        curvature: clamp_curvature(u.curvature, speed),
-    }
-}
-
-fn rate_limit_control(prev: Control, requested: Control, dt: f64, speed: f64) -> Control {
-    let prev = clamp_control(prev, speed);
-    let target = clamp_control(requested, speed);
-    Control {
-        acceleration: target.acceleration.clamp(
-            prev.acceleration - MAX_ABS_LON_JERK * dt,
-            prev.acceleration + MAX_ABS_LON_JERK * dt,
-        ),
-        curvature: target.curvature.clamp(
-            prev.curvature - MAX_ABS_CURVATURE_RATE * dt,
-            prev.curvature + MAX_ABS_CURVATURE_RATE * dt,
-        ),
-    }
-}
-
-/// Simulator-owned actuator memory. Planners never receive this; they only
-/// command direct acceleration/curvature and the plant slews toward it.
-pub(crate) struct CommandLimiter {
-    applied: Control,
-}
-
-impl CommandLimiter {
-    pub(crate) fn new() -> Self {
-        CommandLimiter {
-            applied: Control::default(),
-        }
-    }
-
-    pub(crate) fn step(&mut self, state: State, command: Control, dt: f64) -> State {
-        self.applied = rate_limit_control(self.applied, command, dt, state.speed);
-        step(state, self.applied, dt)
-    }
-}
+pub(crate) use crate::barrier::collide_with_road_barriers;
+pub use crate::barrier::{BARRIER_RESTITUTION, Barrier, collide_with_barriers, road_side_barriers};
+#[cfg(test)]
+use crate::vehicle::MAX_ABS_CURVATURE_RATE;
+pub use crate::vehicle::{
+    AIR_DENSITY_KG_M3, DRAG_AREA_M2, EGO_MASS_KG, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL,
+    MAX_LON_ACCEL, MIN_LON_ACCEL, ROLLING_RESISTANCE_COEFF,
+};
+pub(crate) use collision::{collide_with_actors, collide_with_car_actors};
+pub(crate) use integration::CommandLimiter;
+pub use state_control::{Control, Pose, Position, State};
 
 /// Ego vehicle simulator.
 pub struct Simulator {
@@ -155,7 +47,11 @@ impl Simulator {
             .first()
             .copied()
             .unwrap_or_default();
-        self.state = self.limiter.step(self.state, u, self.dt);
+        let prev = self.state;
+        let next =
+            collide_with_road_barriers(prev, self.limiter.step(self.state, u, self.dt), ctx.road);
+        let next = collide_with_car_actors(next, ctx.actors.iter().copied());
+        self.state = collide_with_road_barriers(prev, next, ctx.road);
         self.state
     }
 }
@@ -251,7 +147,7 @@ impl IncrementalSim {
         // route outlasts the horizon (the ego never nears its end) it never
         // binds.
         let ego = self.sim.state;
-        let remaining = self.route.length() - self.route.project([ego.x, ego.y]).0;
+        let remaining = self.route.length() - self.route.project(ego.position()).0;
         self.road.target_speed = self
             .base_target_speed
             .min((2.0 * GOAL_DECEL_MS2 * remaining.max(0.0)).sqrt());
@@ -351,7 +247,7 @@ mod tests {
             actors: vec![],
             centerline: vec![[-5.0, 0.0], [60.0, 0.0]],
             target_speed: 10.0,
-            map: MapData::default(),
+            map: MapData::new(5.5),
             expert: vec![],
         };
         let r = simulate(&sc, PlannerKind::BezierIdm, 20.0, 0.1);
@@ -360,155 +256,6 @@ mod tests {
         assert!(end.speed < 1.0, "never stopped, speed {}", end.speed);
         // and it stayed on its road the whole way (no spin off the end)
         assert_eq!(r.metrics.aggregate[1], 1.0, "left the drivable area");
-    }
-
-    #[test]
-    fn step_applies_action_limits() {
-        let s = State {
-            speed: 3.0,
-            ..Default::default()
-        };
-        let ns = step(
-            s,
-            Control {
-                acceleration: 100.0,
-                curvature: 100.0,
-            },
-            0.1,
-        );
-        assert!((ns.speed - (s.speed + MAX_LON_ACCEL * 0.1)).abs() < 1e-9);
-        assert!((ns.yaw - s.speed * MAX_ABS_CURVATURE * 0.1).abs() < 1e-9);
-    }
-
-    #[test]
-    fn drives_straight() {
-        let s0 = State {
-            speed: 1.0,
-            ..Default::default()
-        };
-        let s1 = step(s0, Control::default(), 0.1);
-        assert_eq!(
-            s1,
-            State {
-                x: 0.1,
-                speed: 1.0,
-                ..Default::default()
-            }
-        );
-    }
-
-    #[test]
-    fn turns_left_with_positive_curvature() {
-        let s0 = State {
-            speed: 1.0,
-            ..Default::default()
-        };
-        let u = Control {
-            acceleration: 0.0,
-            curvature: 1.0,
-        };
-        let s1 = step(s0, u, 0.1);
-        assert!(s1.yaw > 0.0);
-    }
-
-    #[test]
-    fn limits_clamp_accel() {
-        let s = step(
-            State {
-                speed: 5.0,
-                ..Default::default()
-            },
-            Control {
-                acceleration: 100.0,
-                curvature: 0.0,
-            },
-            0.1,
-        );
-        assert!(
-            (s.speed - (5.0 + MAX_LON_ACCEL * 0.1)).abs() < 1e-9,
-            "speed {}",
-            s.speed
-        );
-        let brake = step(
-            State {
-                speed: 5.0,
-                ..Default::default()
-            },
-            Control {
-                acceleration: -100.0,
-                curvature: 0.0,
-            },
-            0.1,
-        );
-        assert!((brake.speed - (5.0 + MIN_LON_ACCEL * 0.1)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn limits_cap_curvature_and_lateral_accel() {
-        let slow = 3.0;
-        assert!(MAX_ABS_LAT_ACCEL / (slow * slow) > MAX_ABS_CURVATURE);
-        let s = step(
-            State {
-                speed: slow,
-                ..Default::default()
-            },
-            Control {
-                acceleration: 0.0,
-                curvature: -100.0,
-            },
-            0.1,
-        );
-        let expected_yaw = -slow * MAX_ABS_CURVATURE * 0.1;
-        assert!((s.yaw - expected_yaw).abs() < 1e-9, "yaw {}", s.yaw);
-
-        // lateral-accel (grip) cap: at speed, sustained max steering saturates
-        // at the curvature giving MAX_ABS_LAT_ACCEL, tighter than the absolute
-        // cap
-        let fast = 25.0;
-        let kappa_lat = MAX_ABS_LAT_ACCEL / (fast * fast);
-        assert!(
-            kappa_lat < MAX_ABS_CURVATURE,
-            "test speed too low to bind lat accel"
-        );
-        let s = step(
-            State {
-                speed: fast,
-                ..Default::default()
-            },
-            Control {
-                acceleration: 0.0,
-                curvature: 1.0,
-            },
-            0.1,
-        );
-        let applied_curvature = s.yaw / (fast * 0.1);
-        assert!(
-            (applied_curvature - kappa_lat).abs() < 1e-9,
-            "curv {}",
-            applied_curvature
-        );
-        assert!((applied_curvature * fast * fast - MAX_ABS_LAT_ACCEL).abs() < 1e-9);
-    }
-
-    #[test]
-    fn simulator_rate_limits_actuator_commands() {
-        let mut limiter = CommandLimiter::new();
-        let s0 = State {
-            speed: 1.0,
-            ..Default::default()
-        };
-        let dt = 0.01;
-        let s1 = limiter.step(
-            s0,
-            Control {
-                acceleration: 100.0,
-                curvature: 5.0,
-            },
-            dt,
-        );
-        assert!((limiter.applied.acceleration - MAX_ABS_LON_JERK * dt).abs() < 1e-9);
-        assert!((limiter.applied.curvature - MAX_ABS_CURVATURE_RATE * dt).abs() < 1e-9);
-        assert!((s1.speed - (1.0 + limiter.applied.acceleration * dt)).abs() < 1e-9);
     }
 
     #[test]
@@ -530,7 +277,7 @@ mod tests {
             };
             let prev_yaw = sim.state.yaw;
             sim.state = sim.limiter.step(sim.state, u, sim.dt);
-            let yaw_rate = crate::wrap_angle(sim.state.yaw - prev_yaw) / sim.dt;
+            let yaw_rate = crate::math::wrap_angle(sim.state.yaw - prev_yaw) / sim.dt;
             let lat_accel = yaw_rate * sim.state.speed;
             let dk = (sim.limiter.applied.curvature - prev_applied.curvature).abs();
             assert!(

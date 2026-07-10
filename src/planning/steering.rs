@@ -5,7 +5,8 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
-use crate::simulation::{Control, State, clamp_control, step};
+use crate::planning::model::{clamp_control, step};
+use crate::simulation::{Control, State};
 
 /// Cubic flat-output connector between two states/poses.
 ///

@@ -31,19 +31,21 @@ pub struct Scenario {
     pub actors: Vec<Actor>,       // defaults to empty
     pub centerline: Vec<[f64; 2]>,
     pub target_speed: f64,        // defaults to 10.0
-    pub map: MapData,             // defaults to MapData::default()
+    pub map: MapData,             // required; includes the road width
     pub expert: Vec<Waypoint>,    // defaults to empty
 }
 ```
 
-Everything derives `Serialize`/`Deserialize` via `serde`, with `#[serde(default)]`
-on every optional field, so a scenario file can be as small as:
+Everything derives `Serialize`/`Deserialize` via `serde`. Optional fields have
+`#[serde(default)]`, but road width is not optional, so even a minimal scenario
+must include `map.road_half_width`:
 
 ```json
 {
   "name": "minimal",
   "ego": { "x": 0.0, "y": 0.0, "speed": 8.0 },
-  "centerline": [[-10.0, 0.0], [100.0, 0.0]]
+  "centerline": [[-10.0, 0.0], [100.0, 0.0]],
+  "map": { "road_half_width": 5.5 }
 }
 ```
 
@@ -82,7 +84,7 @@ which `tools/export_commonroad_scenarios.py` converted from
 | `actors` | `Vec<Actor>` | `[]` | Other vehicles. See [Actor motion](#actor-motion) below. |
 | `centerline` | `Vec<[f64; 2]>` | required | Polyline of `[x, y]` points describing the lane the ego should follow. At least 2 points. Order matters — arc length increases along it. |
 | `target_speed` | `f64` | `10.0` | Desired cruise speed (m/s), used by planners' speed control and by the [`progress`](../metrics/README.md) and [`speed_limit`](../metrics/README.md) metrics as the reference speed limit. |
-| `map` | `MapData` | see below | Cosmetic/road-geometry data — see [MapData](#mapdata). |
+| `map` | `MapData` | required | Cosmetic/road-geometry data, including required `road_half_width` — see [MapData](#mapdata). |
 | `expert` | `Vec<Waypoint>` | `[]` | The expert (human) ego trajectory logged over the same horizon, when the scenario comes from a real log. Not used in simulation — the ego is planned, not replayed — but it is the demonstration data the cost-weight autotuner learns from (see [src/tuning/README.md](../tuning/README.md)). |
 
 ### `Actor`
@@ -119,23 +121,23 @@ pub struct Waypoint {
 
 ```rust
 pub struct MapData {
-    pub road_half_width: f64,      // default 5.5 — the drivable half-width the planner and metric use
-    pub divider_d: Option<f64>,    // Some(offset) draws a dashed lane divider at that Frenet offset
-    pub crosswalk_s: Vec<f64>,     // stations along the centerline where a crosswalk band is drawn
-    pub cross_streets: Vec<f64>,   // stations where a perpendicular street is drawn crossing the road
+    pub road_half_width: f64,      // required; drivable half-width used to build road barriers
+    pub divider_d: Option<f64>,    // defaults to None; Some(offset) draws a dashed lane divider
+    pub crosswalk_s: Vec<f64>,     // defaults to []; stations where a crosswalk band is drawn
+    pub cross_streets: Vec<f64>,   // defaults to []; stations where a perpendicular street is drawn
 }
 ```
 
 The viewer draws it (road boundary lines, dashed divider, crosswalk stripes,
 cross streets), and `road_half_width` is also the *actual* drivable
 half-width the run enforces: `Scenario::road` copies it into
-[`Road::half_width`](#road-the-fixed-setting-of-a-run), which the
-[`drivable_area`](../metrics/README.md) metric scores against and every
-planner's shared cost function rejects trajectories outside of. So a
-narrower `road_half_width` genuinely tightens what counts as off-road, for
-both scoring and planning, on that scenario. The `ROAD_HALF_WIDTH_M = 5.5`
-constant in `metrics::drivable_area` is now only the *default* used when a
-scenario doesn't set its own (and `MapData::default`'s value).
+[`Road::half_width`](#road-the-fixed-setting-of-a-run), generates physical
+roadside [`Barrier`](../simulation/README.md) segments from it, and every
+planner's shared cost function rejects point samples outside of it. The
+[`drivable_area`](../metrics/README.md) metric scores the ego footprint
+against the generated barrier geometry, so a narrower `road_half_width`
+genuinely tightens what counts as off-road. There is no default road width:
+scenario JSON must set `map.road_half_width`.
 
 `cross_streets` exists because the `Scenario` format has only ever modeled a
 single road (`centerline`) — an intersection/crossing actor's trajectory
@@ -151,7 +153,8 @@ from — it isn't itself a lane the planner or metrics know anything about.
 pub struct Road {
     pub centerline: Vec<[f64; 2]>, // route reference path
     pub target_speed: f64,         // cruise speed; doubles as the metrics' speed limit
-    pub half_width: f64,           // drivable half-width; the off-road bound planner + metric enforce
+    pub half_width: f64,           // drivable half-width used by planners and barrier generation
+    pub barriers: Vec<Barrier>,    // physical roadside collision segments
     pub dt: f64,                   // tick length everything is sampled at
 }
 
@@ -161,14 +164,14 @@ impl Scenario {
 ```
 
 Not part of the JSON format — a `Road` is derived per *run*, pairing the
-scenario's `centerline`/`target_speed`/`map.road_half_width` with the
-caller-chosen `dt` (see
+scenario's `centerline`/`target_speed`/`map.road_half_width` with generated
+physical roadside barriers and the caller-chosen `dt` (see
 [`src/simulation/README.md`](../simulation/README.md#why-this-design) for
-why `dt` belongs to the experiment, not the scenario). These three values
+why `dt` belongs to the experiment, not the scenario). These run settings
 always travel together — the planning `Context` embeds a `&Road`, the
 simulator holds one for the whole run, and `metrics::evaluate` scores
 against one — so they move as a single parameter object instead of a
-recurring three-argument list.
+recurring argument list.
 
 ## `Path`, the Frenet helper
 
@@ -179,8 +182,8 @@ impl Path {
     pub fn new(pts: &[[f64; 2]]) -> Self;
     pub fn length(&self) -> f64;
     pub fn pose_at(&self, s: f64) -> ([f64; 2], f64);      // position + heading at arc length s
-    pub fn project(&self, p: [f64; 2]) -> (f64, f64);      // xy -> (arc length, signed lateral offset)
-    pub fn project_near(&self, p: [f64; 2], s_hint: f64, window_m: f64) -> (f64, f64); // windowed project
+    pub fn project(&self, p: impl Into<Position>) -> (f64, f64);      // xy -> (arc length, signed lateral offset)
+    pub fn project_near(&self, p: impl Into<Position>, s_hint: f64, window_m: f64) -> (f64, f64); // windowed project
     pub fn frenet_to_xy(&self, s: f64, d: f64) -> [f64; 2]; // inverse of project
 }
 ```
@@ -218,8 +221,8 @@ simulation tick, one of two ways:
 - **No trajectory** (the common/default case, and what every hand-authored
   built-in scenario in `src/viewer/scenarios.rs` and every `synthetic_batch` scenario
   uses): integrate `init` under the constant `control` with
-  [`step()`](../simulation/README.md#the-kinematic-model), the same Euler
-  step the ego uses.
+  [`CommandLimiter`](../simulation/README.md#two-forward-models) and the
+  world plant, the same high-fidelity path the ego uses.
 - **Non-empty trajectory**: replay the logged waypoints (see below). The
   presence of any waypoints overrides `control` entirely — there's no
   partial mixing.
@@ -245,7 +248,7 @@ This is why trajectory replay is worth having at all, rather than just
 constant-velocity extrapolation everywhere: an actor can **brake, swerve, or
 cut in** exactly as logged, while a *planner's own prediction* of that actor
 (built only from `Context::actors`, the current-tick state, via
-`metrics::predict`) at best follows the lane and eases back to its center —
+`prediction::predict`) at best follows the lane and eases back to its center —
 so a replayed scenario can genuinely test how a planner degrades when reality
 diverges from its prediction. The bundled
 [`cut_in.json`](../../scenarios/json/cut_in.json) scenario and the future
@@ -293,7 +296,7 @@ four families by index (`i % 4`):
 Every scenario also gets a randomized sinusoidal centerline (amplitude
 `[0, 10)` m, wavelength `[60, 140)` m) and a randomized ego starting speed
 and lateral offset, so a batch exercises curvature-tracking as well as the
-actor-response families above. Randomness comes from the crate-level `Rng`
+actor-response families above. Randomness comes from `crate::rng::Rng`
 (deterministic xorshift* + Box-Muller, defined in `lib.rs` — chosen over
 pulling in the `rand` crate specifically so batches and their expected
 scores are reproducible byte-for-byte across machines and CI runs).

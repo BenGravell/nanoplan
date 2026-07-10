@@ -8,8 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::simulation::{CommandLimiter, Control, State};
-use crate::wrap_angle;
+use crate::math::wrap_angle;
+use crate::rng::Rng;
+use crate::simulation::{Barrier, CommandLimiter, Control, Position, State, road_side_barriers};
 
 /// A polyline path with arc-length lookup and Frenet projection.
 pub struct Path {
@@ -52,8 +53,8 @@ impl Path {
     /// Positive offset is left of the path. Scans every segment — see
     /// [`Path::project_near`] for the windowed variant a caller that already
     /// knows roughly where the point falls can use instead.
-    pub fn project(&self, p: [f64; 2]) -> (f64, f64) {
-        self.project_range(p, 0, self.pts.len().saturating_sub(1))
+    pub fn project(&self, p: impl Into<Position>) -> (f64, f64) {
+        self.project_range(p.into(), 0, self.pts.len().saturating_sub(1))
     }
 
     /// [`Path::project`] restricted to the centerline segments within
@@ -64,7 +65,8 @@ impl Path {
     /// generously relative to how far a point can sit from `s_hint`, so in
     /// practice it always does. Falls back to the full scan for a degenerate
     /// window.
-    pub fn project_near(&self, p: [f64; 2], s_hint: f64, window_m: f64) -> (f64, f64) {
+    pub fn project_near(&self, p: impl Into<Position>, s_hint: f64, window_m: f64) -> (f64, f64) {
+        let p = p.into();
         // segment `i` spans arc length [s[i], s[i+1]]; keep those overlapping
         // [s_hint - window, s_hint + window]
         let lo = self
@@ -78,19 +80,19 @@ impl Path {
     /// Shared body of [`project`](Path::project) / [`project_near`]: project
     /// `p` onto segments `[lo, hi)` (point indices), returning the best
     /// `(arc length, signed offset)`.
-    fn project_range(&self, p: [f64; 2], lo: usize, hi: usize) -> (f64, f64) {
+    fn project_range(&self, p: Position, lo: usize, hi: usize) -> (f64, f64) {
         let hi = hi.min(self.pts.len().saturating_sub(1));
         let mut best = (0.0, f64::INFINITY);
         for i in lo..hi {
             let (a, b) = (self.pts[i], self.pts[i + 1]);
             let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
             let len2 = (dx * dx + dy * dy).max(1e-12);
-            let u = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
+            let u = (((p.x - a[0]) * dx + (p.y - a[1]) * dy) / len2).clamp(0.0, 1.0);
             let q = [a[0] + dx * u, a[1] + dy * u];
-            let d = dist(p, q);
+            let d = p.distance(q.into());
             if d < best.1.abs() {
                 // sign from the cross product of segment direction and offset
-                let cross = dx * (p[1] - q[1]) - dy * (p[0] - q[0]);
+                let cross = dx * (p.y - q[1]) - dy * (p.x - q[0]);
                 best = (self.s[i] + len2.sqrt() * u, d.copysign(cross));
             }
         }
@@ -187,8 +189,10 @@ pub struct MapData {
     /// Lateral offset of the road boundaries (drivable area edge).
     pub road_half_width: f64,
     /// Lateral offset of a dashed lane divider, when an opposing lane exists.
+    #[serde(default)]
     pub divider_d: Option<f64>,
     /// Stations (arc length along the centerline) of crosswalk bands.
+    #[serde(default)]
     pub crosswalk_s: Vec<f64>,
     /// Stations (arc length along the centerline) where a perpendicular
     /// street crosses it — purely descriptive, drawn by the viewer so a
@@ -198,13 +202,10 @@ pub struct MapData {
     pub cross_streets: Vec<f64>,
 }
 
-impl Default for MapData {
-    fn default() -> Self {
-        MapData {
-            // the default drivable-area bound, shared with the metric and
-            // the planners' cost so an unspecified road means the same width
-            // everywhere
-            road_half_width: crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
+impl MapData {
+    pub fn new(road_half_width: f64) -> Self {
+        Self {
+            road_half_width,
             divider_d: None,
             crosswalk_s: vec![],
             cross_streets: vec![],
@@ -228,13 +229,15 @@ pub struct Road {
     /// Desired cruise speed; also the speed limit for scoring.
     pub target_speed: f64,
     /// Half-width of the drivable road surface about the centerline, in
-    /// meters: the lateral bound both the planners' cost function
-    /// ([`crate::planning`]) and the `drivable_area` metric treat as the
-    /// edge of the road. Sourced from the scenario's
-    /// [`MapData::road_half_width`] (or, in the open world, the live street
-    /// geometry), so a planner reasons about the *actual* road it is on
-    /// rather than a fixed default — the same value scoring holds it to.
+    /// meters: the lateral bound the planners' point-sample cost function
+    /// ([`crate::planning`]) treats as the edge of the road, and the width
+    /// used to generate the physical barriers that `drivable_area` scores.
+    /// Sourced from the scenario's [`MapData::road_half_width`] (or, in the
+    /// open world, the live street geometry), so planning and scoring follow
+    /// the actual road rather than a fixed default.
     pub half_width: f64,
+    /// Physical roadside barrier segments generated from the road geometry.
+    pub barriers: Vec<Barrier>,
     /// Tick length: the simulator step, the spacing of returned control
     /// trajectories, and the sampling interval of metric inputs.
     pub dt: f64,
@@ -250,7 +253,6 @@ pub struct Scenario {
     pub centerline: Vec<[f64; 2]>,
     #[serde(default = "default_target_speed")]
     pub target_speed: f64,
-    #[serde(default)]
     pub map: MapData,
     /// The expert (human) ego trajectory logged over the same horizon, when
     /// the scenario comes from a real log (tools/export_nuplan_scenarios.py;
@@ -266,10 +268,23 @@ pub struct Scenario {
 impl Scenario {
     /// The [`Road`] of one run through this scenario at tick length `dt`.
     pub fn road(&self, dt: f64) -> Road {
+        Road::new(
+            self.centerline.clone(),
+            self.target_speed,
+            self.map.road_half_width,
+            dt,
+        )
+    }
+}
+
+impl Road {
+    pub fn new(centerline: Vec<[f64; 2]>, target_speed: f64, half_width: f64, dt: f64) -> Self {
+        let barriers = road_side_barriers(&centerline, half_width);
         Road {
-            centerline: self.centerline.clone(),
-            target_speed: self.target_speed,
-            half_width: self.map.road_half_width,
+            centerline,
+            target_speed,
+            half_width,
+            barriers,
             dt,
         }
     }
@@ -316,7 +331,7 @@ pub fn load_path(path: &std::path::Path) -> std::io::Result<Vec<Scenario>> {
 /// Deterministic in `seed` — an endless batch-scale supplement to the
 /// checked-in CommonRoad corpus.
 pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
-    let mut rng = crate::Rng(seed | 1);
+    let mut rng = Rng(seed | 1);
     (0..count)
         .map(|i| {
             let ego_speed = rng.range(5.0, 12.0);
@@ -377,7 +392,7 @@ pub fn synthetic_batch(count: usize, seed: u64) -> Vec<Scenario> {
                 actors,
                 centerline,
                 target_speed: 10.0,
-                map: MapData::default(),
+                map: MapData::new(5.5),
                 expert: vec![],
             }
         })
@@ -394,7 +409,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("nanoplan_load_path_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let json = r#"{"name": "a", "ego": {"x": 0.0, "y": 0.0, "speed": 1.0}, "centerline": [[0.0, 0.0], [10.0, 0.0]]}"#;
+        let json = r#"{"name": "a", "ego": {"x": 0.0, "y": 0.0, "speed": 1.0}, "centerline": [[0.0, 0.0], [10.0, 0.0]], "map": {"road_half_width": 5.5}}"#;
         let file = dir.join("a.json");
         std::fs::write(&file, json).unwrap();
 
@@ -464,14 +479,27 @@ mod tests {
         let json = r#"{
             "name": "minimal",
             "ego": {"x": 0.0, "y": 0.0, "speed": 8.0},
-            "centerline": [[-10.0, 0.0], [100.0, 0.0]]
+            "centerline": [[-10.0, 0.0], [100.0, 0.0]],
+            "map": {"road_half_width": 4.0}
         }"#;
         let sc: Scenario = serde_json::from_str(json).unwrap();
         assert_eq!(sc.target_speed, 10.0);
         assert!(sc.actors.is_empty());
         assert!(sc.expert.is_empty());
+        assert_eq!(sc.map.road_half_width, 4.0);
+        assert!(sc.map.crosswalk_s.is_empty());
         let back: Scenario = serde_json::from_str(&serde_json::to_string(&sc).unwrap()).unwrap();
         assert_eq!(back.ego, sc.ego);
+    }
+
+    #[test]
+    fn scenario_json_requires_road_half_width() {
+        let json = r#"{
+            "name": "missing-map",
+            "ego": {"x": 0.0, "y": 0.0, "speed": 8.0},
+            "centerline": [[-10.0, 0.0], [100.0, 0.0]]
+        }"#;
+        assert!(serde_json::from_str::<Scenario>(json).is_err());
     }
 
     #[test]
@@ -499,7 +527,7 @@ mod tests {
             actors: vec![actor],
             centerline: vec![[-10.0, 0.0], [100.0, 0.0]],
             target_speed: 10.0,
-            map: MapData::default(),
+            map: MapData::new(5.5),
             expert: vec![],
         };
         let r = simulate(&sc, crate::PlannerKind::Straight, 2.0, 0.1);
@@ -522,6 +550,7 @@ mod tests {
                 ]
             }],
             "centerline": [[-10.0, 0.0], [100.0, 0.0]],
+            "map": {"road_half_width": 5.5},
             "expert": [
                 {"t": 0.0, "x": 0.0, "y": 0.0, "yaw": 0.0, "speed": 8.0},
                 {"t": 0.5, "x": 4.0, "y": 0.0, "yaw": 0.0, "speed": 8.0}

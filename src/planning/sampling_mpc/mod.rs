@@ -34,10 +34,9 @@
 //!   (`[acceleration, curvature]`) are spread over the planning horizon and
 //!   linearly interpolated to a per-tick sequence (`control_at`) — judo's
 //!   spline interpolation, at its simplest order.
-//! - **The shared forward model.** Every rollout advances through
-//!   [`crate::simulation::step`] — the exact model the plant steps the ego
-//!   with after its private command limiter — so candidates use the same
-//!   direct acceleration/curvature command shape as the plant.
+//! - **The planner-internal forward model.** Every rollout advances through
+//!   [`crate::planning::model::step`] — pure kinematics plus state/control
+//!   vehicle limits, without world-only drag, actuator memory, or collisions.
 //! - **The shared cost function.** Each rolled-out state is priced through
 //!   [`crate::planning::cost::HardConstraints`], the same cost interface the
 //!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
@@ -66,12 +65,14 @@ pub use cem::Cem;
 pub use mppi::Mppi;
 pub use ps::PredictiveSampling;
 
+use crate::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
+use crate::planning::model::step;
+use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
-use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
+use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
 
 /// Control dimension: `[acceleration, curvature]`. judo's `nu`.
 pub(crate) const NU: usize = 2;
@@ -80,7 +81,7 @@ pub(crate) const NU: usize = 2;
 /// same look-ahead the lattice, PI²-DDP, and RRT* use
 /// ([`PLANNING_HORIZON_S`]). The knots span this whole horizon; the
 /// returned control trajectory is sampled from it.
-const HORIZON: usize = (PLANNING_HORIZON_S / 0.1) as usize;
+const HORIZON: usize = PLANNING_TICKS;
 
 /// Physical std the dimensionless judo `sigma` multiplies, per action
 /// dimension: `[acceleration, curvature]` — but of the knot *deviation* from the
@@ -121,6 +122,7 @@ const SPEED_WEIGHT: f64 = 0.5;
 /// it cancelled the base policy's speed hold, plateauing the ego below the
 /// target speed (PS, taking the single best, didn't suffer this).
 const CONTROL_WEIGHT: f64 = 0.3;
+const CENTERLINE_WEIGHT: f64 = 1.0;
 
 /// One control knot: `[acceleration, curvature]`.
 pub type Knot = [f64; NU];
@@ -292,21 +294,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// nominal controls — so the QMC exploration prices real maneuvers
     /// (an obstacle swerve) instead of open-loop drift.
     fn base_policy(path: &Path, x: &State, ctx: &Context) -> Knot {
-        // critically-damped PD lane keeper on the Frenet offset `d` and the
-        // heading error: `κ = −(K_d·d + K_h·heading_err)`. For the kinematic
-        // model this closes a second-order lateral loop with damping ratio
-        // `K_h / (2·√K_d)`; `K_d = 0.02`, `K_h = 0.3` puts it right around
-        // critical, so the base centres the lane with essentially no
-        // overshoot — important because the optimizers *add* to this policy,
-        // and MPPI's reward-weighted average in particular biases toward
-        // aggressive correction, which an under-damped base (e.g. short-
-        // lookahead pure pursuit) turns into a lateral oscillation.
-        let (s, d) = path.project([x.x, x.y]);
-        let (_, lane_yaw) = path.pose_at(s);
-        let heading_err = wrap_angle(x.yaw - lane_yaw);
-        let curvature = -(0.02 * d + 0.3 * heading_err);
-        let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
-        [accel, curvature]
+        let u = centerline_feedback(path, x, ctx.road.target_speed);
+        [u.acceleration, u.curvature]
     }
 
     /// The action commanded at rollout state `x` for knot-deviation `dev`:
@@ -325,7 +314,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// violations made finite (see the module doc). Timed under the `cost`
     /// seam, like every other search planner.
     fn state_cost(path: &Path, x: &State, u: Control, t: usize, ctx: &Context) -> f64 {
-        let (s, d) = path.project([x.x, x.y]);
+        let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
             xy: [x.x, x.y],
@@ -342,7 +331,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
         // road once every sampled rollout is briefly off it, so they can
         // settle off-road; the depth slope pulls them back in.
-        0.5 * d * d
+        CENTERLINE_WEIGHT * d * d
             + ctx.time("cost", || {
                 constraints.soft_point_cost(&sample, ctx.road.target_speed)
             })
@@ -389,12 +378,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         // already tracks the lane and holds speed. Custom seam like
         // PI²-DDP's, mirroring its warm-start-or-reinit split.
         let mut nominal = ctx.time("warm_start", || match self.nominal.take() {
-            Some(n)
-                if n.len() == num_nodes
-                    && (self.expected_next.x - ego.x).hypot(self.expected_next.y - ego.y) < 1.0 =>
-            {
-                n
-            }
+            Some(n) if n.len() == num_nodes && warm_start_matches(self.expected_next, ego) => n,
             _ => vec![[0.0; NU]; num_nodes],
         });
 

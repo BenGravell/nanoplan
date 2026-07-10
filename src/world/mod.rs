@@ -10,12 +10,17 @@ use std::collections::HashMap;
 
 use web_time::Instant;
 
-use crate::Rng;
+use crate::geometry::{
+    BIKE_FOOTPRINT, CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint, PEDESTRIAN_FOOTPRINT, TRUCK_FOOTPRINT,
+};
 use crate::planning::{
     Context, Latency, PLANNING_HORIZON_S, Planner, PlannerKind, bezier_idm::idm_accel,
 };
+use crate::rng::Rng;
 use crate::scenarios::{Path, Road};
-use crate::simulation::{Control, State, step};
+use crate::simulation::{
+    Barrier, CommandLimiter, Control, Position, State, collide_with_actors, collide_with_barriers,
+};
 
 /// Standard lane width; a street's half-width is `lanes × LANE_W_M`.
 pub const LANE_W_M: f64 = 3.5;
@@ -67,8 +72,10 @@ pub const CROSSWALK_SETBACK_M: f64 = 15.0;
 /// goal behind the ego unreachable.
 const U_TURN_PENALTY_M: f64 = 400.0;
 
-fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+fn dist(a: impl Into<Position>, b: impl Into<Position>) -> f64 {
+    let a = a.into();
+    let b = b.into();
+    a.distance(b)
 }
 
 fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
@@ -209,10 +216,11 @@ fn neighbors(seed: u64, c: [i64; 2]) -> impl Iterator<Item = [i64; 2]> {
 }
 
 /// Chunk coordinates of a world position.
-fn chunk_of(p: [f64; 2]) -> [i64; 2] {
+fn chunk_of(p: impl Into<Position>) -> [i64; 2] {
+    let p = p.into();
     [
-        (p[0] / CHUNK_M).floor() as i64,
-        (p[1] / CHUNK_M).floor() as i64,
+        (p.x / CHUNK_M).floor() as i64,
+        (p.y / CHUNK_M).floor() as i64,
     ]
 }
 
@@ -506,13 +514,14 @@ impl StreetMap {
     }
 
     /// Nearest point on the street network to `p`: (edge index, point).
-    pub fn snap(&self, p: [f64; 2]) -> (usize, [f64; 2]) {
-        let mut best = (0, p, f64::INFINITY);
+    pub fn snap(&self, p: impl Into<Position>) -> (usize, [f64; 2]) {
+        let p = p.into();
+        let mut best = (0, p.xy(), f64::INFINITY);
         for (i, &[a, b]) in self.edges.iter().enumerate() {
             let (na, nb) = (self.nodes[a], self.nodes[b]);
             let (dx, dy) = (nb[0] - na[0], nb[1] - na[1]);
             let len2 = (dx * dx + dy * dy).max(1e-9);
-            let u = (((p[0] - na[0]) * dx + (p[1] - na[1]) * dy) / len2).clamp(0.0, 1.0);
+            let u = (((p.x - na[0]) * dx + (p.y - na[1]) * dy) / len2).clamp(0.0, 1.0);
             let q = [na[0] + dx * u, na[1] + dy * u];
             let d = dist(p, q);
             if d < best.2 {
@@ -522,6 +531,145 @@ impl StreetMap {
         (best.0, best.1)
     }
 
+    fn snap_aligned(&self, p: impl Into<Position>, yaw: f64) -> usize {
+        let p = p.into().xy();
+        let heading = [yaw.cos(), yaw.sin()];
+        self.edges
+            .iter()
+            .enumerate()
+            .min_by(|(ia, _), (ib, _)| {
+                self.edge_alignment_score(*ia, p, heading)
+                    .total_cmp(&self.edge_alignment_score(*ib, p, heading))
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+
+    fn edge_alignment_score(&self, e: usize, p: [f64; 2], heading: [f64; 2]) -> f64 {
+        let [a, b] = self.edges[e];
+        let (na, nb) = (self.nodes[a], self.nodes[b]);
+        let ab = [nb[0] - na[0], nb[1] - na[1]];
+        let len2 = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-9);
+        let u = (((p[0] - na[0]) * ab[0] + (p[1] - na[1]) * ab[1]) / len2).clamp(0.0, 1.0);
+        let q = [na[0] + ab[0] * u, na[1] + ab[1] * u];
+        let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2);
+        let len = len2.sqrt();
+        let dir = [ab[0] / len, ab[1] / len];
+        let align = (dir[0] * heading[0] + dir[1] * heading[1]).abs();
+        d2 + 100.0 * (1.0 - align).powi(2)
+    }
+
+    fn edge_barriers(&self, e: usize) -> [Barrier; 2] {
+        let [a, b] = self.edges[e];
+        let (na, nb) = (self.nodes[a], self.nodes[b]);
+        let len = dist(na, nb).max(1e-9);
+        let dir = [(nb[0] - na[0]) / len, (nb[1] - na[1]) / len];
+        let left = [-dir[1], dir[0]];
+        let hw = self.half_width(e);
+        let (ta, tb) = (
+            (self.node_half_width(a) + EGO_FOOTPRINT.length).min(0.45 * len),
+            (self.node_half_width(b) + EGO_FOOTPRINT.length).min(0.45 * len),
+        );
+        let pa = [na[0] + dir[0] * ta, na[1] + dir[1] * ta];
+        let pb = [nb[0] - dir[0] * tb, nb[1] - dir[1] * tb];
+        [
+            Barrier::new(
+                [pa[0] + left[0] * hw, pa[1] + left[1] * hw],
+                [pb[0] + left[0] * hw, pb[1] + left[1] * hw],
+                left,
+            ),
+            Barrier::new(
+                [pa[0] - left[0] * hw, pa[1] - left[1] * hw],
+                [pb[0] - left[0] * hw, pb[1] - left[1] * hw],
+                [-left[0], -left[1]],
+            ),
+        ]
+    }
+
+    fn node_half_width(&self, node: usize) -> f64 {
+        self.edges
+            .iter()
+            .enumerate()
+            .filter_map(|(e, edge)| edge.contains(&node).then_some(self.half_width(e)))
+            .fold(LANE_W_M, f64::max)
+    }
+
+    fn edge_lateral(&self, e: usize, p: impl Into<Position>) -> Option<f64> {
+        let p = p.into();
+        let [a, b] = self.edges[e];
+        let (na, nb) = (self.nodes[a], self.nodes[b]);
+        let ab = [nb[0] - na[0], nb[1] - na[1]];
+        let len2 = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-9);
+        let u = ((p.x - na[0]) * ab[0] + (p.y - na[1]) * ab[1]) / len2;
+        if !(0.0..=1.0).contains(&u) {
+            return None;
+        }
+        let len = len2.sqrt();
+        let left = [-ab[1] / len, ab[0] / len];
+        let q = [na[0] + ab[0] * u, na[1] + ab[1] * u];
+        Some((p.x - q[0]) * left[0] + (p.y - q[1]) * left[1])
+    }
+
+    fn edge_lateral_unbounded(&self, e: usize, p: impl Into<Position>) -> f64 {
+        let p = p.into();
+        let [a, b] = self.edges[e];
+        let (na, nb) = (self.nodes[a], self.nodes[b]);
+        let ab = [nb[0] - na[0], nb[1] - na[1]];
+        let len = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-9).sqrt();
+        let left = [-ab[1] / len, ab[0] / len];
+        (p.x - na[0]) * left[0] + (p.y - na[1]) * left[1]
+    }
+
+    fn contains_street(&self, p: impl Into<Position>) -> bool {
+        let p = p.into();
+        self.edges.iter().enumerate().any(|(e, _)| {
+            self.edge_lateral(e, p)
+                .is_some_and(|d| d.abs() <= self.half_width(e))
+        })
+    }
+
+    /// Clamp a vehicle to the actual street edge nearest it and reflect the
+    /// outward velocity component. This is live-world-only: scenarios use
+    /// their route corridor, but world mode has the real street axes/widths.
+    fn collide_barriers(&self, prev: State, state: State) -> State {
+        let p0 = prev.position();
+        let p1 = state.position();
+        let snap_from = if !self.contains_street(p0) { p0 } else { p1 };
+        let e = self.snap_aligned(snap_from, state.yaw);
+        let hit = collide_with_barriers(prev, state, self.edge_barriers(e));
+        let hw = self.half_width(e);
+        let lat0 = self.edge_lateral_unbounded(e, p0);
+        let lat1 = self.edge_lateral_unbounded(e, p1);
+        let hit_lat = self.edge_lateral_unbounded(e, hit.position());
+        if lat0.abs() > hw && hit_lat.abs() > hw && lat1.abs() > hw {
+            self.clamp_inside_edge(e, hit)
+        } else {
+            hit
+        }
+    }
+
+    fn clamp_inside_edge(&self, e: usize, state: State) -> State {
+        let [a, b] = self.edges[e];
+        let (na, nb) = (self.nodes[a], self.nodes[b]);
+        let ab = [nb[0] - na[0], nb[1] - na[1]];
+        let len = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-9).sqrt();
+        let left = [-ab[1] / len, ab[0] / len];
+        let lateral = self.edge_lateral_unbounded(e, state.position());
+        let outward = if lateral >= 0.0 {
+            left
+        } else {
+            [-left[0], -left[1]]
+        };
+        let limit =
+            (self.half_width(e) - EGO_FOOTPRINT.support_radius(state.yaw, outward)).max(0.0);
+        let clamped = lateral.clamp(-limit, limit);
+        State {
+            x: state.x + left[0] * (clamped - lateral),
+            y: state.y + left[1] * (clamped - lateral),
+            ..state
+        }
+    }
+
     /// Shortest route from `from` (facing `yaw`) to `to`, as a lane
     /// centerline polyline with rounded corners — ready to be a [`Road`]
     /// centerline. Both endpoints are snapped to the network; routes that
@@ -529,7 +677,12 @@ impl StreetMap {
     /// the ego prefers going around the block. Multi-lane legs keep right,
     /// except approaching a left turn, where the route moves into the
     /// innermost (turning) lane.
-    pub fn route(&self, from: [f64; 2], yaw: f64, to: [f64; 2]) -> Vec<[f64; 2]> {
+    pub fn route(
+        &self,
+        from: impl Into<Position>,
+        yaw: f64,
+        to: impl Into<Position>,
+    ) -> Vec<[f64; 2]> {
         let (se, sp) = self.snap(from);
         let (ge, mut gp) = self.snap(to);
         let heading = [yaw.cos(), yaw.sin()];
@@ -633,14 +786,18 @@ pub enum ActorKind {
 }
 
 impl ActorKind {
+    pub fn footprint(self) -> Footprint {
+        match self {
+            ActorKind::Car => CAR_FOOTPRINT,
+            ActorKind::Truck => TRUCK_FOOTPRINT,
+            ActorKind::Bike => BIKE_FOOTPRINT,
+            ActorKind::Pedestrian => PEDESTRIAN_FOOTPRINT,
+        }
+    }
+
     /// Footprint (length, width) in meters.
     pub fn size_m(self) -> [f64; 2] {
-        match self {
-            ActorKind::Car => [4.6, 1.9],
-            ActorKind::Truck => [9.5, 2.5],
-            ActorKind::Bike => [1.8, 0.6],
-            ActorKind::Pedestrian => [0.6, 0.6],
-        }
+        self.footprint().size_m()
     }
 
     fn speed_range(self) -> (f64, f64) {
@@ -768,7 +925,7 @@ impl SmartActor {
     /// my bumper regardless of lane (the intersection/crossing guard).
     fn lead(&self, others: &[(State, ActorKind)]) -> Option<(f64, f64)> {
         let me = self.state;
-        let follow_gap = self.kind.size_m()[0] / 2.0 + 2.5;
+        let self_half_len = self.kind.footprint().length / 2.0;
         // bumper guard reach scales with speed: about a stride for a
         // walker, a car length and a half at driving speed
         let reach = 4.0 + 1.2 * me.speed;
@@ -782,7 +939,8 @@ impl SmartActor {
                 if self.kind == ActorKind::Pedestrian && okind != ActorKind::Pedestrian {
                     return None;
                 }
-                let (so, d) = self.path.project_near([o.x, o.y], self.s + 30.0, 55.0);
+                let follow_gap = self_half_len + okind.footprint().length / 2.0 + 2.5;
+                let (so, d) = self.path.project_near(o.position(), self.s + 30.0, 55.0);
                 let along = d.abs() < 2.5 && so > self.s + 0.5 && so - self.s < 80.0;
                 let mut gap = along.then_some(so - self.s - follow_gap);
                 // bumper guard: a narrow corridor straight ahead in my own
@@ -817,7 +975,7 @@ impl SmartActor {
     /// rebuild the corridor path and re-find our place on it.
     fn extend(&mut self, seed: u64, rng: &mut Rng) {
         // keep the street we're on: find the walk segment nearest to us
-        let pos = [self.state.x, self.state.y];
+        let pos = self.state.position();
         let at = (0..self.walk.len() - 1)
             .min_by(|&i, &j| {
                 let m = |k: usize| {
@@ -900,6 +1058,8 @@ pub struct LiveWorld {
     pub target_speed: f64,
     pub dt: f64,
     route_path: Option<Path>,
+    route_s: f64,
+    ego_limiter: CommandLimiter,
     planner_kind: PlannerKind,
     planner: Box<dyn Planner>,
     rng: Rng,
@@ -933,7 +1093,7 @@ impl LiveWorld {
         };
         let mut world = LiveWorld {
             seed,
-            map: StreetMap::window(seed, chunk_of([ego.x, ego.y])),
+            map: StreetMap::window(seed, chunk_of(ego.position())),
             ego,
             actors: vec![],
             goal: None,
@@ -944,6 +1104,8 @@ impl LiveWorld {
             target_speed: 8.0,
             dt,
             route_path: None,
+            route_s: 0.0,
+            ego_limiter: CommandLimiter::new(),
             planner_kind: planner,
             planner: planner.build(),
             rng,
@@ -968,13 +1130,13 @@ impl LiveWorld {
                     continue;
                 }
                 for cand in spawn_chunk(self.seed, chunk) {
-                    let p = [cand.state.x, cand.state.y];
+                    let p = cand.state.position();
                     let clear = self.actors.len() < self.max_actors
-                        && dist(p, [self.ego.x, self.ego.y]) > 25.0
+                        && dist(p, self.ego.position()) > 25.0
                         && self
                             .actors
                             .iter()
-                            .all(|o| dist(p, [o.state.x, o.state.y]) > 10.0);
+                            .all(|o| dist(p, o.state.position()) > 10.0);
                     if clear {
                         self.actors.push(cand);
                     }
@@ -987,59 +1149,48 @@ impl LiveWorld {
     /// and start driving there. A click essentially on top of the ego is
     /// ignored.
     pub fn set_goal(&mut self, p: [f64; 2]) {
-        let line = self.map.route([self.ego.x, self.ego.y], self.ego.yaw, p);
+        let line = self.map.route(self.ego.position(), self.ego.yaw, p);
         let path = Path::new(&line);
         if path.length() < 5.0 {
             return;
         }
         self.goal = Some(*line.last().unwrap());
-        // Give the planner the road's actual half-width — the narrowest
-        // street the route runs along — instead of the fixed 5.5 m default.
-        // Most local streets are one lane (`LANE_W_M` = 3.5 m half-width),
-        // well inside that default, so a route that reported 5.5 m let the
-        // planner treat two-plus metres of sidewalk as drivable and plan
-        // off the road surface. Taking the min keeps it on even the tightest
-        // section. (A single scalar can't capture the route's rightmost-lane
-        // offset; the symmetric `Road` model is a pre-existing simplification.)
-        let half_width = line
-            .iter()
-            .map(|&q| self.map.half_width(self.map.snap(q).0))
-            .fold(f64::INFINITY, f64::min);
-        self.road = Some(Road {
-            centerline: line,
-            target_speed: self.target_speed,
-            half_width,
-            dt: self.dt,
-        });
+        // The route is already a lane/corridor centerline (including pockets
+        // and slip lanes), so the scalar Road bound is the ego-center
+        // clearance inside that lane, not the painted lane edge.
+        let half_width = (0.5 * LANE_W_M - 0.5 * EGO_FOOTPRINT.width).max(0.25);
+        self.road = Some(Road::new(line, self.target_speed, half_width, self.dt));
+        self.route_s = path.project(self.ego.position()).0;
         self.route_path = Some(path);
     }
 
     /// Drop the goal; the ego brakes to a stop and waits for the next one.
     pub fn clear_goal(&mut self) {
         (self.goal, self.road, self.route_path) = (None, None, None);
+        self.route_s = 0.0;
         self.plan.clear();
     }
 
     /// Route distance left to the goal, if one is set.
     pub fn remaining_m(&self) -> Option<f64> {
         let path = self.route_path.as_ref()?;
-        Some(path.length() - path.project([self.ego.x, self.ego.y]).0)
+        Some(path.length() - self.route_s)
     }
 
     fn planner_actor_states(&self, path: &Path) -> Vec<State> {
-        let (ego_s, _) = path.project([self.ego.x, self.ego.y]);
+        let ego_s = self.route_s;
         let ego_reach = self.ego.speed.max(self.target_speed).max(1.0) * PLANNING_HORIZON_S
             + PLANNER_ACTOR_ROUTE_MARGIN_M;
         self.actors
             .iter()
             .filter_map(|actor| {
                 let s = actor.state;
-                let ego_gap = dist([self.ego.x, self.ego.y], [s.x, s.y]);
+                let ego_gap = dist(self.ego.position(), s.position());
                 if ego_gap <= PLANNER_ACTOR_ALWAYS_KEEP_M {
                     return Some(s);
                 }
 
-                let (actor_s, actor_d) = path.project([s.x, s.y]);
+                let (actor_s, actor_d) = path.project(s.position());
                 let actor_reach =
                     s.speed.max(0.0) * PLANNING_HORIZON_S + PLANNER_ACTOR_ROUTE_MARGIN_M;
                 let in_station_window = actor_s >= ego_s - PLANNER_ACTOR_BEHIND_M - actor_reach
@@ -1048,6 +1199,20 @@ impl LiveWorld {
                 (in_station_window && in_route_corridor).then_some(s)
             })
             .collect()
+    }
+
+    fn collide_ego(&self, prev: State, state: State) -> State {
+        let state = self.map.collide_barriers(prev, state);
+        if self.actors.is_empty() {
+            return state;
+        }
+        let state = collide_with_actors(
+            state,
+            self.actors
+                .iter()
+                .map(|actor| (actor.state, actor.kind.footprint())),
+        );
+        self.map.collide_barriers(state, state)
     }
 
     /// Swap the planner (fresh instance; warm starts don't carry across
@@ -1083,7 +1248,7 @@ impl LiveWorld {
                 || self.ego.y < cy as f64 * CHUNK_M - RECENTER_HYST_M
                 || self.ego.y > (cy + 1) as f64 * CHUNK_M + RECENTER_HYST_M;
             if outside {
-                self.map = StreetMap::window(self.seed, chunk_of([self.ego.x, self.ego.y]));
+                self.map = StreetMap::window(self.seed, chunk_of(self.ego.position()));
                 self.populate();
             }
         });
@@ -1133,7 +1298,11 @@ impl LiveWorld {
                 acceleration: accel,
                 curvature: 0.0,
             };
-            self.ego = step(self.ego, u, self.dt);
+            let mut next = self.ego_limiter.step(self.ego, u, self.dt);
+            if self.ego.speed != 0.0 && next.speed.signum() != self.ego.speed.signum() {
+                next.speed = 0.0;
+            }
+            self.ego = self.collide_ego(self.ego, next);
             self.plan.clear();
             self.last_planner_actors = 0;
             return;
@@ -1142,46 +1311,62 @@ impl LiveWorld {
         // taper the target speed so the ego arrives stopped instead of
         // sailing through the goal at cruise speed
         let path = self.route_path.as_ref().unwrap();
-        let remaining = maybe_time(latency, "world_goal", || {
-            path.length() - path.project([self.ego.x, self.ego.y]).0
-        });
+        self.route_s = projected_route_s(path, self.ego, self.route_s, self.dt);
+        let remaining = maybe_time(latency, "world_goal", || path.length() - self.route_s);
         let actor_states = maybe_time(latency, "world_actor_cull", || {
             self.planner_actor_states(path)
         });
         self.last_planner_actors = actor_states.len();
-        let road = self.road.as_mut().unwrap();
-        road.target_speed = self
-            .target_speed
-            .min((2.0 * GOAL_DECEL * remaining).max(0.0).sqrt());
-        let ctx = Context {
-            road,
-            actors: &actor_states,
-            horizon: PLAN_PREVIEW_TICKS,
-            latency,
-            diagnostics: None,
+        let controls = {
+            let road = self.road.as_mut().unwrap();
+            road.target_speed = self
+                .target_speed
+                .min((2.0 * GOAL_DECEL * remaining).max(0.0).sqrt());
+            let ctx = Context {
+                road,
+                actors: &actor_states,
+                horizon: PLAN_PREVIEW_TICKS,
+                latency,
+                diagnostics: None,
+            };
+            let t0 = Instant::now();
+            let controls = match latency {
+                Some(latency) => latency.time("total", || self.planner.plan(self.ego, &ctx)),
+                None => self.planner.plan(self.ego, &ctx),
+            };
+            self.last_plan_ms = t0.elapsed().as_secs_f64() * 1e3;
+            controls
         };
-        let t0 = Instant::now();
-        let controls = match latency {
-            Some(latency) => latency.time("total", || self.planner.plan(self.ego, &ctx)),
-            None => self.planner.plan(self.ego, &ctx),
-        };
-        self.last_plan_ms = t0.elapsed().as_secs_f64() * 1e3;
         let mut s = self.ego;
+        let mut preview_limiter = self.ego_limiter;
         self.plan = controls
             .iter()
             .take(PLAN_PREVIEW_TICKS)
             .map(|&u| {
-                s = step(s, u, self.dt);
+                let next = preview_limiter.step(s, u, self.dt);
+                s = self.collide_ego(s, next);
                 s
             })
             .collect();
         let u = controls.first().copied().unwrap_or_default();
-        self.ego = step(self.ego, u, self.dt);
-        if remaining < 4.0 && self.ego.speed < 0.5 {
+        let next = self.ego_limiter.step(self.ego, u, self.dt);
+        self.ego = self.collide_ego(self.ego, next);
+        let route_s = projected_route_s(path, self.ego, self.route_s, self.dt);
+        self.route_s = route_s;
+        if path.length() - route_s < 4.0 && self.ego.speed < 0.5 {
             (self.goal, self.road, self.route_path) = (None, None, None);
+            self.route_s = 0.0;
             self.plan.clear();
         }
     }
+}
+
+fn projected_route_s(path: &Path, ego: State, prev_s: f64, dt: f64) -> f64 {
+    let hint = prev_s + ego.speed.max(0.0) * dt;
+    path.project_near(ego.position(), hint, 20.0)
+        .0
+        .max(prev_s)
+        .min(path.length())
 }
 
 #[cfg(test)]
@@ -1203,6 +1388,35 @@ mod tests {
             target_speed: state.speed,
             side: 1.0,
         }
+    }
+
+    fn edge_lateral(map: &StreetMap, e: usize, p: impl Into<Position>) -> f64 {
+        let p = p.into();
+        let [a, b] = map.edges[e];
+        let (na, nb) = (map.nodes[a], map.nodes[b]);
+        let len = dist(na, nb).max(1e-9);
+        let dir = [(nb[0] - na[0]) / len, (nb[1] - na[1]) / len];
+        let left = [-dir[1], dir[0]];
+        let q = mid(na, nb);
+        (p.x - q[0]) * left[0] + (p.y - q[1]) * left[1]
+    }
+
+    fn put_ego_outside_street(w: &mut LiveWorld) -> usize {
+        let e = w.map.snap(w.ego.position()).0;
+        let [a, b] = w.map.edges[e];
+        let (na, nb) = (w.map.nodes[a], w.map.nodes[b]);
+        let len = dist(na, nb).max(1e-9);
+        let dir = [(nb[0] - na[0]) / len, (nb[1] - na[1]) / len];
+        let left = [-dir[1], dir[0]];
+        let q = mid(na, nb);
+        let d = w.map.half_width(e) + 3.0;
+        w.ego = State {
+            x: q[0] + left[0] * d,
+            y: q[1] + left[1] * d,
+            yaw: left[1].atan2(left[0]),
+            speed: 8.0,
+        };
+        e
     }
 
     #[test]
@@ -1298,7 +1512,7 @@ mod tests {
             actor.step(seed, &[(blocker, ActorKind::Pedestrian)], 0.1, &mut rng);
         }
         assert!(actor.state.speed < 0.3, "speed {}", actor.state.speed);
-        let gap = dist([actor.state.x, actor.state.y], [blocker.x, blocker.y]);
+        let gap = dist(actor.state.position(), blocker.position());
         assert!(gap > 2.0, "gap {gap}");
     }
 
@@ -1350,7 +1564,7 @@ mod tests {
         ]);
         let near = {
             let path = w.route_path.as_ref().unwrap();
-            let (s0, _) = path.project([w.ego.x, w.ego.y]);
+            let (s0, _) = path.project(w.ego.position());
             let xy = path.frenet_to_xy(s0 + 20.0, 0.0);
             State {
                 x: xy[0],
@@ -1379,7 +1593,7 @@ mod tests {
         ];
         w.set_goal(goal);
         assert!(w.road.is_some());
-        for _ in 0..600 {
+        for _ in 0..1000 {
             w.tick();
             if w.goal.is_none() {
                 break;
@@ -1389,9 +1603,9 @@ mod tests {
         assert!(w.ego.speed < 0.5, "still moving at {}", w.ego.speed);
         let snapped = w.map.snap(goal).1;
         assert!(
-            dist([w.ego.x, w.ego.y], snapped) < 12.0,
+            dist(w.ego.position(), snapped) < 12.0,
             "stopped {} m from the goal",
-            dist([w.ego.x, w.ego.y], snapped)
+            dist(w.ego.position(), snapped)
         );
     }
 
@@ -1537,7 +1751,16 @@ mod tests {
         for _ in 0..4 {
             w.set_goal([w.ego.x + 300.0, w.ego.y + 60.0]);
             for _ in 0..1200 {
+                let prev_ego = w.ego;
                 w.tick();
+                let ego_jump = dist(prev_ego.position(), w.ego.position());
+                assert!(ego_jump < 25.0, "ego teleported {ego_jump} m");
+                let mut prev = prev_ego;
+                for s in &w.plan {
+                    let jump = dist(prev.position(), s.position());
+                    assert!(jump < 25.0, "plan teleported {jump} m");
+                    prev = *s;
+                }
                 if w.map.center != center {
                     (recenters, center) = (recenters + 1, w.map.center);
                 }
@@ -1564,5 +1787,54 @@ mod tests {
         }
         assert_eq!(w.ego.speed, 0.0);
         assert!(w.plan.is_empty());
+    }
+
+    #[test]
+    fn live_world_barriers_clamp_to_actual_street_edges() {
+        for goal in [false, true] {
+            let mut w = LiveWorld::new(2, PlannerKind::Straight, 0, 0.1);
+            let e = put_ego_outside_street(&mut w);
+            if goal {
+                let goal_node = w.map.nodes[w.map.edges[e][1]];
+                w.set_goal(goal_node);
+                assert!(w.road.is_some());
+            }
+
+            w.tick();
+
+            let lateral = edge_lateral(&w.map, e, w.ego.position()).abs();
+            assert!(
+                lateral <= w.map.half_width(e) + 1e-9,
+                "ego still outside street edge: {lateral} > {}",
+                w.map.half_width(e)
+            );
+            assert!(w.ego.speed < 2.0, "outward hit did not lose speed");
+        }
+    }
+
+    #[test]
+    fn live_world_barriers_block_both_directions() {
+        let w = LiveWorld::new(2, PlannerKind::Straight, 0, 0.1);
+        let e = w.map.snap(w.ego.position()).0;
+        let [a, b] = w.map.edges[e];
+        let (na, nb) = (w.map.nodes[a], w.map.nodes[b]);
+        let len = dist(na, nb).max(1e-9);
+        let dir = [(nb[0] - na[0]) / len, (nb[1] - na[1]) / len];
+        let left = [-dir[1], dir[0]];
+        let q = mid(na, nb);
+        let prev = State {
+            x: q[0] + left[0] * (w.map.half_width(e) + 0.2),
+            y: q[1] + left[1] * (w.map.half_width(e) + 0.2),
+            yaw: (-left[1]).atan2(-left[0]),
+            speed: 8.0,
+        };
+        let mut limiter = CommandLimiter::new();
+        let next = limiter.step(prev, Control::default(), w.dt);
+        assert!(w.map.contains_street(next.position()));
+
+        let hit = w.map.collide_barriers(prev, next);
+        let lateral = edge_lateral(&w.map, e, hit.position()).abs();
+        assert!(lateral >= w.map.half_width(e) - 1e-9);
+        assert!(hit.speed < 2.0, "inward hit did not lose speed");
     }
 }

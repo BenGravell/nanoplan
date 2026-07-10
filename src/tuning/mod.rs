@@ -45,11 +45,11 @@
 //!
 //! Everything is deterministic: same scenarios in, same weights out.
 
+use crate::math::wrap_angle;
 use crate::planning::PLANNING_HORIZON_S;
 use crate::planning::cost::{self, FEATURE_NAMES, N_FEATURES, Sample, WEIGHTS};
 use crate::scenarios::{Path, Scenario, replay};
 use crate::simulation::State;
-use crate::wrap_angle;
 
 /// Simulator tick length the trajectories are featurized at.
 const DT: f64 = 0.1;
@@ -337,7 +337,7 @@ fn scenario_candidates(sc: &Scenario) -> Option<Vec<[f64; N_FEATURES]>> {
         &actors,
     )?;
 
-    let (s0, d0) = path.project([sc.ego.x, sc.ego.y]);
+    let (s0, d0) = path.project(sc.ego.position());
     let mut cands = vec![expert];
     for m in maneuver_grid(sc.target_speed) {
         let states = maneuver_states(&path, s0, d0, sc.ego.speed, &m);
@@ -371,13 +371,13 @@ fn trajectory_features(
     let mut total = [0.0; N_FEATURES];
     let constraints = cost::HardConstraints::new(road_half_width, actors, Some(path));
     for (i, st) in states.iter().enumerate() {
-        let p = [st.x, st.y];
+        let p = st.position();
         let (s, lateral) = path.project(p);
         let curvature = if i == 0 || i + 1 == states.len() {
             0.0
         } else {
             let (a, b) = (states[i - 1], states[i + 1]);
-            cost::curvature_of([a.x, a.y], p, [b.x, b.y])
+            cost::curvature_of(a.position().xy(), p.xy(), b.position().xy())
         };
         let accel = if i + 1 < states.len() {
             (states[i + 1].speed - st.speed) / DT
@@ -385,7 +385,7 @@ fn trajectory_features(
             (st.speed - states[i - 1].speed) / DT
         };
         let sample = Sample {
-            xy: p,
+            xy: p.xy(),
             lateral,
             heading_err: wrap_angle(st.yaw - path.pose_at(s).1),
             speed: st.speed,
@@ -481,6 +481,7 @@ mod tests {
     /// a known generating cost.
     fn scenario_with_expert(gt: &[f64; N_FEATURES], d0: f64, speed0: f64) -> Scenario {
         let centerline: Vec<[f64; 2]> = vec![[-20.0, 0.0], [500.0, 0.0]];
+        let road_half_width = 5.5;
         let path = Path::new(&centerline);
         let ego = State {
             y: d0,
@@ -490,13 +491,7 @@ mod tests {
         let mut best: Option<(f64, Vec<State>)> = None;
         for m in maneuver_grid(10.0) {
             let states = maneuver_states(&path, ego.x + 20.0, d0, speed0, &m);
-            if let Some(f) = trajectory_features(
-                &states,
-                &path,
-                10.0,
-                crate::metrics::drivable_area::ROAD_HALF_WIDTH_M,
-                &[],
-            ) {
+            if let Some(f) = trajectory_features(&states, &path, 10.0, road_half_width, &[]) {
                 let c = dot(gt, &f);
                 if best.as_ref().is_none_or(|(b, _)| c < *b) {
                     best = Some((c, states));
@@ -519,7 +514,7 @@ mod tests {
             actors: vec![],
             centerline,
             target_speed: 10.0,
-            map: MapData::default(),
+            map: MapData::new(road_half_width),
             expert,
         }
     }
@@ -605,7 +600,7 @@ mod tests {
             }],
             centerline: vec![[-20.0, 0.0], [500.0, 0.0]],
             target_speed: 10.0,
-            map: MapData::default(),
+            map: MapData::new(5.5),
             expert,
         };
         let r = tune(&[sc], &Options::default());

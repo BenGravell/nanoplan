@@ -61,15 +61,16 @@ pub mod rrt;
 pub use ilqr::IlqrPlanner;
 pub use rrt::RrtPlanner;
 
+use crate::planning::model::step;
 use crate::planning::search_tree::repeat_last_controls;
-use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
+use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::scenarios::Path;
-use crate::simulation::{Control, State, step};
+use crate::simulation::{Control, State};
 
 /// Planning-horizon length in ticks — treetop's `TRAJ_LENGTH_OPT`, here
 /// 10 s at the simulator's 0.1 s tick rate, the same look-ahead every other
 /// receding-horizon planner uses.
-pub(crate) const TICKS: usize = (PLANNING_HORIZON_S / 0.1) as usize;
+pub(crate) const TICKS: usize = PLANNING_TICKS;
 
 /// Ticks per steering segment (one tree edge) — treetop's
 /// `TRAJ_LENGTH_STEER`, scaled to the same 1 s of driving (treetop: 5 ticks
@@ -82,17 +83,18 @@ pub(crate) const STEER_TICKS: usize = 10;
 /// the number of tree layers past the root.
 pub(crate) const SEGMENTS: usize = TICKS / STEER_TICKS;
 
-/// Where the vehicle ends up coasting (zero action) for `t` seconds —
-/// treetop's `rolloutZeroAction`, in closed form. The tree attaches each
-/// sample to the previous layer's node whose zero-action point is nearest,
-/// a cheap proxy for "the parent that needs the least steering effort to
-/// get there."
+/// Where the vehicle ends up coasting (zero action) for `t` seconds. The
+/// tree attaches each sample to the previous layer's node whose zero-action
+/// point is nearest, a cheap proxy for "the parent that needs the least
+/// steering effort to get there."
 pub(crate) fn zero_action_point(x: State, t: f64) -> State {
-    State {
-        x: x.x + x.speed * x.yaw.cos() * t,
-        y: x.y + x.speed * x.yaw.sin() * t,
-        ..x
+    let steps = (t / PLANNING_DT_S).ceil().max(1.0) as usize;
+    let dt = t / steps as f64;
+    let mut x = x;
+    for _ in 0..steps {
+        x = step(x, Control::default(), dt);
     }
+    x
 }
 
 /// The goal state the tree grows toward and the iLQR terminal cost pulls
@@ -102,7 +104,7 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
 /// treetop→nanoplan bridge — treetop's fixed user-placed goal pose becomes
 /// a rolling lane target recomputed every replan.
 pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
-    let (s0, _) = path.project([ego.x, ego.y]);
+    let (s0, _) = path.project(ego.position());
     let horizon_s = TICKS as f64 * ctx.road.dt;
     let preview = 0.5 * (ego.speed + ctx.road.target_speed) * horizon_s;
     let s_goal = (s0 + preview).min(path.length());
@@ -121,7 +123,7 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
 /// is not very principled)".
 pub(crate) fn state_distance(a: &State, b: &State) -> f64 {
     (a.x - b.x).hypot(a.y - b.y)
-        + crate::wrap_angle(a.yaw - b.yaw).abs()
+        + crate::math::wrap_angle(a.yaw - b.yaw).abs()
         + (a.speed - b.speed).abs()
 }
 
@@ -198,9 +200,7 @@ pub(crate) fn take_warm(
     ego: State,
 ) -> Option<Vec<Control>> {
     match prev.take() {
-        Some(a) if (expected_next.x - ego.x).hypot(expected_next.y - ego.y) < 1.0 => {
-            Some(shift_actions(a))
-        }
+        Some(a) if warm_start_matches(expected_next, ego) => Some(shift_actions(a)),
         _ => None,
     }
 }
@@ -321,7 +321,9 @@ mod tests {
             ..Default::default()
         };
         let z = zero_action_point(x, 2.0);
-        assert_eq!(z, State { x: 11.0, ..x });
+        assert_eq!(z.x, 11.0);
+        assert_eq!(z.speed, x.speed);
+        assert_eq!((z.y, z.yaw), (x.y, x.yaw));
     }
 
     #[test]

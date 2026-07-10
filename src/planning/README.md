@@ -63,7 +63,7 @@ Everything a planner needs besides its own state and the ego pose. Notably:
   `ctx.road.centerline`, `ctx.road.target_speed`, and `ctx.road.dt`.
 - **`actors` is current-tick only.** Planners see no future information
   about other vehicles — if they want a prediction, they compute one
-  themselves. They all go through the shared `metrics::predict`: an actor
+  themselves. They all go through the shared `prediction::predict`: an actor
   driving along the route is rolled forward following the lane's curve and
   eased back toward its center (constant-speed, lane-associated kinematics),
   while oncoming or crossing traffic falls back to constant-velocity
@@ -195,7 +195,7 @@ price candidates with the same scalar cost;
 `bezier_idm` and `straight` don't (see their own sections below for why
 they're out of scope here). Before this module existed, each planner priced
 a candidate with its own inline formula, hand-tuned independently, with its
-own actor-prediction code, its own collision radius, and its own idea of
+own actor-prediction code, its own point-collision proxy, and its own idea of
 "off the road" — several different, undocumented definitions of "good."
 
 `cost.rs` factors the metrics-motivated soft-cost formula into one shared
@@ -206,13 +206,13 @@ diagnostics" above). It's deliberately grounded in the same quantities
 than inventing new ones:
 
 - **Hard collision and off-road rejection** — `constraints.rs` returns
-  `f64::INFINITY` if a sampled point is closer than `metrics::collisions`' own threshold
-  (`2 × CAR_RADIUS_M`) to any actor's predicted position, or further than
+  `f64::INFINITY` if a sampled point is closer than the shared car-width
+  point proxy to any actor's predicted position, or further than
   `road_half_width` from the centerline. That bound is the road's *actual*
-  drivable half-width (`Road::half_width`, the same value `drivable_area`
-  scores against), passed in per plan rather than read from a fixed
-  constant — so on a narrow street the reject fires at the true edge, not at
-  the 5.5 m default. A planner should reject these outright, not merely
+  drivable half-width (`Road::half_width`, the same value used to generate
+  the barrier geometry that `drivable_area` scores), passed in per plan
+  rather than read from a fixed constant — so on a narrow street the reject
+  fires at the true edge. A planner should reject these outright, not merely
   disfavor them.
 - **Everything else is `WEIGHTS · features`** — the soft terms below are a
   feature vector (`features()`, each term already squared/hinged) dotted
@@ -223,18 +223,18 @@ than inventing new ones:
   printing a replacement `WEIGHTS` line to paste back here. The hard
   rejection above is a fixed rule of `features()` (it returns `None`), never
   a learned weight.
-- **Actor prediction** goes through `metrics::predict` — the lane-aware
+- **Actor prediction** goes through `prediction::predict` — the lane-aware
   kinematic model — instead of each planner reimplementing prediction
   independently. An actor travelling along the route is rolled forward along
   the lane's curve and eased back toward its center, so on a bend it is
   priced where it will actually be rather than off on the straight tangent;
-  oncoming and crossing traffic fall back to `metrics::project`, the
+  oncoming and crossing traffic fall back to `prediction::project`, the
   constant-velocity model `metrics::ttc` scores against. The planner
   predicting more accurately than the deliberately-simple TTC metric is the
   point — the ground-truth `metrics::collisions` score over the real traces
   is the bar a better prediction has to clear.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
-  the hard collision radius), road-edge proximity, speed tracked against
+  the hard point-collision proxy), road-edge proximity, speed tracked against
   `speed_limit::MAX_OVERSPEED_MS`, comfort (longitudinal and lateral
   accel) tracked against `comfort`'s own empirical bounds, and lane keeping —
   a hinge on straddling the lane line into the next lane, aligned with the
@@ -731,7 +731,7 @@ function](#the-shared-cost-function).** `feasible` additionally enforces its
 own tighter margins before ever calling it — `drivable_bound` (the road's
 own `half_width` less `DRIVABLE_MARGIN_M` = 0.5 m, so it holds just inside
 the shared function's road-edge reject on whatever road is being driven) and
-`COLLISION_MARGIN_M` (3.0 m, ahead of the shared 2.5 m collision diameter)
+`COLLISION_MARGIN_M` (3.0 m, ahead of the shared car-width point proxy)
 — headroom for the fact that a curve is only checked at `STEER_SAMPLES`
 discrete points, so the true closest approach between samples can dip a
 little further than what gets tested. `edge_cost` keeps its own arc-length
@@ -818,7 +818,7 @@ tests.
 Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100`
 ticks (10 s, the common `PLANNING_HORIZON_S`), split into `SEGMENTS = 10`
 steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that
-advances every candidate through `simulation::step`.
+advances every candidate through `planning::model::step`.
 
 ### RRT (treetop tree)
 
@@ -909,7 +909,7 @@ closed-form dynamics Jacobian; nanoplan deliberately provides neither (see
 differentiates numerically: central differences over the packed
 `(x, y, yaw, v, accel, curvature)` vector for the cost gradient and
 (symmetrized) Hessian — 73 probes of the black-box scalar per timestep —
-and central differences on `simulation::step` for the dynamics Jacobians
+and central differences on `planning::model::step` for the dynamics Jacobians
 `A`, `B` (pinned against the known closed form by
 `fd_dynamics_jacobian_matches_the_analytic_one`). FD Hessians of a
 piecewise cost are noisy near hinge corners, so where treetop asserts

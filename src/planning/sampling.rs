@@ -4,18 +4,17 @@
 //! optimizers ([`super::sampling_mpc`]) draw their control-knot noise from
 //! it. Both once carried their own copy of the radical-inverse code; this
 //! module is the single owner, so "the whole codebase samples from one QMC
-//! sequence" is checked by the compiler rather than kept in sync by hand.
+//! interface" is checked by the compiler rather than kept in sync by hand.
 //!
 //! ## Parity as a compile-time interface
 //!
-//! The construction lives behind one trait, [`QuasiMonteCarlo`], with
-//! exactly one implementor, [`Halton`]. The shared entry points
+//! The construction lives behind one trait, [`QuasiMonteCarlo`], implemented
+//! by [`VanDerCorput`] and [`Halton`]. The shared entry points
 //! ([`road_frame_samples`] for RRT*'s Frenet targets, [`qmc_normals`] for
 //! the optimizers' Gaussian knot noise) are generic over
 //! `Q: QuasiMonteCarlo`, so the QMC interface appears literally in both
-//! call sites. A planner that wanted a *different* sequence would have to
-//! name a different type — a compile error at the call, not a silent drift
-//! between two hand-maintained radical-inverse loops. The
+//! call sites. A planner that wants a different sequence must name its
+//! sequence type at the call, not copy another radical-inverse loop. The
 //! `rrt_targets_match_shared_sampler` test in RRT* pins the numeric parity
 //! on top of the structural one.
 //!
@@ -62,17 +61,29 @@ pub(crate) fn van_der_corput(mut index: usize, base: usize) -> f64 {
 }
 
 /// The one deterministic low-discrepancy construction shared across the
-/// codebase — the compile-time seam that keeps every sampling planner on
-/// the same QMC sequence (see the module doc). Its single method is an
-/// associated function, not a `&self` method: a Halton coordinate is a pure
+/// codebase — the compile-time seam that keeps every sampling planner on a
+/// named QMC sequence (see the module doc). Its single method is an
+/// associated function, not a `&self` method: a QMC coordinate is a pure
 /// function of `(index, dim)` with no state to carry.
 pub(crate) trait QuasiMonteCarlo {
-    /// Coordinate `dim` (0-indexed) of low-discrepancy point `index`: the
-    /// radical inverse of `index` in the `dim`-th prime base. `index`
-    /// starts at 1 (index 0 sits on the origin in every base). Panics if
-    /// `dim` exceeds the available prime bases rather than aliasing one.
+    /// Coordinate `dim` (0-indexed) of low-discrepancy point `index`.
+    /// `index` starts at 1 (index 0 sits on the origin in every supported
+    /// sequence). Panics if `dim` exceeds the sequence's supported
+    /// dimensionality rather than aliasing one.
     fn coordinate(index: usize, dim: usize) -> f64;
 }
+
+/// One-dimensional van der Corput as a QMC sequence.
+pub(crate) struct VanDerCorput<const BASE: usize>;
+
+impl<const BASE: usize> QuasiMonteCarlo for VanDerCorput<BASE> {
+    fn coordinate(index: usize, dim: usize) -> f64 {
+        assert_eq!(dim, 0, "van der Corput is one-dimensional");
+        van_der_corput(index, BASE)
+    }
+}
+
+const _: fn(usize, usize) -> f64 = <VanDerCorput<2> as QuasiMonteCarlo>::coordinate;
 
 /// The Halton sequence: a van der Corput sequence per dimension in
 /// successive prime bases. Zero-sized — there is nothing to construct, the
@@ -235,6 +246,7 @@ mod tests {
         assert_eq!(van_der_corput(1, 2), 0.5);
         assert_eq!(van_der_corput(2, 2), 0.25);
         assert_eq!(van_der_corput(3, 2), 0.75);
+        assert_eq!(VanDerCorput::<2>::coordinate(3, 0), 0.75);
     }
 
     #[test]

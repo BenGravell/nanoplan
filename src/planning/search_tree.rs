@@ -9,10 +9,14 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::math::wrap_angle;
+use crate::planning::bezier_idm::{idm_accel, lead_vehicle};
+use crate::planning::model::step;
+use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::scenarios::Path;
-use crate::simulation::{Control, MIN_LON_ACCEL, State, step};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
+use crate::vehicle::MIN_LON_ACCEL;
 
 pub(crate) struct RoadFrame {
     pub path: Path,
@@ -25,7 +29,7 @@ pub(crate) struct RoadFrame {
 impl RoadFrame {
     pub(crate) fn new(ego: State, ctx: &Context) -> Self {
         let path = Path::new(&ctx.road.centerline);
-        let (s0, d0) = path.project([ego.x, ego.y]);
+        let (s0, d0) = path.project(ego.position());
         let speed = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         RoadFrame {
             path,
@@ -210,14 +214,16 @@ pub(crate) fn centerline_follow_controls(
     let mut x = ego;
     let mut controls = Vec::with_capacity(horizon);
     for _ in 0..horizon {
-        let (s, d) = path.project([x.x, x.y]);
-        let (_, lane_yaw) = path.pose_at(s);
-        let heading_err = wrap_angle(x.yaw - lane_yaw);
-        let curvature = -(0.02 * d + 0.3 * heading_err);
-        let accel = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-2.0, 1.5);
+        let (s, _) = path.project(x.position());
+        let base = centerline_feedback(path, &x, ctx.road.target_speed);
+        let accel = base.acceleration.min(idm_accel(
+            x.speed,
+            ctx.road.target_speed,
+            lead_vehicle(path, s, ctx.actors),
+        ));
         let u = Control {
             acceleration: accel,
-            curvature,
+            curvature: base.curvature,
         };
         x = step(x, u, ctx.road.dt);
         controls.push(u);

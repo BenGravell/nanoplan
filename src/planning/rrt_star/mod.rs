@@ -26,6 +26,7 @@
 use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
+use crate::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{
@@ -33,9 +34,10 @@ use crate::planning::search_tree::{
 };
 use crate::planning::steering::CubicSteer;
 use crate::planning::{Context, Planner};
+use crate::prediction::predict;
 use crate::scenarios::Path;
-use crate::simulation::{Control, MAX_ABS_CURVATURE, State};
-use crate::wrap_angle;
+use crate::simulation::{Control, State};
+use crate::vehicle::MAX_ABS_CURVATURE;
 
 /// A tree node's position tagged with its index in `nodes`, stored in the
 /// [`RTree`] spatial index so nearest-neighbour and near-vertex queries run
@@ -205,7 +207,7 @@ struct Node {
 /// change to which edges are feasible or what they cost.
 ///
 /// Feasible means every point clears every actor's lane-aware predicted
-/// position ([`crate::metrics::predict`], with this planner's own
+/// position ([`crate::prediction::predict`], with this planner's own
 /// `COLLISION_MARGIN_M` headroom on top of the shared cost's hard-collision
 /// check — an actor driving the route is predicted along its curve), stays on
 /// the drivable
@@ -255,7 +257,7 @@ fn steer_cost(
         }
         let t = (s - s0) / v;
         for a in ctx.actors {
-            let predicted = crate::metrics::predict(a, Some(path), t);
+            let predicted = predict(a, Some(path), t);
             if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
                 return None;
             }
@@ -541,7 +543,7 @@ impl Planner for RrtStarPlanner {
         // limit would reject outright).
         let drivable = drivable_bound(ctx);
         for a in ctx.actors {
-            let (a_s, a_d) = path.project([a.x, a.y]);
+            let (a_s, a_d) = path.project(a.position());
             for side in [-1.0, 1.0] {
                 let bypass = (a_d + side * (COLLISION_MARGIN_M + 2.0)).clamp(-drivable, drivable);
                 for (station_offset, lateral) in [
