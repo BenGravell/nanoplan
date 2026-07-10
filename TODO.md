@@ -26,7 +26,7 @@ enhanced camera controls - pan, rotate, follow/detach from ego, reset
 UX
 Give nanoplan a unique icon/favicon.
 Display the favicon on the website app ( browser tab), both local and cloud deployed.
-Use a Combination of ai generation and open source iconoggrsphy according to Best design principles a la Allan Peters.
+Use a combination of AI generation and open source iconography according to Best design principles a la Allan Peters.
 
 Symbology:
 Trajectory tree: two levels of hierarchy of branching, very thick edge weights, inside a steering wheel toncreate a disk lockup.
