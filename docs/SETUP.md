@@ -18,13 +18,16 @@
   The app does not enable Bevy's gamepad stack, so the normal build does not
   need `libudev-dev`. Add it only if you re-enable Bevy `gamepad`/`bevy_gilrs`
   support.
-- **Python 3** with the standard library only, if you plan to regenerate or
-  convert the CommonRoad scenario corpus
+- **Python 3** with the standard library only, if you plan to regenerate the
+  local CommonRoad scenarios or convert your own CommonRoad XML
   (`tools/generate_diverse_scenarios.py`,
   `tools/export_commonroad_scenarios.py` — no `pip install` and no
   `commonroad-io` needed) or export real nuPlan log scenarios locally
   (`tools/export_nuplan_scenarios.py` uses `sqlite3` from the standard
   library — no `nuplan-devkit` needed).
+- **uv**, only for the cached official-CommonRoad loader. Its inline script
+  metadata installs Rich into uv's cache; no project-wide Python environment
+  is created.
 
 No other language toolchains are required. There is no JavaScript build step
 outside of what [Trunk](#web-wasm-build) drives.
@@ -154,7 +157,8 @@ artifact"*.
   `IncrementalSim`'s async simulation jobs are). Build it with
   `python3 tools/bundle_web_scenarios.py` after exporting scenarios into
   `scenarios/web/`; Trunk's `copy-file` directive in `index.html` copies the
-  result into `dist/`. See [docs/USAGE.md#scenario-sources](USAGE.md#scenario-sources).
+  result into `dist/`. See
+  [docs/USAGE.md#scenario-sources](USAGE.md#scenario-sources).
 
 ## Batch tools
 
@@ -172,13 +176,19 @@ output formats.
 
 ## Converting scenarios
 
-The repo ships its scenario corpus as CommonRoad XML in
-`scenarios/commonroad/`; `tools/export_commonroad_scenarios.py` converts it
-(or any scenario from [commonroad.in.tum.de](https://commonroad.in.tum.de))
-into the JSON the viewer and batch runner load:
+The repo ships its original CommonRoad XML in `scenarios/commonroad/`.
+`tools/export_commonroad_scenarios.py` converts that flat directory (or a
+single CommonRoad XML file) into the JSON the viewer and batch runner load:
 
 ```sh
 python3 tools/export_commonroad_scenarios.py scenarios/commonroad out_dir
+```
+
+To fetch and convert the pinned TUM-authored official set without adding it to
+the repository, use the Rich cache loader:
+
+```sh
+uv run tools/load_commonroad_scenarios.py
 ```
 
 For tuning against real human driving, `tools/export_nuplan_scenarios.py`

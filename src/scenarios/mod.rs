@@ -2,8 +2,8 @@
 //!
 //! Scenarios are plain data (serde JSON) so large batches can come from
 //! anywhere: the built-in synthetic generator, CommonRoad scenarios
-//! converted with tools/export_commonroad_scenarios.py (the repo's own
-//! corpus in scenarios/commonroad/, or files from commonroad.in.tum.de),
+//! converted with tools/export_commonroad_scenarios.py (the repo's own corpus
+//! or files cached outside the worktree by load_commonroad_scenarios.py),
 //! or real nuPlan logs exported locally with tools/export_nuplan_scenarios.py.
 
 use serde::{Deserialize, Serialize};

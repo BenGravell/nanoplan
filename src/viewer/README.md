@@ -66,17 +66,19 @@ sources are:
 - **Desktop** (`loader.rs`'s `DesktopLoader`, plus `scenarios.rs`'s CLI-arg
   loop): the wasm build has no filesystem, so these are
   `#[cfg(not(target_arch = "wasm32"))]`. Both go through
-  `nanoplan::scenarios::load_path`.
+  `nanoplan::scenarios::load_path`. The Rich
+  `tools/load_commonroad_scenarios.py` helper caches official XML and JSON
+  outside the repo, then prints the JSON directory for either path loader.
 - **Web** (`web.rs`), two independent mechanisms, both using the same
   "spawn async, poll each frame, merge into state when ready" pattern as
   `ActiveJob`:
   - `WebScenarioFetch`/`spawn_fetch`/`absorb_fetch`: fetches
     `scenarios/web_bundle.json` — a single static file, built by
     `tools/bundle_web_scenarios.py` and copied into `dist/` by Trunk — once
-    at startup via `gloo-net`. Ships with the converted CommonRoad corpus
-    from [`scenarios/commonroad/`](../../scenarios/commonroad/) (generated
+    at startup via `gloo-net`. Ships with the converted locally generated
+    CommonRoad corpus from [`scenarios/commonroad/`](../../scenarios/commonroad/) (generated
     by [`tools/generate_diverse_scenarios.py`](../../tools/generate_diverse_scenarios.py)
-    and freely redistributable, unlike nuPlan data).
+    and MIT-licensed, unlike nuPlan data).
   - `WebScenarioLoader`, the web `ScenarioSource`: opens the browser's
     native file picker via `rfd::AsyncFileDialog` (wasm backend: a hidden
     `<input type="file">`, so it's automatable in tests via a filechooser

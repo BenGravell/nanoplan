@@ -51,10 +51,11 @@ planning, simulation, or scoring logic itself.
 A few more directories hold data rather than code:
 
 - [`scenarios/commonroad/`](scenarios/commonroad/) — the scenario corpus
-  this repo ships, in the open [CommonRoad](https://commonroad.in.tum.de)
-  2020a XML format (original to this repo, MIT — redistributable, unlike
-  nuPlan data). `tools/export_commonroad_scenarios.py` converts these (or
-  any real CommonRoad scenario) into nanoplan's JSON.
+  this repo ships, in the [CommonRoad](https://commonroad.in.tum.de) 2020a
+  XML format (original to this repo and MIT-licensed).
+  `tools/export_commonroad_scenarios.py` converts them into nanoplan's JSON;
+  `tools/load_commonroad_scenarios.py` separately caches official TUM
+  scenarios and conversions outside the worktree.
 - [`scenarios/nuplan/`](scenarios/nuplan/) — reference material vendored from
   [nuplan-devkit](https://github.com/motional/nuplan-devkit) (log schema,
   vehicle parameters, metric definitions). Source of truth for the metric
@@ -116,7 +117,8 @@ A few more directories hold data rather than code:
   uses the [CommonRoad](https://commonroad.in.tum.de) 2020a XML format
   (Althoff, Koschi & Manzinger, "CommonRoad: Composable benchmarks for
   motion planning on roads", IV 2017) so scenarios interoperate with the
-  CommonRoad ecosystem; the files themselves are original to this repo.
+  CommonRoad ecosystem. Official scenarios are downloaded on demand from a
+  pinned upstream commit and cached locally, never checked into this repo.
 - **nuPlan**: scenario schema, vehicle parameters, and closed-loop metric
   definitions vendored from [nuplan-devkit](https://github.com/motional/nuplan-devkit)
   (Apache-2.0) — see [`scenarios/nuplan/README.md`](scenarios/nuplan/README.md).

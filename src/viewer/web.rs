@@ -1,10 +1,10 @@
 //! Fetches the pre-bundled CommonRoad scenario set at startup — the web
 //! equivalent of desktop's `load_path`/CLI args/"scenario path" widget, none
 //! of which work without a filesystem. `scenarios/web_bundle.json` (built by
-//! `tools/bundle_web_scenarios.py` from the converted scenarios/commonroad/
-//! corpus, copied into `dist/` by Trunk's `copy-file` directive in
-//! `index.html`) is fetched once as a single compact JSON array — one HTTP
-//! request instead of one per scenario.
+//! `tools/bundle_web_scenarios.py` from the converted top-level generated XML
+//! in scenarios/commonroad/, copied into `dist/` by Trunk's `copy-file`
+//! directive in `index.html`) is fetched once as a single compact JSON array —
+//! one HTTP request instead of one per scenario.
 
 use std::cell::RefCell;
 use std::rc::Rc;

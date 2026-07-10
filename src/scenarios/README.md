@@ -12,7 +12,7 @@ scenarios/
 > **Naming note**: this is the Rust module `src/scenarios/`. There are also
 > repo-root *data* directories with similar names — don't confuse them:
 > [`scenarios/commonroad/`](../../scenarios/commonroad/) holds the CommonRoad
-> XML scenario corpus this repo ships, [`scenarios/nuplan/`](../../scenarios/nuplan/)
+> XML scenario data this repo ships, [`scenarios/nuplan/`](../../scenarios/nuplan/)
 > holds vendored nuPlan reference documents (schema, vehicle parameters,
 > metric definitions), `scenarios/json/` holds two converted CommonRoad
 > scenarios bundled into the viewer binary at compile time, and
@@ -307,10 +307,12 @@ writes the CommonRoad XML corpus in `scenarios/commonroad/` across ~20
 scenario categories (turns, intersections, cut-ins, stop-and-go traffic,
 and more), each obstacle with a fully scripted trajectory rather than a
 constant `Control` — see
-[docs/USAGE.md#generating-the-scenario-corpus](../../docs/USAGE.md#generating-the-scenario-corpus).
+[docs/USAGE.md#generating-the-local-scenario-corpus](../../docs/USAGE.md#generating-the-local-scenario-corpus).
 Converted, it's what populates `scenarios/web_bundle.json`;
 `synthetic_batch` above is the batch runner's own generator and is
-unrelated (Rust, not Python; used by `--count`, not the web build).
+unrelated (Rust, not Python; used by `--count`, not the web build). Official
+CommonRoad XML and its conversions are kept out of git by the cache-backed
+`tools/load_commonroad_scenarios.py` loader.
 
 ## CommonRoad export mapping
 

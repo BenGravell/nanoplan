@@ -7,12 +7,6 @@ Re-tune the expert human cost weights using nuPlan.
 Use the expert human tuned cost weights by default.
 
 
-## FEATURES
-
---
-Make the real CommonRoad scenarios available. Vendor them.
-
-
 ## UX
 
 

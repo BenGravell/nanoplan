@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Export CommonRoad scenarios into nanoplan JSON.
 
-Reads CommonRoad 2020a XML files (https://commonroad.in.tum.de — the open,
-redistributable scenario format this repo ships its scenario corpus in; see
-scenarios/commonroad/README.md) with only the Python standard library — no
-commonroad-io install needed. For every input scenario it writes one JSON
-file that nanoplan's batch runner and viewer can load:
+Reads CommonRoad 2020a XML files (https://commonroad.in.tum.de) with only the
+Python standard library — no commonroad-io install needed. The XML format
+does not determine a scenario's redistribution rights; see the separate
+sources and licenses in scenarios/commonroad/README.md. For every input
+scenario it writes one JSON file that nanoplan's batch runner and viewer can
+load:
 
   - centerline: the route through the lanelet network, from the lanelet
     containing the planning problem's initial state to the goal, following

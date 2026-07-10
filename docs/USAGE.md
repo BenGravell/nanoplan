@@ -95,7 +95,7 @@ with the same IDM the Bezier planner uses, queue behind slower traffic
 
 ### Scenario sources
 
-The dropdown offers scenarios from up to five sources, concatenated in this
+The dropdown offers scenarios from up to six sources, concatenated in this
 order:
 
 1. **Six built-in scenarios** hardcoded in `src/viewer/scenarios.rs`: a straight road
@@ -106,9 +106,8 @@ order:
    embedded into the binary at compile time with `include_str!` — they ship
    in the web build too, with no filesystem access needed. Currently a
    braking lead (`ZAM_BrakingLead-1_1_T-1`) and a lane cut-in
-   (`ZAM_CutIn-1_1_T-1`), converted from the CommonRoad corpus in
-   [`scenarios/commonroad/`](../scenarios/commonroad/) and driven by logged
-   trajectory replay
+   (`ZAM_CutIn-1_1_T-1`), converted from the local CommonRoad corpus.
+   Dynamic actors use logged trajectory replay
    (see [src/scenarios/README.md#trajectory-replay](../src/scenarios/README.md#trajectory-replay)).
 3. **Desktop only**: any files or directories passed as command-line
    arguments, each loaded with `nanoplan::scenarios::load_path`:
@@ -134,10 +133,9 @@ order:
    It's a single compact JSON array (built by
    `tools/bundle_web_scenarios.py` from a directory of scenario files, one
    HTTP request instead of one per scenario) that Trunk copies into `dist/`
-   at build time. Ships with the converted CommonRoad corpus from
-   [`scenarios/commonroad/`](../scenarios/commonroad/) — freely
-   redistributable, unlike nuPlan data (see
-   [Generating the scenario corpus](#generating-the-scenario-corpus)
+   at build time. Ships with the converted, locally generated CommonRoad
+   corpus from [`scenarios/commonroad/`](../scenarios/commonroad/) (see
+   [Generating the local scenario corpus](#generating-the-local-scenario-corpus)
    below). A failed or empty fetch degrades silently (a warning in the
    browser console, zero extra scenarios) rather than breaking the viewer.
 6. **Web only, live**: the "Load scenario file(s)…" button in the viewer —
@@ -253,15 +251,46 @@ python3 tools/export_commonroad_scenarios.py path/to/ONE_Scenario-1_1_T-1.xml ou
 | `src` (positional) | — | A CommonRoad `*.xml` file, or a directory of them (non-recursive). |
 | `out` (positional) | — | Output directory; created if it doesn't exist. |
 
-This works on the corpus shipped in
-[`scenarios/commonroad/`](../scenarios/commonroad/) and on real scenarios
-downloaded from the [CommonRoad database](https://commonroad.in.tum.de/scenarios)
-alike. Once converted, feed the directory into either tool:
+This works on the locally generated XML in
+[`scenarios/commonroad/`](../scenarios/commonroad/) and on other CommonRoad
+2020a scenarios. Once converted, feed the directory into either tool:
 
 ```sh
 cargo run --release --bin batch -- --count 0 --dir out_dir   # score every planner on them
 cargo run -- out_dir                                          # browse them in the viewer
 ```
+
+### Caching official scenarios
+
+Official scenario files and their conversions stay out of git. The cached
+loader fetches the pinned TUM-authored subset, filters out third-party map and
+traffic-data sources, converts any cache misses, formats progress with Rich,
+and prints the converted directory on stdout:
+
+```sh
+uv run tools/load_commonroad_scenarios.py
+cargo run -- "$(uv run tools/load_commonroad_scenarios.py)"
+cargo run --release --bin batch -- --count 0 \
+  --dir "$(uv run tools/load_commonroad_scenarios.py)"
+```
+
+The pinned selection contains 619 scenarios and occupies about 240 MiB with
+the sparse checkout, git objects, and converted JSON.
+
+Raw XML is keyed by the immutable upstream commit; converted JSON is keyed by
+the converter's content hash, so reruns are cache hits and converter changes
+automatically get a fresh output directory. The default cache is
+`$XDG_CACHE_HOME/nanoplan/commonroad` on Linux, `~/Library/Caches/...` on
+macOS, and `%LOCALAPPDATA%\nanoplan\commonroad` on Windows. Set
+`NANOPLAN_CACHE_DIR` or pass `--cache-dir` to override it.
+
+Rich is the loader's only Python dependency. `uv run` installs and caches it
+from the script's inline metadata; if Rich is already installed, direct
+`python3 tools/load_commonroad_scenarios.py` works too.
+
+CommonRoad XML compatibility does not grant redistribution rights. Keep other
+downloads local unless their applicable license explicitly permits
+redistribution.
 
 To make them available in the **web build** too (the deployed viewer has no
 filesystem, so `out_dir` above only works on desktop), convert straight into
@@ -360,10 +389,11 @@ the new weights do to closed-loop scores.
 | `--iters N` | `500` | Gradient-descent iterations. |
 | `--l2 X` | `1e-3` | Strength of the pull toward the current hand weights (a prior); lower it to let the data dominate. |
 
-## Generating the scenario corpus
+## Generating the local scenario corpus
 
-`tools/generate_diverse_scenarios.py` procedurally generates the CommonRoad
-XML corpus checked into [`scenarios/commonroad/`](../scenarios/commonroad/):
+`tools/generate_diverse_scenarios.py` procedurally generates the top-level
+CommonRoad XML corpus checked into
+[`scenarios/commonroad/`](../scenarios/commonroad/):
 one scenario per category (stopping with a lead, traversing an intersection,
 near multiple vehicles, congested stop-and-go, cutting in, merging onto a
 highway, and more — see the script for the full list) plus the two fixed

@@ -58,10 +58,10 @@ rstar = "0.12"
 
 # wasm only: the web build has no filesystem, so it can't use
 # load_path/CLI args like desktop does (see src/viewer/web.rs). gloo-net
-# fetches the pre-bundled nuPlan scenario set at startup; rfd's async file
+# fetches the pre-bundled generated CommonRoad set at startup; rfd's async file
 # dialog (default features are native-toolkit backends like gtk/wayland,
 # irrelevant on wasm) lets a user load their own scenario files live, the
-# web equivalent of desktop's "nuPlan path" widget.
+# web equivalent of desktop's "scenario path" widget.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-net = { version = "0.7", default-features = false, features = ["http", "json"] }
 wasm-bindgen-futures = "0.4"
