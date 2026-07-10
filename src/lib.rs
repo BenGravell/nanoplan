@@ -40,13 +40,3 @@ pub use scenarios::{Path, Road, Scenario};
 pub use simulation::{
     Control, IncrementalSim, Pose, Position, Rollout, Simulator, State, simulate,
 };
-
-#[cfg(test)]
-mod tests {
-    // ponytail: smoke test that bevy links and boots headless; delete once a real app exists
-    #[test]
-    fn bevy_app_boots() {
-        use bevy::prelude::*;
-        App::new().add_plugins(MinimalPlugins).update();
-    }
-}
