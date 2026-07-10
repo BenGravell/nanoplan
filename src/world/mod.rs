@@ -66,19 +66,13 @@ pub const POCKET_TAPER_M: f64 = 12.0;
 /// How far short of a junction node crosswalks sit (see [`has_crosswalk`]).
 pub const CROSSWALK_SETBACK_M: f64 = 15.0;
 
-/// Extra route cost for starting out against the ego's current heading —
-/// enough to prefer going around a couple of blocks over a U-turn (which
-/// the planners track with an ugly off-lane loop), without ever making a
-/// goal behind the ego unreachable.
-const U_TURN_PENALTY_M: f64 = 400.0;
-
-fn dist(a: impl Into<Position>, b: impl Into<Position>) -> f64 {
+pub(crate) fn dist(a: impl Into<Position>, b: impl Into<Position>) -> f64 {
     let a = a.into();
     let b = b.into();
     a.distance(b)
 }
 
-fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+pub(crate) fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
 }
 
@@ -316,7 +310,7 @@ fn turn_dir(a: [f64; 2], v: [f64; 2], b: [f64; 2]) -> i8 {
 /// wide radius — and, for a pedestrian `ped = (id, side)` (`side` = the
 /// sidewalk sign at `axis[0]`, +1 right of travel), cross to the other
 /// sidewalk at the crosswalks [`ped_crosses`] picks.
-fn corridor(
+pub(crate) fn corridor(
     seed: u64,
     axis: &[[f64; 2]],
     lanes: &[usize],
@@ -463,7 +457,7 @@ pub struct StreetMap {
     /// Lanes per direction of each street.
     pub lanes: Vec<usize>,
     /// `adj[n]` = neighbours of node `n`.
-    adj: Vec<Vec<usize>>,
+    pub(crate) adj: Vec<Vec<usize>>,
 }
 
 impl StreetMap {
@@ -683,96 +677,8 @@ impl StreetMap {
         yaw: f64,
         to: impl Into<Position>,
     ) -> Vec<[f64; 2]> {
-        let (se, sp) = self.snap(from);
-        let (ge, mut gp) = self.snap(to);
-        let heading = [yaw.cos(), yaw.sin()];
-        let seed_cost = |n: usize| {
-            let d = [self.nodes[n][0] - sp[0], self.nodes[n][1] - sp[1]];
-            let behind = d[0] * heading[0] + d[1] * heading[1] < 0.0;
-            dist(sp, self.nodes[n]) + if behind { U_TURN_PENALTY_M } else { 0.0 }
-        };
-        // Dijkstra over intersections, seeded with both ends of the start
-        // edge (the window is small, so the O(n^2) scan needs no heap)
-        let n = self.nodes.len();
-        let (mut cost, mut pred, mut done) =
-            (vec![f64::INFINITY; n], vec![usize::MAX; n], vec![false; n]);
-        for s in self.edges[se] {
-            cost[s] = seed_cost(s);
-        }
-        for _ in 0..n {
-            let Some(u) = (0..n)
-                .filter(|&i| !done[i] && cost[i].is_finite())
-                .min_by(|&a, &b| cost[a].total_cmp(&cost[b]))
-            else {
-                break;
-            };
-            done[u] = true;
-            for &v in &self.adj[u] {
-                let c = cost[u] + dist(self.nodes[u], self.nodes[v]);
-                if c < cost[v] {
-                    cost[v] = c;
-                    pred[v] = u;
-                }
-            }
-        }
-        // arrive via whichever end of the goal edge is cheaper overall
-        let mut end = self.edges[ge]
-            .into_iter()
-            .min_by(|&a, &b| {
-                (cost[a] + dist(self.nodes[a], gp)).total_cmp(&(cost[b] + dist(self.nodes[b], gp)))
-            })
-            .unwrap();
-        if !cost[end].is_finite() {
-            // ponytail: a window seam can orphan a street from the rest of
-            // the loaded grid; drive to the nearest reachable node instead
-            end = (0..n)
-                .filter(|&i| cost[i].is_finite())
-                .min_by(|&a, &b| dist(self.nodes[a], gp).total_cmp(&dist(self.nodes[b], gp)))
-                .unwrap();
-            gp = self.nodes[end];
-        }
-        let mut chain = vec![end];
-        while pred[*chain.last().unwrap()] != usize::MAX {
-            chain.push(pred[*chain.last().unwrap()]);
-        }
-        chain.reverse();
-        let via_nodes = cost[end] + dist(self.nodes[end], gp);
-        // start and goal on the same street with nothing forward of them to
-        // route through: drive it directly
-        let mut axis: Vec<[f64; 2]> = if se == ge && seed_cost_direct(sp, gp, heading) < via_nodes {
-            vec![sp, gp]
-        } else {
-            std::iter::once(sp)
-                .chain(chain.into_iter().map(|i| self.nodes[i]))
-                .chain(std::iter::once(gp))
-                .collect()
-        };
-        // drop points that collapse onto their predecessor (start/goal
-        // snapped right next to an intersection), always keeping the goal
-        let raw = std::mem::take(&mut axis);
-        axis.push(raw[0]);
-        for (i, &p) in raw.iter().enumerate().skip(1) {
-            if dist(*axis.last().unwrap(), p) >= 2.0 || axis.len() == 1 {
-                axis.push(p);
-            } else if i == raw.len() - 1 {
-                *axis.last_mut().unwrap() = p;
-            }
-        }
-        // lane count of each leg, looked up from the street it runs along
-        let lanes: Vec<usize> = axis
-            .windows(2)
-            .map(|w| self.lanes[self.snap(mid(w[0], w[1])).0])
-            .collect();
-        corridor(self.seed, &axis, &lanes, ActorKind::Car, None)
+        crate::routing::route(self, from, yaw, to)
     }
-}
-
-/// Direct same-street route cost, with the same U-turn penalty as
-/// [`StreetMap::route`]'s Dijkstra seeds.
-fn seed_cost_direct(sp: [f64; 2], gp: [f64; 2], heading: [f64; 2]) -> f64 {
-    let d = [gp[0] - sp[0], gp[1] - sp[1]];
-    let behind = d[0] * heading[0] + d[1] * heading[1] < 0.0;
-    dist(sp, gp) + if behind { U_TURN_PENALTY_M } else { 0.0 }
 }
 
 /// What kind of road user a [`SmartActor`] is: sets its footprint, speed,

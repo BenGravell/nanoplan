@@ -45,7 +45,6 @@ fn s_curve_road() -> Vec<[f64; 2]> {
         .collect()
 }
 
-// ponytail: hardcoded synthetic scenarios cover cases the CommonRoad corpus doesn't need to
 fn scenarios() -> Vec<Scenario> {
     const BUILTIN_HALF_WIDTH_M: f64 = 5.5;
     let state = |x, y, yaw, speed| State {

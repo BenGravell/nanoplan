@@ -22,9 +22,6 @@ const LANE_RETURN_TAU_S: f64 = 2.0;
 /// rolled forward along the lane curve at constant speed while its lateral
 /// offset decays toward the centerline. Otherwise this falls back to
 /// [`project`].
-///
-/// ponytail: longitudinal motion is constant speed. The single [`State`]
-/// snapshot callers pass here does not carry acceleration.
 pub fn predict(s: &State, lane: Option<&Path>, t: f64) -> State {
     let Some(path) = lane else {
         return project(s, t);

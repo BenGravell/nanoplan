@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod planning;
 pub mod prediction;
 pub(crate) mod rng;
+pub mod routing;
 pub mod scenarios;
 pub mod simulation;
 pub mod tuning;
