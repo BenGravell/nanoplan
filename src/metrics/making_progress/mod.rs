@@ -1,5 +1,5 @@
 //! Making progress: thresholds the progress ratio (per tick for the tick
-//! display, and the aggregated progress ratio for the scenario, as in
+//! display, and the aggregated progress ratio for the rollout, as in
 //! nuPlan's min_progress_threshold).
 
 use crate::metrics::{TickCtx, agg, progress};

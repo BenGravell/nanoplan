@@ -81,8 +81,7 @@ pub trait Planner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
 }
 
-/// Configuration: which planner to run. Lets the app and the batch runner
-/// compare planners on the same scenario. Everything else about a planner —
+/// Configuration: which planner to run. Everything else about a planner —
 /// display name, constructor, capabilities — lives in its [`PlannerSpec`]
 /// row, so adding a planner means one enum variant plus one complete row
 /// in [`SPECS`], not edits to scattered `match`es.

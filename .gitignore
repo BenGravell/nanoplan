@@ -23,14 +23,5 @@ target
 # Trunk build output
 dist
 
-# Local staging for web-fetched scenarios (tools/bundle_web_scenarios.py
-# reads this, not meant to be committed — see docs/USAGE.md#scenario-sources)
-scenarios/web/
-
-# Local CommonRoad downloads/conversions; the cache loader normally keeps
-# these under the platform cache directory instead of the worktree.
-scenarios/commonroad-open/
-scenarios/commonroad-open-json/
-
 # Python bytecode
 __pycache__/

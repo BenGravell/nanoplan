@@ -24,7 +24,7 @@
 //! pseudo-random draws at the small sample counts a real-time planner can
 //! afford (a few dozen per tick), without the clustering and gaps an RNG
 //! leaves — and, being a pure function of the sample index, it makes a
-//! `plan()` call a pure function of the ego state and scenario (see RRT*'s
+//! `plan()` call a pure function of the ego state and road context (see RRT*'s
 //! `plan_is_a_pure_function_of_state` and `sampling_mpc`'s equivalent).
 //! [`qmc_normals`] extends the same idea to Gaussian noise, replacing the
 //! judo optimizers' pseudo-random `np.random.randn` with the inverse-CDF of

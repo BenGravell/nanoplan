@@ -6,7 +6,7 @@
 //! about the sampling is actually random: targets come from a deterministic
 //! road-geometry grid plus a low-discrepancy (Halton) sequence — see
 //! `GRID_BUDGET`/`QMC_BUDGET`'s doc comments and the sampling comment in
-//! `plan` — so `plan()` is a pure function of the ego state and scenario,
+//! `plan` — so `plan()` is a pure function of the ego state and road context,
 //! not a seeded-RNG rollout.
 //!
 //! The step connecting any two poses — the "steering function" — is a
@@ -131,7 +131,7 @@ const WARM_VIABLE_BAND_M: f64 = 5.0;
 // coin-flip that made the goal chatter is gone. Not so large that it overrides
 // a genuinely blocked side (that side simply has no feasible candidates to
 // discount), and tuned against the synthetic batch: 0.15 both cut realized
-// lateral-velocity reversals (151→128, worst 15→13 over 40 scenarios) and
+// lateral-velocity reversals (151→128, worst 15→13 over 40 runs) and
 // nudged mean score up (0.5549→0.5761), where a heavier 0.3 started trading
 // score away. See the goal-selection comment.
 const CONTINUITY_WEIGHT: f64 = 0.15;
@@ -246,7 +246,7 @@ fn steer_cost(
         // only the *target* d (see the bypass-seeding comment in `plan`)
         // still let some edges drift off-road mid-segment, caught the same
         // way as the other structural bugs here: running the batch runner
-        // over general synthetic scenarios and finding `drivable_area`
+        // over varied synthetic runs and finding `drivable_area`
         // scoring 0 despite every sampled *target* being in-bounds. This
         // is tighter than the shared cost function's own road-edge check
         // (the road's `half_width`), on purpose: a bypass should never count
@@ -674,7 +674,7 @@ impl Planner for RrtStarPlanner {
             // control is ever applied) would eventually drive the ego
             // into reverse instead of holding it stopped. Found the same
             // way as this module's other structural bugs: running the
-            // batch runner over general synthetic scenarios, not from
+            // batch runner over varied synthetic runs, not from
             // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
             self.committed_bias = 0.0; // no plan to be committed to
@@ -721,7 +721,7 @@ mod tests {
     }
 
     /// The sampling is a fixed grid plus a Halton sequence, both pure
-    /// functions of the ego state and scenario — no `Rng` advances between
+    /// functions of the ego state and road context — no `Rng` advances between
     /// calls, unlike PI²-DDP. Two independent planners replanning from the
     /// identical state must therefore produce the identical plan, not just
     /// a reproducible-across-runs one.

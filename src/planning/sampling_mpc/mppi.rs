@@ -15,7 +15,7 @@ pub struct Mppi {
     /// weighting toward the best rollout, higher softens it toward a plain
     /// average. Interpreted relative to the rollout cost *spread* (see
     /// `update_nominal_knots`), so it stays a dimensionless `[0, 1]`-ish
-    /// knob independent of the scenario's absolute cost scale.
+    /// knob independent of the rollout's absolute cost scale.
     temperature: f64,
 }
 
@@ -50,7 +50,7 @@ impl Optimizer for Mppi {
         // weights ∝ exp(-(costs - beta)/temperature).
         //
         // nanoplan adaptation: divide the exponent by a cost *spread* so
-        // `temperature` is a scale-free knob rather than tied to a scenario's
+        // `temperature` is a scale-free knob rather than tied to a rollout's
         // absolute cost magnitude — the same idea behind PI²-DDP's min/max
         // normalization of its eq.-12 rollout weighting. But the spread is
         // taken as `median − min`, not `max − min`: a couple of off-road

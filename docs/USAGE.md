@@ -7,7 +7,6 @@ cargo run --release
 ```
 
 The ego continuously drives a procedurally generated, unbounded single track.
-There is no map, route, destination, lane selection, or scenario picker.
 
 - **planner** changes the active motion planner.
 - **target speed** changes the desired speed immediately.

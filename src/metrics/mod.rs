@@ -1,7 +1,7 @@
 //! nuPlan closed-loop planner quality metrics, built up strictly tickwise,
 //! one module per metric.
 //!
-//! Every metric is a per-tick score in [0, 1]. Scenario values aggregate the
+//! Every metric is a per-tick score in [0, 1]. Rollout values aggregate the
 //! per-tick scores with a per-metric rule: event-driven metrics (collisions,
 //! drivable area, driving direction, TTC) take the worst case (min) — one bad
 //! tick is a violation — while smooth quantities (progress, speed limit,
@@ -13,7 +13,7 @@
 //! [`Road`] geometry) — planner internals are off limits.
 //!
 //! Everything a metric *is* — its display label, how it scores a tick, how
-//! its ticks aggregate to a scenario value, and its role in the composite —
+//! its ticks aggregate to a rollout value, and its role in the composite —
 //! lives in one row of the [`METRICS`] spec table (the Strategy pattern,
 //! table-driven). A metric's position in the per-tick score arrays is the
 //! position of its row, nothing more: adding a metric means writing its
@@ -75,7 +75,7 @@ pub struct MetricSpec {
     pub label: &'static str,
     /// Score of one tick, in [0, 1].
     pub score: fn(&TickCtx, usize) -> f64,
-    /// Scenario value from this metric's per-tick score column
+    /// Rollout value from this metric's per-tick score column
     /// ([`aggregation::min`] for event-driven metrics, [`aggregation::avg`]
     /// for smooth quantities, or a metric-specific rule like
     /// [`making_progress::aggregate`]).
@@ -143,16 +143,16 @@ pub const METRICS: [MetricSpec; 9] = [
 
 pub const N_METRICS: usize = METRICS.len();
 
-/// Per-tick metric scores for a rollout, plus their scenario aggregates.
+/// Per-tick metric scores for a rollout, plus their aggregates.
 #[derive(Debug, Clone, Default)]
 pub struct Metrics {
     /// Per-tick score of each metric, `per_tick[tick][metric]`.
     pub per_tick: Vec<[f64; N_METRICS]>,
     /// Per-tick composite score.
     pub score_per_tick: Vec<f64>,
-    /// Scenario value of each metric, aggregated per its rule (min or avg).
+    /// Rollout value of each metric, aggregated per its rule (min or avg).
     pub aggregate: [f64; N_METRICS],
-    /// Scenario score: the nuPlan composite applied to the aggregates.
+    /// Rollout score: the nuPlan composite applied to the aggregates.
     pub score: f64,
 }
 
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn collision_zeroes_its_ticks_and_the_scenario_by_min_agg() {
+    fn collision_zeroes_the_rollout_by_min_aggregation() {
         let ego = cruise(10.0, 200);
         let parked = vec![
             State {
@@ -261,7 +261,7 @@ mod tests {
         let (scores, score) = m.at(100);
         assert_eq!(scores[0], 0.0);
         assert_eq!(score, 0.0);
-        // far away the tick is untouched, but the event zeroes the scenario
+        // far away the tick is untouched, but the event zeroes the rollout
         assert_eq!(m.at(0).0[0], 1.0);
         assert_eq!(m.aggregate[0], 0.0);
         assert_eq!(m.score, 0.0);

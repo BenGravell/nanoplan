@@ -198,7 +198,7 @@ own actor-prediction code, its own point-collision proxy, and its own idea of
 cost interface, `HardConstraints::point_cost(sample, target_speed)`, called
 by every one of them under the same seam name, `"cost"` (see "Latency
 diagnostics" above). It's deliberately grounded in the same quantities
-[`crate::metrics`](../metrics/README.md) scores scenario quality by, rather
+[`crate::metrics`](../metrics/README.md) scores rollout quality by, rather
 than inventing new ones:
 
 - **Hard collision and off-road rejection** — `constraints.rs` returns
@@ -325,7 +325,7 @@ RRT*'s `rrt_targets_match_shared_sampler` test pins the *numeric* parity —
 that lifting its old inline loop into the shared function changed no sample.
 Because the sequence is a pure function of the sample index, every planner
 that samples through this module is a pure function of the ego state and
-scenario (`plan_is_a_pure_function_of_state`), the property that lets a
+road context (`plan_is_a_pure_function_of_state`), the property that lets a
 closed-loop rollout inherit any single plan's safety margin — PI²-DDP, which
 keeps a real `Rng` for its rollouts, is now the lone exception.
 
@@ -372,7 +372,7 @@ line:
   `exp(-(cost - min)/temperature)` normalized. The temperature is
   interpreted relative to the rollout cost *spread* (the same min/max
   normalization PI²-DDP applies to its eq.-12 weighting), so it stays a
-  scale-free knob rather than tied to a scenario's absolute cost magnitude.
+  scale-free knob rather than tied to a rollout's absolute cost magnitude.
 
 **Everything else is `SamplingPlanner<O>`, the judo→nanoplan adapter.** judo
 keeps rollout and reward outside the optimizer; here the generic driver
@@ -442,8 +442,8 @@ fn plan(&mut self, _ego: State, ctx: &Context) -> Vec<Control> {
 Always drives straight ahead at whatever speed the ego already has (zero
 acceleration, zero curvature). No seams beyond `total` — there's no `route`,
 `optimize`, or `extract` phase because there's no computation. It exists to
-be the floor every other planner is measured against: on any scenario with
-an obstacle in the lane, it collides, and the batch runner's mean score
+be the floor every other planner is measured against: whenever an obstacle is
+in the lane, it collides, and the batch runner's mean score
 reliably shows this (~0.27 across a mixed synthetic batch, vs. 0.74-0.90 for
 the others).
 
@@ -581,7 +581,7 @@ the previous plan predicted (`expected_next`, within 1 m), the policy shifts
 one step and continues refining; otherwise it re-initializes from scratch.
 
 **Stability guards**, added after closed-loop testing surfaced real
-failures (see the `stays_finite_and_safe_over_full_scenario` regression
+failures (see the `stays_finite_and_safe_over_long_rollout` regression
 test):
 
 - `clamp_u` bounds direct acceleration and curvature commands — near-stationary
@@ -623,7 +623,7 @@ layers-by-laterals grid — then an equal number more from a 2D Halton
 low-discrepancy sequence (`van_der_corput`, paired in bases 2 and 3) over
 the same domain, filling in what the grid's fixed points miss with
 well-distributed rather than clustered coverage. Both are pure functions of
-the ego state and scenario (`plan_is_a_pure_function_of_state` pins this
+the ego state and road context (`plan_is_a_pure_function_of_state` pins this
 down), so no `Rng` appears anywhere in this module — unlike
 [PI²-DDP](#pi2-ddp), which still samples pseudo-randomly for its rollouts.
 The grid runs first, in ascending-station order, building a connected
@@ -757,14 +757,14 @@ progress — several buckets — so it can't win by reaching marginally further,
 while on an open or gently curved lane every path has `peak_lateral ≈ 0` and
 the term is inert. Tuning `CONTINUITY_WEIGHT` against the synthetic batch,
 `0.15` both cut realized lateral-velocity reversals (151→128 over 40
-scenarios, worst 15→13) and nudged mean score up (0.5549→0.5761), where a
+runs, worst 15→13) and nudged mean score up (0.5549→0.5761), where a
 heavier `0.3` started trading score away.
 
 **Seams**: `route` (build the `Path`), `warm_start` (custom — replaying the
 previous winning path), `optimize` (the grid-plus-Halton tree-growing
 loop; the deterministic bypass seeding and the final extract step aren't
 timed separately since they're comparatively cheap), `extract` (resample the
-winning path — itself a `scenarios::Path` built from the tree's polyline —
+winning path — itself a `Path` built from the tree's polyline —
 at `v * dt` intervals and convert to controls via the same technique as the
 [Frenet lattice's](#frenet-lattice) `xy_to_controls`). `cost` (the shared
 cost function) nests inside all three of `warm_start`, the (untimed)

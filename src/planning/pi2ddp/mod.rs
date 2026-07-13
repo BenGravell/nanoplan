@@ -504,7 +504,7 @@ mod tests {
     /// Regression: near-stationary rollouts once produced a singular Σxx,
     /// exploding feedback gains, and NaN states after ~9 s.
     #[test]
-    fn stays_finite_and_safe_over_full_scenario() {
+    fn stays_finite_and_safe_over_long_rollout() {
         let ego = State {
             speed: 8.0,
             ..Default::default()

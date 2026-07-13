@@ -16,5 +16,5 @@ cargo install trunk
 trunk serve --release
 ```
 
-The demo has no external maps, datasets, scenario files, Python conversion
-tools, or runtime network requests.
+The demo has no external maps, datasets, Python conversion tools, or runtime
+network requests.

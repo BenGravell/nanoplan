@@ -1,7 +1,7 @@
 //! Shared trajectory-cost function used by the search-based planners
 //! (Frenet lattice, PI²-DDP, RRT*), so "cost" means the same thing across
 //! all three instead of each inventing its own weights. Grounded in the
-//! same quantities [`crate::metrics`] scores scenario quality by — the
+//! same quantities [`crate::metrics`] scores rollout quality by — the
 //! hard-collision threshold, the drivable-area bound, the overspeed
 //! tolerance, and the comfort accel bounds — plus a prediction of actors
 //! via [`crate::prediction::predict`]. That is the lane-aware kinematic model:
