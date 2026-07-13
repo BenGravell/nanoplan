@@ -1,5 +1,47 @@
 # TODO
 
+
+--
+Strip down
+
+What brings you joy?
+Leave only that
+
+Procedurally generated world and actors.
+
+Seeing ego plan agile maneuvers - a strong planner
+Seeing ego plan crazy silly or exploitation maneuvers
+
+Get rid of the road network. Too much lift to get lanes and connecivity.
+Use an infinite racetrack. 
+Then we eliminate the route planner.
+Can still be procedurally generated but just have a single lane with varying width and curvature.
+
+For excitement and to make planning nontrivial:
+Static obstacles - boulders and narrow track width.
+Dynamic obstacles 
+- other racers actors vehicles: trucks and motorcycle
+- traverse 
+
+Need for Speed: Hot Pursuit
+- Police car chaser. If they catch you, you lose.
+
+Taxonomy of planners
+- Sampling based (MPPI)
+- Tree search (RRT)
+- Local optimization (iLQR)
+
+
+## Ego carpet
+- Take the locus of all ego footprint. Use a finer time grid than 0.1s to ensure spatial overlap at high speed.
+Slice the locus into oriented rectangular bands.
+Color each band by the time it is occupied (occupancy is actually an interval, so choose min or max or avg).
+
+## Cost map.
+- Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
+This works for static obstacles.
+
+
 --
 Re-tune the expert human cost weights using nuPlan.
 
