@@ -17,7 +17,7 @@ The ego continuously drives a procedurally generated, unbounded single track.
 - **pause** freezes the simulation.
 - **new track** increments the seed and regenerates curvature, width, traffic,
   and the ego start.
-- **scroll** zooms the following camera.
+- **scroll** zooms the camera.
 
 For a browser build:
 

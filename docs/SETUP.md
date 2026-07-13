@@ -15,6 +15,3 @@ rustup target add wasm32-unknown-unknown
 cargo install trunk
 trunk serve --release
 ```
-
-The demo has no external maps, datasets, Python conversion tools, or runtime
-network requests.
