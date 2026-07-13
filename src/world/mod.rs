@@ -7,6 +7,7 @@ use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
     bezier_idm::idm_accel,
 };
+use crate::rng::Rng;
 use crate::simulation::{CommandLimiter, State, collide_with_actors};
 use crate::track::{Road, Track};
 
@@ -19,7 +20,19 @@ const ACTOR_MARGIN_M: f64 = 25.0;
 /// A car following the same single track as the ego.
 pub struct SmartActor {
     pub state: State,
+    pub personality: Personality,
     target_speed: f64,
+    track_x: f64,
+    lateral: f64,
+    lateral_target: f64,
+    next_wander_x: f64,
+    rng: Rng,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Personality {
+    pub aggressiveness: f64,
+    pub sloppiness: f64,
 }
 
 /// The complete demo world: one procedural track, traffic, ego, and planner.
@@ -53,18 +66,41 @@ impl LiveWorld {
             ..Default::default()
         };
         let road = road_window(track, 0.0, 8.0, dt);
-        let actors = (0..max_actors.min(16))
+        let actor_count = max_actors.min(16);
+        let behind = if actor_count > 1 {
+            (actor_count / 3).max(1)
+        } else {
+            0
+        };
+        let mut rng = Rng(seed ^ 0x9e37_79b9_7f4a_7c15);
+        let actors = (0..actor_count)
             .map(|i| {
-                let x = 55.0 + i as f64 * 55.0;
+                let x = if i < behind {
+                    -45.0 * (i + 1) as f64
+                } else {
+                    55.0 * (i - behind + 1) as f64
+                };
+                let personality = Personality {
+                    aggressiveness: rng.uniform(),
+                    sloppiness: rng.uniform(),
+                };
+                let mut actor_rng = Rng(rng.0.max(1));
+                let lateral = lateral_target(personality, track.half_width(x), actor_rng.uniform());
                 let (p, yaw) = track.pose(x);
                 SmartActor {
                     state: State {
-                        x: p[0],
-                        y: p[1],
+                        x: p[0] - lateral * yaw.sin(),
+                        y: p[1] + lateral * yaw.cos(),
                         yaw,
-                        speed: 5.0 + ((seed.wrapping_add(i as u64 * 17) % 40) as f64 / 10.0),
+                        speed: 5.0 + 4.0 * rng.uniform(),
                     },
-                    target_speed: 6.0 + ((seed.wrapping_add(i as u64 * 29) % 35) as f64 / 10.0),
+                    personality,
+                    target_speed: 5.5 + 4.5 * personality.aggressiveness,
+                    track_x: x,
+                    lateral,
+                    lateral_target: lateral,
+                    next_wander_x: x + 15.0 + 25.0 * actor_rng.uniform(),
+                    rng: actor_rng,
                 }
             })
             .collect();
@@ -164,41 +200,71 @@ impl LiveWorld {
     }
 
     fn step_traffic(&mut self) {
-        self.actors.sort_by(|a, b| a.state.x.total_cmp(&b.state.x));
-        let snapshot: Vec<State> = self.actors.iter().map(|a| a.state).collect();
+        self.actors.sort_by(|a, b| a.track_x.total_cmp(&b.track_x));
+        let snapshot: Vec<(f64, f64)> = self
+            .actors
+            .iter()
+            .map(|a| (a.track_x, a.state.speed))
+            .collect();
         for (i, actor) in self.actors.iter_mut().enumerate() {
             let lead = snapshot
                 .get(i + 1)
-                .map(|next| (next.x - actor.state.x - CAR_FOOTPRINT.length, next.speed));
+                .map(|next| (next.0 - actor.track_x - CAR_FOOTPRINT.length, next.1));
             let accel = idm_accel(actor.state.speed, actor.target_speed, lead);
-            let x = actor.state.x + (actor.state.speed + accel * self.dt).max(0.0) * self.dt;
-            let (p, yaw) = self.track.pose(x);
+            let speed = (actor.state.speed + accel * self.dt).max(0.0);
+            actor.track_x += speed * self.dt;
+            if actor.track_x >= actor.next_wander_x {
+                actor.lateral_target = lateral_target(
+                    actor.personality,
+                    self.track.half_width(actor.track_x),
+                    actor.rng.uniform(),
+                );
+                actor.next_wander_x = actor.track_x + 15.0 + 25.0 * actor.rng.uniform();
+            }
+            let lateral_step =
+                (actor.lateral_target - actor.lateral).clamp(-0.35 * self.dt, 0.35 * self.dt);
+            actor.lateral += lateral_step;
+            let (p, lane_yaw) = self.track.pose(actor.track_x);
+            let yaw = lane_yaw + (lateral_step / (speed * self.dt).max(0.1)).atan();
             actor.state = State {
-                x: p[0],
-                y: p[1],
+                x: p[0] - actor.lateral * lane_yaw.sin(),
+                y: p[1] + actor.lateral * lane_yaw.cos(),
                 yaw,
-                speed: (actor.state.speed + accel * self.dt).max(0.0),
+                speed,
             };
         }
         let mut front = self
             .actors
             .iter()
-            .map(|a| a.state.x)
+            .map(|a| a.track_x)
             .fold(self.ego.x, f64::max);
         for actor in &mut self.actors {
-            if actor.state.x < self.ego.x - 120.0 {
+            if actor.track_x < self.ego.x - 120.0 {
                 front += 80.0;
-                let x = front;
-                let (p, yaw) = self.track.pose(x);
+                actor.track_x = front;
+                actor.lateral_target = lateral_target(
+                    actor.personality,
+                    self.track.half_width(front),
+                    actor.rng.uniform(),
+                );
+                actor.lateral = actor.lateral_target;
+                actor.next_wander_x = front + 15.0 + 25.0 * actor.rng.uniform();
+                let (p, yaw) = self.track.pose(front);
                 actor.state = State {
-                    x: p[0],
-                    y: p[1],
+                    x: p[0] - actor.lateral * yaw.sin(),
+                    y: p[1] + actor.lateral * yaw.cos(),
                     yaw,
                     speed: actor.target_speed,
                 };
             }
         }
     }
+}
+
+fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64 {
+    let room = (half_width - CAR_FOOTPRINT.width / 2.0 - 0.3).max(0.0);
+    let timid_bias = -0.65 * (1.0 - personality.aggressiveness).powi(2) * room;
+    (timid_bias + (2.0 * random - 1.0) * 0.55 * personality.sloppiness * room).clamp(-room, room)
 }
 
 fn road_window(track: Track, x: f64, target_speed: f64, dt: f64) -> Road {
@@ -236,6 +302,31 @@ mod tests {
         world.tick();
         assert!(world.last_planner_actors > 0);
         assert!(world.last_planner_actors < world.actors.len());
+    }
+
+    #[test]
+    fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
+        let mut world = LiveWorld::new(1, PlannerKind::Straight, 12, 0.1);
+        assert!(world.actors.iter().any(|a| a.track_x < world.ego.x));
+        assert!(world.actors.iter().any(|a| a.track_x > world.ego.x));
+
+        let timid = Personality {
+            aggressiveness: 0.0,
+            sloppiness: 0.0,
+        };
+        assert!(lateral_target(timid, 4.0, 0.5) < 0.0);
+
+        let before: Vec<f64> = world.actors.iter().map(|a| a.lateral).collect();
+        for _ in 0..500 {
+            world.step_traffic();
+        }
+        assert!(
+            world
+                .actors
+                .iter()
+                .zip(before)
+                .any(|(actor, start)| (actor.lateral - start).abs() > 0.1)
+        );
     }
 
     #[test]

@@ -158,7 +158,7 @@ impl Track {
     }
 
     pub fn half_width(&self, x: f64) -> f64 {
-        3.8 + 1.2 * (x / 140.0 + 0.7 * self.phase).sin()
+        4.5 + 1.8 * (x / 140.0 + 0.7 * self.phase).sin() + 0.7 * (x / 47.0 - self.phase).sin()
     }
 
     pub fn centerline(&self, from_x: f64, to_x: f64, step: f64) -> Vec<[f64; 2]> {
@@ -179,6 +179,12 @@ mod tests {
         let track = Track::new(1);
         assert_ne!(track.point(0.0)[1], track.point(10_000.0)[1]);
         assert_ne!(track.half_width(0.0), track.half_width(500.0));
+        let widths: Vec<_> = (0..1000).map(|x| track.half_width(x as f64)).collect();
+        assert!(
+            widths.iter().copied().reduce(f64::max).unwrap()
+                - widths.iter().copied().reduce(f64::min).unwrap()
+                > 4.0
+        );
         assert!(track.centerline(1_000_000.0, 1_000_100.0, 5.0).len() > 10);
     }
 }
