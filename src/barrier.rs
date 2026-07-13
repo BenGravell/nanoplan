@@ -1,8 +1,8 @@
 //! Physical road-side barrier segments and ego collision response.
 
 use crate::geometry::EGO_FOOTPRINT;
-use crate::scenarios::Road;
 use crate::simulation::{Position, State};
+use crate::track::Road;
 
 /// Road-side barrier restitution: 0 = stick to the wall normal, 1 = elastic.
 pub const BARRIER_RESTITUTION: f64 = 0.2;

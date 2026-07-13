@@ -31,7 +31,7 @@ pub struct LatticePlanner;
 /// Number of lateral samples per station layer (lateral grid resolution),
 /// evenly spaced over `[-LAT_BOUND_M, LAT_BOUND_M]`. Odd, so one sample
 /// lands exactly on the centerline (`d = 0`).
-const LATERALS: usize = 47;
+const LATERALS: usize = 17;
 /// Number of station layers reaching out to the planning horizon (progress
 /// grid resolution).
 const STATION_LAYERS: usize = 32;
@@ -45,7 +45,7 @@ const LAT_BOUND_M: f64 = 3.75;
 const SAMPLES_PER_SEGMENT: usize = 4;
 /// How many lateral columns an edge may span between adjacent station
 /// layers. A layer is only ~`horizon/STATION_LAYERS` of travel, so a jump of
-/// more than a few columns (`≈ NEIGHBOR_SPAN × 0.25 m`) there is a curvature
+/// more than a few columns (`≈ NEIGHBOR_SPAN × 0.47 m`) there is a curvature
 /// no real car has — the shared cost would reject it, or price it out of any
 /// optimal path, so never generating those edges costs nothing and keeps
 /// the search branching factor (and cost-function evaluations) bounded. Full
@@ -53,7 +53,7 @@ const SAMPLES_PER_SEGMENT: usize = 4;
 /// can ramp `NEIGHBOR_SPAN` columns per layer, far more than the grid's
 /// width. This is what keeps the high-resolution grid inside the real-time
 /// budget together with A*'s lazy expansion.
-const NEIGHBOR_SPAN: usize = 4;
+const NEIGHBOR_SPAN: usize = 2;
 
 /// Total grid nodes — the resolution knob. `STATION_LAYERS × LATERALS`.
 const GRID_NODES: usize = STATION_LAYERS * LATERALS;
@@ -240,7 +240,7 @@ impl Planner for LatticePlanner {
 mod tests {
     use super::*;
     use crate::planning::{test_road, test_run, test_run_on};
-    use crate::scenarios::Road;
+    use crate::track::Road;
 
     #[test]
     fn stays_on_empty_centerline() {

@@ -50,22 +50,9 @@ bevy_egui = { version = "0.41", default-features = false, features = [
     "render",
     "picking",
 ] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 web-time = "1" # std::time::Instant shim that works on wasm
 # spatial index R*-tree (wasm-compatible) for near(est)-neighbour queries, with incremental insertion
 rstar = "0.12"
-
-# wasm only: the web build has no filesystem, so it can't use
-# load_path/CLI args like desktop does (see src/viewer/web.rs). gloo-net
-# fetches the pre-bundled generated CommonRoad set at startup; rfd's async file
-# dialog (default features are native-toolkit backends like gtk/wayland,
-# irrelevant on wasm) lets a user load their own scenario files live, the
-# web equivalent of desktop's "scenario path" widget.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-gloo-net = { version = "0.7", default-features = false, features = ["http", "json"] }
-wasm-bindgen-futures = "0.4"
-rfd = { version = "0.17", default-features = false }
 
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
 [profile.dev]

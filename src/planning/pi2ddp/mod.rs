@@ -22,8 +22,8 @@ use crate::planning::planner_math::{
 use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::rng::Rng;
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 const HORIZON: usize = PLANNING_TICKS;
 const ROLLOUTS: usize = 32; // K in the paper; K > n + m with margin

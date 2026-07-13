@@ -28,7 +28,7 @@ impl Footprint {
     }
 }
 
-/// Pacifica footprint from scenarios/nuplan/vehicle_parameters.py.
+/// Representative passenger-car footprint.
 pub const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);
 pub const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
 pub const TRUCK_FOOTPRINT: Footprint = Footprint::new(9.5, 2.5);

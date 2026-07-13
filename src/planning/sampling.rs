@@ -201,7 +201,7 @@ pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(
 /// inner), then a Halton QMC pass filling the same `(station, lateral)` box
 /// with well-distributed rather than clustered points. Yields `(station,
 /// lateral)` pairs; the caller maps them into world coordinates through its
-/// own [`Path`](crate::scenarios::Path). The road model (the Frenet box,
+/// own [`Path`](crate::track::Path). The road model (the Frenet box,
 /// sized from the ego's preview distance) and the QMC fill live together
 /// here so the whole hybrid — not just the radical inverse underneath it —
 /// is shared, generic over the same `Q: QuasiMonteCarlo` interface.

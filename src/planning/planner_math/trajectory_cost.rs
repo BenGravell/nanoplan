@@ -1,6 +1,6 @@
 use crate::planning::{Context, cost};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 #[derive(Clone, Copy)]
 pub(crate) struct TrajectoryCostWeights {

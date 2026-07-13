@@ -64,8 +64,8 @@ pub use rrt::RrtPlanner;
 use crate::planning::model::step;
 use crate::planning::search_tree::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, warm_start_matches};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 /// Planning-horizon length in ticks — treetop's `TRAJ_LENGTH_OPT`, here
 /// 10 s at the simulator's 0.1 s tick rate, the same look-ahead every other

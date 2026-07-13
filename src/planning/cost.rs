@@ -21,10 +21,7 @@
 //! fiat ([`HardConstraints::features`] returns `None`,
 //! [`HardConstraints::point_cost`] returns `f64::INFINITY`); no data ever
 //! adjusts them. Everything else is a linear combination [`WEIGHTS`]` ·
-//! features, and the weights are learnable: the
-//! [`crate::tuning`] module re-fits them to expert nuPlan trajectories with
-//! maximum-entropy IRL, on the assumption that the human demonstrations were
-//! drawn from a well-tuned cost of exactly this form.
+//! features with fixed demo-tuned weights.
 //!
 //! nanoplan provides no analytic derivatives of its cost or dynamics — a
 //! deliberate design choice this module's interface enforces structurally:
@@ -64,25 +61,11 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
     }
 }
 
-/// Number of soft cost features; the length of [`WEIGHTS`], [`FEATURE_NAMES`],
-/// and the array [`HardConstraints::features`] returns.
+/// Number of soft cost features; the length of [`WEIGHTS`] and the array
+/// [`HardConstraints::features`] returns.
 pub(crate) const N_FEATURES: usize = 7;
 
-/// Display names of the soft features, index-aligned with [`WEIGHTS`].
-pub(crate) const FEATURE_NAMES: [&str; N_FEATURES] = [
-    "actor_proximity",
-    "road_edge",
-    "overspeed",
-    "heading_err",
-    "lon_accel_over",
-    "lat_accel_over",
-    "lane_keeping",
-];
-
-/// Weights of the soft features: `point_cost = WEIGHTS · features`. Hand-set
-/// originally; `cargo run --release --bin tune` re-fits them to expert nuPlan
-/// trajectories with maximum-entropy IRL (see [`crate::tuning`]) and prints a
-/// replacement for this line. The hard collision/off-road rejection is *not*
+/// Weights of the soft features: `point_cost = WEIGHTS · features`. The hard collision/off-road rejection is *not*
 /// in here — it is a fixed rule of [`HardConstraints`], never a learned weight.
 ///
 /// `lane_keeping` is weighted well below the collision/road-edge terms so it
@@ -152,8 +135,8 @@ pub(super) fn soft_features(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scenarios::Path;
     use crate::simulation::State;
+    use crate::track::Path;
 
     /// Drivable half-width used by these cost tests.
     const HW: f64 = 5.5;

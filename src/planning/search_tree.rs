@@ -14,8 +14,8 @@ use crate::planning::bezier_idm::{idm_accel, lead_vehicle};
 use crate::planning::model::step;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
 
 pub(crate) struct RoadFrame {

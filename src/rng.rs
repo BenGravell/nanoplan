@@ -15,9 +15,4 @@ impl Rng {
         let u2 = self.uniform();
         (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
-
-    /// Uniform sample in [lo, hi).
-    pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
-        lo + (hi - lo) * self.uniform()
-    }
 }

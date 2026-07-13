@@ -7,8 +7,8 @@ mod vector;
 
 use crate::math::wrap_angle;
 use crate::planning::cost;
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 pub(crate) use linalg::{dot, mat_add, mat_mul, mat_vec, transpose, vec_add};

@@ -61,8 +61,8 @@ use crate::planning::search_tree::{
 };
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner, cost};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 /// Lateral half-width cold samples span. Wide enough to let the optimizer
 /// pull an aggressive detour back in; the shared per-plan `road_half_width`
@@ -513,7 +513,7 @@ pub struct RrtPlanner {
 /// The standalone planner's sampling budget per plan — matches the treetop
 /// planner's tree budget so the two search identically and differ only in
 /// the optimization pass.
-const SAMPLES: usize = 450;
+const SAMPLES: usize = 150;
 
 impl Planner for RrtPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {

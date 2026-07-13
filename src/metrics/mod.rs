@@ -8,8 +8,7 @@
 //! comfort) take the average; making-progress thresholds the aggregated
 //! progress ratio, as in nuPlan. The composite score applies the nuPlan
 //! structure (multipliers times the 5/5/4/2 weighted average) to the
-//! aggregates, and per tick for the scrubber display. Thresholds follow
-//! scenarios/nuplan/metrics_description.md. Everything here is a pure
+//! aggregates. Everything here is a pure
 //! function of simulation outputs (ego trace, actor traces, and the
 //! [`Road`] geometry) — planner internals are off limits.
 //!
@@ -34,8 +33,8 @@ pub mod ttc;
 pub(crate) mod aggregation;
 
 use crate::geometry::CAR_FOOTPRINT;
-use crate::scenarios::{Path, Road};
 use crate::simulation::State;
+use crate::track::{Path, Road};
 
 pub(crate) use aggregation as agg;
 

@@ -3,8 +3,8 @@
 use crate::metrics::COLLISION_CLEARANCE_M;
 use crate::planning::cost::{N_FEATURES, WEIGHTS, soft_features};
 use crate::prediction::predict;
-use crate::scenarios::Path;
 use crate::simulation::State;
+use crate::track::Path;
 
 /// Center-to-center clearance below which point-sample planners treat two
 /// cars as collided. Physics and metrics use the real rectangular footprint;

@@ -56,9 +56,8 @@ pub struct Context<'a> {
 
 Everything a planner needs besides its own state and the ego pose. Notably:
 
-- **`road` is the fixed setting of the whole run** — the
-  [`scenarios::Road`](../scenarios/README.md#road-the-fixed-setting-of-a-run)
-  parameter object bundling the lane centerline, the desired cruise speed,
+- **`road` is the current planning window** — the `track::Road`
+  parameter object bundling the track centerline, the desired cruise speed,
   and the tick length of the returned controls. Planners read
   `ctx.road.centerline`, `ctx.road.target_speed`, and `ctx.road.dt`.
 - **`actors` is current-tick only.** Planners see no future information
@@ -67,17 +66,14 @@ Everything a planner needs besides its own state and the ego pose. Notably:
   driving along the route is rolled forward following the lane's curve and
   eased back toward its center (constant-speed, lane-associated kinematics),
   while oncoming or crossing traffic falls back to constant-velocity
-  extrapolation. See [`src/scenarios/README.md`](../scenarios/README.md#trajectory-replay)
-  for why the *simulated* actors can still be smarter than any prediction of
-  them.
+  extrapolation.
 - **`horizon` is a request, not a contract.** A planner may return more or
   fewer controls; the simulator only ever consumes the first one during
   closed-loop simulation. The viewer's future-preview feature asks for a
   larger horizon (up to 100 ticks, `PLANNING_HORIZON_S`) to draw a longer plan.
 - **`road.centerline` is a raw polyline**, not a `Path`. Every planner that
   needs Frenet operations (arc length, projection, curvature-following)
-  builds its own `scenarios::Path` from it — see
-  [`src/scenarios/README.md`](../scenarios/README.md#path-the-frenet-helper).
+  builds its own `track::Path` from it.
 
 ## `PlannerKind` and the `PlannerSpec` registry
 
@@ -687,7 +683,7 @@ builds essentially unchanged:
 With the linear scans gone, the remaining hot spot was `Path::project` (an
 `O(centerline-length)` scan, run for every sampled point of every candidate
 edge). Since RRT* already knows each segment's rough station, it calls
-[`Path::project_near`](../scenarios/README.md#path-the-frenet-helper) — the
+`Path::project_near` — the
 same projection restricted to a generous arc-length window around the hint,
 `O(window)` and exact. Together these bring p95 well under 10 ms and p100
 under 50 ms on the synthetic batch (from ~55 ms / ~140 ms).

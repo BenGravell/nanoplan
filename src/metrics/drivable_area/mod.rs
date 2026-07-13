@@ -5,8 +5,8 @@
 use crate::barrier::Barrier;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::TickCtx;
-use crate::scenarios::Road;
 use crate::simulation::{Position, State};
+use crate::track::Road;
 
 const EPS: f64 = 1e-9;
 

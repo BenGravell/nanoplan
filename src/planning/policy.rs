@@ -1,6 +1,6 @@
 use crate::math::wrap_angle;
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 pub(crate) const CENTERLINE_LATERAL_GAIN: f64 = 0.02;
 pub(crate) const CENTERLINE_HEADING_GAIN: f64 = 0.3;

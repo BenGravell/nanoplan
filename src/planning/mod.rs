@@ -30,8 +30,8 @@ pub use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub use straight::StraightPlanner;
 pub use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
 
-use crate::scenarios::Road;
 use crate::simulation::{Control, State};
+use crate::track::Road;
 
 /// How far ahead planners with a genuine receding-horizon cost model
 /// (lattice, PI²-DDP, RRT*) look when predicting collisions and optimizing a

@@ -71,8 +71,8 @@ use crate::planning::model::step;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 /// Control dimension: `[acceleration, curvature]`. judo's `nu`.
 pub(crate) const NU: usize = 2;

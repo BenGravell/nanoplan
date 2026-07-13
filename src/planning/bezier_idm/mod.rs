@@ -3,8 +3,8 @@
 
 use crate::planning::model::step;
 use crate::planning::{Context, Planner};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
 /// Also drives the open-world traffic actors ([`crate::world`]).

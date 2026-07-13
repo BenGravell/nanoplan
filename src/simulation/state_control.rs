@@ -1,7 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 /// 2D world position.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
@@ -40,13 +38,11 @@ impl Pose {
 }
 
 /// Vehicle state: pose and speed.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct State {
     pub x: f64,
     pub y: f64,
-    #[serde(default)]
     pub yaw: f64,
-    #[serde(default)]
     pub speed: f64,
 }
 
@@ -147,10 +143,8 @@ impl From<Pose> for State {
 }
 
 /// Control action: longitudinal acceleration and path curvature.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Control {
-    #[serde(default)]
     pub acceleration: f64,
-    #[serde(default)]
     pub curvature: f64,
 }

@@ -5,17 +5,12 @@
 Strip down
 
 What brings you joy?
-Leave only that
+Leave only that.
 
 Procedurally generated world and actors.
 
 Seeing ego plan agile maneuvers - a strong planner
 Seeing ego plan crazy silly or exploitation maneuvers
-
-Get rid of the road network. Too much lift to get lanes and connecivity.
-Use an infinite racetrack. 
-Then we eliminate the route planner.
-Can still be procedurally generated but just have a single lane with varying width and curvature.
 
 For excitement and to make planning nontrivial:
 Static obstacles - boulders and narrow track width.
@@ -42,18 +37,11 @@ Color each band by the time it is occupied (occupancy is actually an interval, s
 This works for static obstacles.
 
 
---
-Re-tune the expert human cost weights using nuPlan.
-
--- 
-Use the expert human tuned cost weights by default.
-
-
 ## UX
 
+--
+Add background grid so it is easier to see movement across the world.
 
--- 
-camera controls in scenarios mode
 
 --
 enhanced camera controls - pan, rotate, follow/detach from ego, reset
@@ -85,7 +73,6 @@ UX
 Revise the user controls menu.
 Use proper hierarchy.
 Separate out the sections for
-Scenario selection
 Planner selection + config
 Viewer visibility settings
 Metrics

@@ -1,8 +1,8 @@
 //! Actor state prediction shared by metrics, planners, and tuning.
 
 use crate::math::wrap_angle;
-use crate::scenarios::Path;
 use crate::simulation::State;
+use crate::track::Path;
 
 pub use crate::geometry::project;
 
@@ -26,8 +26,7 @@ pub fn predict(s: &State, lane: Option<&Path>, t: f64) -> State {
     let Some(path) = lane else {
         return project(s, t);
     };
-    let (s0, d0) = path.project(s.position());
-    let (_, lane_yaw) = path.pose_at(s0);
+    let (s0, d0, lane_yaw) = path.actor_projection(*s);
     if wrap_angle(s.yaw - lane_yaw).abs() > LANE_ASSOC_HEADING_RAD
         || d0.abs() > LANE_ASSOC_LATERAL_M
     {
@@ -97,6 +96,8 @@ mod tests {
         assert!((p.x - 40.0).abs() < 1e-9);
         assert!(p.y > 0.0 && p.y < 2.0, "y {}", p.y);
         assert_eq!(p.yaw, 0.0);
+        let _ = predict(&a, Some(&lane), 3.0);
+        assert_eq!(lane.cached_actor_count(), 1);
     }
 
     #[test]

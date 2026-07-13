@@ -1,112 +1,47 @@
-//! Interactive viewer: scrub through a simulated scenario and preview the
-//! planned ego future and predicted actor motion.
+//! Interactive endless-track viewer.
 
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use nanoplan::planning::PLANNING_HORIZON_S;
-use nanoplan::{PlannerKind, Scenario, simulate};
+use nanoplan::PlannerKind;
 
 mod draw;
 mod live;
-mod loader;
-mod rollouts;
-mod scenarios;
 mod ui;
-#[cfg(target_arch = "wasm32")]
-mod web;
-
-use rollouts::{ActiveJob, RolloutCache, step_active_job};
 
 pub(crate) const DT: f64 = 0.1;
-pub(crate) const DURATION_S: f64 = 20.0;
-pub(crate) const PREVIEW_MAX_S: f64 = PLANNING_HORIZON_S;
-
-#[derive(Resource)]
-pub(crate) struct Scenarios(pub Vec<Scenario>);
-
-/// Which of the viewer's two modes is active: scrubbing precomputed
-/// scenario rollouts, or the realtime interactive open world.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
-    Scrub,
-    Live,
-}
 
 #[derive(Resource)]
 pub(crate) struct UiState {
-    pub mode: Mode,
-    pub scenario: usize,
     pub planner: PlannerKind,
-    pub time_s: f32,
+    pub target_speed: f32,
     pub preview_s: f32,
-    /// Show the current planner's diagnostic sample points (only recorded
-    /// while `preview_s > 0`, since that's the only replan collecting them).
     pub show_diag_points: bool,
-    /// Show the current planner's diagnostic trajectories/connectors.
     pub show_diag_trajectories: bool,
-    /// Open-world mode's planner — its own selection, defaulting to a fast
-    /// tracker, so switching modes never hands the realtime loop whatever
-    /// slow planner scrub mode was comparing.
-    pub live_planner: PlannerKind,
-    /// Open-world cruise speed [m/s].
-    pub live_target_speed: f32,
-    /// Whether egui wants the pointer this frame; map clicks are ignored
-    /// while it does (set by `ui`, read by `live::live_update`).
-    pub pointer_over_ui: bool,
 }
 
 pub fn run() {
-    let scenes = scenarios::all_scenarios();
-    let mut cache = RolloutCache::default();
-    cache.0.insert(
-        (0, PlannerKind::Straight),
-        simulate(&scenes[0], PlannerKind::Straight, DURATION_S, DT),
-    );
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "nanoplan".into(),
-            // fill the browser window on wasm; no effect on desktop
-            fit_canvas_to_parent: true,
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "nanoplan".into(),
+                fit_canvas_to_parent: true,
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }))
-    .add_plugins(EguiPlugin::default())
-    .insert_resource(Scenarios(scenes))
-    .insert_resource(UiState {
-        mode: Mode::Scrub,
-        scenario: 0,
-        planner: PlannerKind::Straight,
-        time_s: 0.0,
-        preview_s: 0.0,
-        show_diag_points: false,
-        show_diag_trajectories: false,
-        live_planner: PlannerKind::BezierIdm,
-        live_target_speed: 8.0,
-        pointer_over_ui: false,
-    })
-    .insert_resource(cache)
-    .init_non_send::<ActiveJob>()
-    .init_non_send::<loader::Loader>()
-    .init_non_send::<live::Live>()
-    .add_systems(Startup, |mut commands: Commands| {
-        commands.spawn(Camera2d);
-    })
-    .add_systems(EguiPrimaryContextPass, ui::ui)
-    .add_systems(
-        Update,
-        (
-            step_active_job,
-            draw::draw,
-            live::live_update,
-            live::draw_live,
-        )
-            .chain(),
-    );
-    #[cfg(target_arch = "wasm32")]
-    app.init_non_send::<web::WebScenarioFetch>()
-        .add_systems(Startup, web::spawn_fetch)
-        .add_systems(Update, web::absorb_fetch);
-    app.run();
+        }))
+        .add_plugins(EguiPlugin::default())
+        .insert_resource(UiState {
+            planner: PlannerKind::BezierIdm,
+            target_speed: 8.0,
+            preview_s: 3.0,
+            show_diag_points: false,
+            show_diag_trajectories: false,
+        })
+        .init_non_send::<live::Live>()
+        .add_systems(Startup, |mut commands: Commands| {
+            commands.spawn(Camera2d);
+        })
+        .add_systems(EguiPrimaryContextPass, ui::ui)
+        .add_systems(Update, (live::update, live::draw).chain())
+        .run();
 }

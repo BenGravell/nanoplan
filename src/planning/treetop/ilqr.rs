@@ -81,8 +81,8 @@ use crate::planning::search_tree::{
 };
 use crate::planning::{Context, Planner};
 use crate::prediction::predict;
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
 

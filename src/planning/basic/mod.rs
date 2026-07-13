@@ -5,8 +5,8 @@ use crate::math::wrap_angle;
 use crate::planning::search_tree::{centerline_follow_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
-use crate::scenarios::Path;
 use crate::simulation::{Control, State};
+use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
 
 pub struct BasicPlanner;
