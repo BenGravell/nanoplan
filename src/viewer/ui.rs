@@ -1,13 +1,16 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use nanoplan::PlannerKind;
+use nanoplan::metrics::evaluate;
 use nanoplan::planning::PLANNING_HORIZON_S;
+use nanoplan::prediction::predict;
 use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
+use nanoplan::{Path, State};
 
 use super::UiState;
 use super::friction_box;
-use super::live::{Live, MAX_ZOOM, MIN_ZOOM};
+use super::live::{CameraTarget, Live, MAX_ZOOM, MIN_ZOOM};
 
 const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
 const BLUE: egui::Color32 = egui::Color32::from_rgb(45, 135, 160);
@@ -148,144 +151,152 @@ fn control_deck(
     }
     ui.add_space(if compact { 3.0 } else { 9.0 });
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-            match *active_tab {
-                ControlTab::Planner => {
-                    ui.label(
-                        egui::RichText::new("ACTIVE PLANNER")
-                            .font(caps_font(11.0))
-                            .color(DIM),
-                    );
-                    egui::ComboBox::from_id_salt("planner")
-                        .selected_text(state.planner.name())
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| {
-                            for kind in PlannerKind::ALL {
-                                ui.selectable_value(&mut state.planner, kind, kind.name());
-                            }
-                        });
-                    ui.add_space(6.0);
-                    ui.add(
-                        egui::Slider::new(
-                            &mut state.preview_s,
-                            0.0..=PLANNING_HORIZON_S as f32,
-                        )
-                        .step_by(0.5)
-                        .text(if compact {
-                            "preview"
-                        } else {
-                            "future preview [s]"
-                        })
-                        .trailing_fill(true),
-                    );
-                }
-                ControlTab::Camera => {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut live.camera.follow_position, "Follow ego");
-                        ui.checkbox(&mut live.camera.follow_heading, "Ego heading");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut live.camera.align_track, "Track centerline pose");
-                        ui.checkbox(&mut live.camera.smooth, "Smooth motion");
-                    });
-                    ui.add(
-                        egui::Slider::new(&mut live.camera.zoom, MIN_ZOOM..=MAX_ZOOM)
-                            .logarithmic(true)
-                            .text("zoom")
-                            .custom_formatter(|value, _| format!("{:.0}%", value * 100.0))
-                            .trailing_fill(true),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("-15°").clicked() {
-                            live.camera.rotation -= 15.0_f32.to_radians();
-                            live.camera.follow_heading = false;
-                            live.camera.align_track = false;
-                        }
-                        if ui.button("NORTH UP").clicked() {
-                            live.camera.rotation = 0.0;
-                            live.camera.follow_heading = false;
-                            live.camera.align_track = false;
-                        }
-                        if ui.button("+15°").clicked() {
-                            live.camera.rotation += 15.0_f32.to_radians();
-                            live.camera.follow_heading = false;
-                            live.camera.align_track = false;
-                        }
-                        if ui.button("RESET").clicked() {
-                            live.reset_camera();
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new(
-                            "MMB / WASD PAN   ·   RMB / Q E ROTATE   ·   WHEEL ZOOM   ·   F FOLLOW   ·   R RESET",
-                        )
-                        .monospace()
-                        .size(10.0)
-                        .color(DIM),
-                    );
-                }
-                ControlTab::Visibility => {
-                    ui.checkbox(&mut state.show_grid, "Grid");
-                    ui.checkbox(&mut state.show_carpet, "Ego carpet");
-                    ui.checkbox(&mut state.show_plan, "Planned path");
-                    ui.checkbox(&mut state.show_hud, "Driving HUD");
-                    if state.planner.has_diagnostics() {
-                        ui.checkbox(&mut state.show_diag_points, "Search points");
-                        ui.checkbox(
-                            &mut state.show_diag_trajectories,
-                            "Candidate trajectories",
-                        );
-                        if state.preview_s == 0.0
-                            && (state.show_diag_points || state.show_diag_trajectories)
-                        {
-                            ui.colored_label(
-                                RED,
-                                "Set future preview above zero to record diagnostics.",
-                            );
-                        }
+    egui::ScrollArea::vertical().show(ui, |ui| match *active_tab {
+        ControlTab::Planner => {
+            ui.label(
+                egui::RichText::new("ACTIVE PLANNER")
+                    .font(caps_font(11.0))
+                    .color(DIM),
+            );
+            egui::ComboBox::from_id_salt("planner")
+                .selected_text(state.planner.name())
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for kind in PlannerKind::ALL {
+                        ui.selectable_value(&mut state.planner, kind, kind.name());
                     }
+                });
+            ui.add_space(6.0);
+            ui.add(
+                egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
+                    .step_by(0.5)
+                    .text(if compact {
+                        "preview"
+                    } else {
+                        "future preview [s]"
+                    })
+                    .trailing_fill(true),
+            );
+        }
+        ControlTab::Camera => {
+            ui.label(
+                egui::RichText::new("FOLLOW TARGET")
+                    .font(caps_font(11.0))
+                    .color(DIM),
+            );
+            ui.checkbox(&mut live.camera.follow, "Follow camera");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut live.camera.target, CameraTarget::Ego, "Ego");
+                ui.selectable_value(
+                    &mut live.camera.target,
+                    CameraTarget::Track,
+                    "Track centerline",
+                );
+            });
+            let heading = match live.camera.target {
+                CameraTarget::Ego => "Align to ego heading",
+                CameraTarget::Track => "Align to track heading",
+            };
+            ui.checkbox(&mut live.camera.align_heading, heading);
+            ui.checkbox(&mut live.camera.smooth, "Smooth motion");
+            ui.add(
+                egui::Slider::new(&mut live.camera.zoom, MIN_ZOOM..=MAX_ZOOM)
+                    .logarithmic(true)
+                    .text("zoom")
+                    .custom_formatter(|value, _| format!("{:.0}%", value * 100.0))
+                    .trailing_fill(true),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("-15°").clicked() {
+                    live.camera.rotation -= 15.0_f32.to_radians();
+                    live.camera.align_heading = false;
                 }
-                ControlTab::Metrics => {
-                    let actuation = live.world.actuation();
-                    egui::Grid::new("live_metrics")
-                        .num_columns(2)
-                        .spacing(egui::vec2(28.0, 7.0))
-                        .show(ui, |ui| {
-                            metric(ui, "SPEED", format!("{:.1} m/s", live.world.ego.speed));
-                            metric(
-                                ui,
-                                "ACCELERATION",
-                                format!("{:+.2} m/s²", actuation.acceleration),
-                            );
-                            metric(ui, "CURVATURE", format!("{:+.4} m⁻¹", actuation.curvature));
-                            metric(
-                                ui,
-                                "LATEST PLAN",
-                                format!("{:.2} ms", live.world.last_plan_ms),
-                            );
-                        });
-                    egui::CollapsingHeader::new("Planner latency seams")
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            egui::Grid::new("latency").striped(true).show(ui, |ui| {
-                                for heading in ["SEAM", "MEAN", "MAX"] {
-                                    ui.label(
-                                        egui::RichText::new(heading)
-                                            .font(caps_font(11.0))
-                                            .color(DIM),
-                                    );
-                                }
-                                ui.end_row();
-                                for seam in &live.latency.seams {
-                                    ui.label(seam.name);
-                                    ui.monospace(format!("{:.3} ms", seam.mean_ms()));
-                                    ui.monospace(format!("{:.3} ms", seam.max_ms));
-                                    ui.end_row();
-                                }
-                            });
-                        });
+                if ui.button("NORTH UP").clicked() {
+                    live.camera.rotation = 0.0;
+                    live.camera.align_heading = false;
+                }
+                if ui.button("+15°").clicked() {
+                    live.camera.rotation += 15.0_f32.to_radians();
+                    live.camera.align_heading = false;
+                }
+                if ui.button("RESET").clicked() {
+                    live.reset_camera();
+                }
+            });
+            section_heading(ui, "CONTROLS");
+            egui::Grid::new("camera_controls").show(ui, |ui| {
+                for (input, action) in [
+                    ("MMB / WASD", "PAN"),
+                    ("RMB / Q E", "ROTATE"),
+                    ("WHEEL", "ZOOM"),
+                    ("F", "FOLLOW"),
+                    ("R", "RESET"),
+                ] {
+                    metric(ui, input, action.into());
+                }
+            });
+        }
+        ControlTab::Visibility => {
+            ui.checkbox(&mut state.show_grid, "Grid");
+            ui.checkbox(&mut state.show_centerline, "Track centerline");
+            ui.checkbox(&mut state.show_carpet, "Ego carpet");
+            ui.checkbox(&mut state.show_plan, "Planned path");
+            ui.checkbox(&mut state.show_hud, "Driving HUD");
+            if state.planner.has_diagnostics() {
+                ui.checkbox(&mut state.show_diag_points, "Search points");
+                ui.checkbox(&mut state.show_diag_trajectories, "Candidate trajectories");
+                if state.preview_s == 0.0
+                    && (state.show_diag_points || state.show_diag_trajectories)
+                {
+                    ui.colored_label(RED, "Set future preview above zero to record diagnostics.");
                 }
             }
+        }
+        ControlTab::Metrics => {
+            let scores = preview_metric_scores(live);
+            section_heading(ui, "PLANNER METRICS");
+            egui::Grid::new("planner_metrics")
+                .num_columns(2)
+                .spacing(egui::vec2(28.0, 7.0))
+                .show(ui, |ui| {
+                    for (label, score) in ["SAFETY", "PROGRESS", "COMFORT"].into_iter().zip(scores)
+                    {
+                        metric(ui, label, format!("{:.1}%", score * 100.0));
+                    }
+                });
+            section_heading(ui, "DRIVING");
+            let actuation = live.world.actuation();
+            egui::Grid::new("live_metrics")
+                .num_columns(2)
+                .spacing(egui::vec2(28.0, 7.0))
+                .show(ui, |ui| {
+                    metric(ui, "SPEED", format!("{:.1} m/s", live.world.ego.speed));
+                    metric(
+                        ui,
+                        "ACCELERATION",
+                        format!("{:+.2} m/s²", actuation.acceleration),
+                    );
+                    metric(ui, "CURVATURE", format!("{:+.4} m⁻¹", actuation.curvature));
+                    metric(
+                        ui,
+                        "LATEST PLAN",
+                        format!("{:.2} ms", live.world.last_plan_ms),
+                    );
+                });
+            section_heading(ui, "PLANNER LATENCY SEAMS");
+            egui::Grid::new("latency")
+                .num_columns(2)
+                .spacing(egui::vec2(28.0, 7.0))
+                .show(ui, |ui| {
+                    for seam in &live.latency.seams {
+                        metric(
+                            ui,
+                            seam.name,
+                            format!("mean {:.3} ms · max {:.3} ms", seam.mean_ms(), seam.max_ms),
+                        );
+                    }
+                });
+        }
     });
 }
 
@@ -437,6 +448,33 @@ fn metric(ui: &mut egui::Ui, label: &str, value: String) {
     ui.label(egui::RichText::new(label).font(caps_font(11.0)).color(DIM));
     ui.monospace(value);
     ui.end_row();
+}
+
+fn section_heading(ui: &mut egui::Ui, heading: &str) {
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new(heading)
+            .font(caps_font(12.0))
+            .color(TEXT),
+    );
+}
+
+fn preview_metric_scores(live: &Live) -> [f64; 3] {
+    let ego: Vec<State> = std::iter::once(live.world.ego)
+        .chain(live.world.plan.iter().skip(1).copied())
+        .collect();
+    let path = Path::new(&live.world.road.centerline);
+    let actors: Vec<Vec<State>> = live
+        .world
+        .actors
+        .iter()
+        .map(|actor| {
+            (0..ego.len())
+                .map(|i| predict(&actor.state, Some(&path), i as f64 * live.world.dt))
+                .collect()
+        })
+        .collect();
+    evaluate(&ego, &actors, &live.world.road).aggregate
 }
 
 fn compact_hud(ui: &mut egui::Ui, live: &Live, width: f32) {
@@ -611,8 +649,8 @@ mod tests {
     use egui_kittest::{Harness, kittest::Queryable};
 
     use super::{
-        ControlTab, UiState, compact_layout, compact_rail_widths, configure, signed_fraction,
-        viewer_layout,
+        ControlTab, UiState, compact_layout, compact_rail_widths, configure, preview_metric_scores,
+        signed_fraction, viewer_layout,
     };
     use crate::viewer::{CANVAS_RGB, live::Live};
 
@@ -768,5 +806,12 @@ mod tests {
         assert_eq!(signed_fraction(5.0, 10.0, 20.0), 0.5);
         assert_eq!(signed_fraction(-5.0, 10.0, 20.0), -0.25);
         assert_eq!(signed_fraction(30.0, 10.0, 20.0), 1.0);
+    }
+
+    #[test]
+    fn preview_metrics_are_valid_scores() {
+        let scores = preview_metric_scores(&Live::default());
+
+        assert!(scores.into_iter().all(|score| (0.0..=1.0).contains(&score)));
     }
 }

@@ -14,6 +14,7 @@ use super::live::Live;
 
 const BAND_M: f64 = 0.35;
 const ALPHA: f32 = 0.72;
+const FOOTPRINT_EPSILON_M: f64 = 1e-9;
 
 static GRADIENT: LazyLock<colorgrad::LinearGradient> = LazyLock::new(|| {
     let blue: Srgba = Oklcha::new(0.72, 0.14, 255.0, 1.0).into();
@@ -148,8 +149,8 @@ fn mean_occupancy_time(point: State, footprints: &[TimedState]) -> Option<f64> {
         let s = sample.state.yaw.sin();
         let longitudinal = dx * c + dy * s;
         let lateral = -dx * s + dy * c;
-        if longitudinal.abs() <= EGO_FOOTPRINT.length * 0.5
-            && lateral.abs() <= EGO_FOOTPRINT.width * 0.5
+        if longitudinal.abs() <= EGO_FOOTPRINT.length * 0.5 + FOOTPRINT_EPSILON_M
+            && lateral.abs() <= EGO_FOOTPRINT.width * 0.5 + FOOTPRINT_EPSILON_M
         {
             total += sample.time;
             count += 1;
@@ -213,5 +214,19 @@ mod tests {
         ];
 
         assert_eq!(mean_occupancy_time(point, &footprints), Some(1.0));
+    }
+
+    #[test]
+    fn keeps_the_terminal_footprint_band_at_rotated_headings() {
+        let state = State {
+            yaw: 0.7,
+            ..Default::default()
+        };
+        let nose = offset_state(TimedState { state, time: 0.0 }, EGO_FOOTPRINT.length * 0.5);
+
+        assert_eq!(
+            mean_occupancy_time(nose.state, &[TimedState { state, time: 0.0 }]),
+            Some(0.0)
+        );
     }
 }

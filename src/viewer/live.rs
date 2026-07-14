@@ -32,14 +32,20 @@ pub(crate) struct DiagnosticTrajectoryGizmos;
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub(crate) struct DiagnosticPointGizmos;
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum CameraTarget {
+    Ego,
+    Track,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
     pub center: Vec2,
     pub zoom: f32,
     pub rotation: f32,
-    pub follow_position: bool,
-    pub follow_heading: bool,
-    pub align_track: bool,
+    pub follow: bool,
+    pub align_heading: bool,
+    pub target: CameraTarget,
     pub smooth: bool,
 }
 
@@ -49,9 +55,9 @@ impl CameraState {
             center: ego,
             zoom: DEFAULT_ZOOM,
             rotation: 0.0,
-            follow_position: true,
-            follow_heading: false,
-            align_track: true,
+            follow: true,
+            align_heading: true,
+            target: CameraTarget::Track,
             smooth: true,
         };
     }
@@ -63,9 +69,9 @@ impl Default for CameraState {
             center: Vec2::ZERO,
             zoom: DEFAULT_ZOOM,
             rotation: 0.0,
-            follow_position: true,
-            follow_heading: false,
-            align_track: true,
+            follow: true,
+            align_heading: true,
+            target: CameraTarget::Track,
             smooth: true,
         }
     }
@@ -185,13 +191,11 @@ pub(crate) fn camera_input(
                 * Vec2::new(motion.delta.x, -motion.delta.y)
                 / live.camera.zoom;
             live.camera.center -= drag;
-            live.camera.follow_position = false;
-            live.camera.align_track = false;
+            live.camera.follow = false;
         }
         if mouse.pressed(MouseButton::Right) && motion.delta.x != 0.0 {
             live.camera.rotation += motion.delta.x * 0.005;
-            live.camera.follow_heading = false;
-            live.camera.align_track = false;
+            live.camera.align_heading = false;
         }
     }
 
@@ -199,7 +203,7 @@ pub(crate) fn camera_input(
         return;
     }
     if keys.just_pressed(KeyCode::KeyF) {
-        live.camera.follow_position = !live.camera.follow_position;
+        live.camera.follow = !live.camera.follow;
     }
     if keys.just_pressed(KeyCode::KeyR) {
         live.reset_camera();
@@ -225,14 +229,12 @@ pub(crate) fn camera_input(
         live.camera.center +=
             Rot2::radians(camera.rotation) * pan.normalize() * 500.0 * time.delta_secs()
                 / camera.zoom;
-        live.camera.follow_position = false;
-        live.camera.align_track = false;
+        live.camera.follow = false;
     }
     let rotation_input = keys.pressed(KeyCode::KeyE) as i8 - keys.pressed(KeyCode::KeyQ) as i8;
     if rotation_input != 0 {
         live.camera.rotation += rotation_input as f32 * time.delta_secs();
-        live.camera.follow_heading = false;
-        live.camera.align_track = false;
+        live.camera.align_heading = false;
     }
 }
 
@@ -283,9 +285,9 @@ mod tests {
             center: Vec2::splat(99.0),
             zoom: 2.0,
             rotation: 1.0,
-            follow_position: false,
-            follow_heading: true,
-            align_track: true,
+            follow: false,
+            align_heading: false,
+            target: CameraTarget::Ego,
             smooth: false,
         };
 
@@ -294,9 +296,9 @@ mod tests {
         assert_eq!(camera.center, Vec2::new(3.0, 4.0));
         assert_eq!(camera.zoom, DEFAULT_ZOOM);
         assert_eq!(camera.rotation, 0.0);
-        assert!(camera.follow_position);
-        assert!(!camera.follow_heading);
-        assert!(camera.align_track);
+        assert!(camera.follow);
+        assert!(camera.align_heading);
+        assert!(matches!(camera.target, CameraTarget::Track));
         assert!(camera.smooth);
     }
 
@@ -392,22 +394,20 @@ pub(crate) fn draw(
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
     let ego = interpolate_state(live.previous.ego, live.world.ego, render_alpha);
-    let (target_center, target_rotation) = if live.camera.align_track {
-        let path = Path::new(&live.world.road.centerline);
-        let (s, _) = path.project(ego);
-        let (position, yaw) = path.pose_at(s);
-        (
-            Some(ppx(position)),
-            Some(yaw as f32 - std::f32::consts::FRAC_PI_2),
-        )
-    } else {
-        (
-            live.camera.follow_position.then(|| px(&ego)),
-            live.camera
-                .follow_heading
-                .then(|| ego.yaw as f32 - std::f32::consts::FRAC_PI_2),
-        )
+    let (position, yaw) = match live.camera.target {
+        CameraTarget::Ego => (px(&ego), ego.yaw),
+        CameraTarget::Track => {
+            let path = Path::new(&live.world.road.centerline);
+            let (s, _) = path.project(ego);
+            let (position, yaw) = path.pose_at(s);
+            (ppx(position), yaw)
+        }
     };
+    let target_center = live.camera.follow.then_some(position);
+    let target_rotation = live
+        .camera
+        .align_heading
+        .then_some(yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = if live.camera.smooth {
         1.0 - (-CAMERA_SMOOTH_RATE * time.delta_secs()).exp()
     } else {
@@ -458,10 +458,12 @@ pub(crate) fn draw(
             Color::srgb(0.6, 0.6, 0.6),
         );
     }
-    gizmos.linestrip_2d(
-        samples.iter().map(|&(p, _, _)| ppx(p)),
-        Color::srgb(0.25, 0.5, 0.35),
-    );
+    if state.show_centerline {
+        gizmos.linestrip_2d(
+            samples.iter().map(|&(p, _, _)| ppx(p)),
+            Color::srgb(0.25, 0.5, 0.35),
+        );
+    }
     for &(p, yaw, width) in &samples {
         let offset = [width * yaw.sin(), -width * yaw.cos()];
         gizmos.line_2d(
