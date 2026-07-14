@@ -1,6 +1,5 @@
 # TODO
 
-
 --
 Strip down
 
@@ -36,15 +35,7 @@ Color each band by the time it is occupied (occupancy is actually an interval, s
 - Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
 This works for static obstacles.
 
-
 ## UX
-
---
-Add background grid so it is easier to see movement across the world.
-
-
---
-enhanced camera controls - pan, rotate, follow/detach from ego, reset
 
 --
 UX
@@ -55,47 +46,11 @@ Use a combination of AI generation and open source iconography according to Best
 Symbology:
 Trajectory tree: two levels of hierarchy of branching, very thick edge weights, inside a steering wheel toncreate a disk lockup.
 
-
--- 
-UX
-Use bigger gui elements for the controls, they are tiny currently.
-
-
---
-UX
-Use fonts
-Atkinson Hyperlegible Next (body)
-Atkinson Hyperlegible Mono code, numeric values)
-Space Grotesk (headers)
-
---
-UX
-Revise the user controls menu.
-Use proper hierarchy.
-Separate out the sections for
-Planner selection + config
-Viewer visibility settings
-Metrics
-Diagnostics
-
-Take inspiration from racing video games and fighter pilot HUD.
-
---
-UX
-Add camera controls:
-Zoom
-Pan
-Follow Ego (position, yaw)
-Reset
-
-
 --
 UX
 Make the timescrubbers bigger with big touch targets for the grab handles.
 Use the full page width.
 Put the at the bottom of the screen in dedicated area/container like a video player would have.
-
-
 
 --
 UX
@@ -108,13 +63,6 @@ Curvature
 The x axis (time) should be hard synchronized between all plots.
 
 Show trace for actual Ego in thick white line, trace for planned trajectory in thinner line matching the accent color for semantic "planned" meaning (pink). Link all the semantic meaning colors with a single source of truth color definition.
-
-
-
---
-UX
-Imbue the app with a y2k metal heart aesthetic, but keep the modern ultra minimal clean core.
-App should feel like a mix of Wipeout and Gran Turismo 3 racers.
 
 -- 
 Draw ego future carpet. Carpet represents the region of space that will be occupied by the ego at every point in the future over the planning horizon/duration of trajectory. It is the ego footprint at every tick over entire future trajectory, spatially merged and resulting polygon simplified.

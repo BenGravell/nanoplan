@@ -20,7 +20,7 @@ pub(super) fn world_step(s: State, u: Control, dt: f64) -> State {
 /// command direct acceleration/curvature and the plant slews toward it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommandLimiter {
-    pub(super) applied: Control,
+    pub(crate) applied: Control,
 }
 
 impl CommandLimiter {

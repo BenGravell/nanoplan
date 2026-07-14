@@ -9,7 +9,7 @@ use crate::planning::{
 };
 use crate::rng::Rng;
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
-use crate::simulation::{CommandLimiter, State, collide_with_actors};
+use crate::simulation::{CommandLimiter, Control, State, collide_with_actors};
 use crate::track::{Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
 
@@ -127,6 +127,10 @@ impl LiveWorld {
             self.planner_kind = kind;
             self.planner = kind.build();
         }
+    }
+
+    pub fn actuation(&self) -> Control {
+        self.limiter.applied
     }
 
     pub fn tick(&mut self) {

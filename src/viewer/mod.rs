@@ -14,6 +14,9 @@ pub(crate) const DT: f64 = 0.1;
 pub(crate) struct UiState {
     pub planner: PlannerKind,
     pub preview_s: f32,
+    pub show_grid: bool,
+    pub show_plan: bool,
+    pub show_hud: bool,
     pub show_diag_points: bool,
     pub show_diag_trajectories: bool,
 }
@@ -29,9 +32,13 @@ pub fn run() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
+        .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
         .insert_resource(UiState {
             planner: PlannerKind::BezierIdm,
             preview_s: 3.0,
+            show_grid: true,
+            show_plan: true,
+            show_hud: true,
             show_diag_points: false,
             show_diag_trajectories: false,
         })
@@ -40,6 +47,9 @@ pub fn run() {
             commands.spawn(Camera2d);
         })
         .add_systems(EguiPrimaryContextPass, ui::ui)
-        .add_systems(Update, (live::update, live::draw).chain())
+        .add_systems(
+            Update,
+            (live::camera_input, live::update, live::draw).chain(),
+        )
         .run();
 }
