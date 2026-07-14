@@ -12,7 +12,7 @@
 //! associated with the lane (oncoming, crossing) still falls back to that
 //! same constant-velocity projection. The planner predicting more accurately
 //! than the deliberately-simple TTC metric is the point — the ground-truth
-//! `metrics::collisions` score over the real actor traces is what a better
+//! zero-time `metrics::ttc` result over the real actor traces is what a better
 //! prediction ultimately has to improve.
 //!
 //! The cost splits into two parts with different standing. Hard rules —
@@ -38,8 +38,12 @@
 //! finite differences, so this function stays the single definition of
 //! "good" with no analytically-differentiated twin to drift away from it.
 
-use crate::metrics::{comfort, lane_keeping};
 pub(crate) use crate::planning::constraints::{HardConstraints, Sample};
+
+const ROUTE_CORRIDOR_HALF_WIDTH_M: f64 = 1.75;
+const SOFT_MIN_LON_ACCEL: f64 = -4.05;
+const SOFT_MAX_LON_ACCEL: f64 = 2.40;
+const SOFT_MAX_ABS_LAT_ACCEL: f64 = 4.89;
 
 /// Unsigned curvature through three points, via the Menger curvature
 /// formula (twice the signed area of the triangle they form, over the
@@ -68,10 +72,6 @@ pub(crate) const N_FEATURES: usize = 6;
 /// Weights of the soft features: `point_cost = WEIGHTS · features`. The hard collision/off-road rejection is *not*
 /// in here — it is a fixed rule of [`HardConstraints`], never a learned weight.
 ///
-/// `lane_keeping` is weighted well below the collision/road-edge terms so it
-/// pulls the car to its lane center on an open road without ever fighting an
-/// obstacle swerve that has to leave the lane (which is priced against the
-/// far larger `actor_proximity`/off-road terms).
 pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 2.0, 1.0, 1.0, 3.0];
 
 pub(super) fn soft_features(
@@ -88,32 +88,20 @@ pub(super) fn soft_features(
     // on the road, so it needs to bite hard, not softly.
     let edge = (sample.lateral.abs() - 0.7 * road_half_width).max(0.0);
 
-    // comfort: penalize exceeding nuPlan's empirical accel bounds, each
-    // scaled by its own bound — a large weight on a raw, unscaled accel
-    // overshoot would swamp collision avoidance, since curvature sharp
-    // enough to dodge an actor can be an order of magnitude past a comfort
-    // bound. Lateral accel is speed² · curvature — algebraically the same
-    // quantity `comfort::Kinematics` measures as `yaw_rate * speed`, since
-    // this kinematic model defines yaw_rate = speed * curvature.
-    let lon_scale = (comfort::MAX_LON_ACCEL - comfort::MIN_LON_ACCEL) / 2.0;
-    let lon_over = ((sample.accel - comfort::MAX_LON_ACCEL).max(0.0)
-        + (comfort::MIN_LON_ACCEL - sample.accel).max(0.0))
+    // Planner-local soft accel envelope, independent of rollout scoring.
+    // Each excess is scaled by its own bound so avoidance still dominates.
+    // Lateral accel is speed² · curvature.
+    let lon_scale = (SOFT_MAX_LON_ACCEL - SOFT_MIN_LON_ACCEL) / 2.0;
+    let lon_over = ((sample.accel - SOFT_MAX_LON_ACCEL).max(0.0)
+        + (SOFT_MIN_LON_ACCEL - sample.accel).max(0.0))
         / lon_scale;
     let lat_accel = sample.speed * sample.speed * sample.curvature;
-    let lat_over =
-        (lat_accel.abs() - comfort::MAX_ABS_LAT_ACCEL).max(0.0) / comfort::MAX_ABS_LAT_ACCEL;
+    let lat_over = (lat_accel.abs() - SOFT_MAX_ABS_LAT_ACCEL).max(0.0) / SOFT_MAX_ABS_LAT_ACCEL;
 
-    // lane keeping: a hinge on straddling the lane line into the next lane —
-    // zero anywhere inside the ego's own lane, growing once the offset passes
-    // a lane half-width, normalized so being a full lane width off costs ~1
-    // before the weight. Hinged at the lane edge (not at center) on purpose:
-    // it must not fight the planners' own centerline pulls or perturb normal
-    // in-lane driving — that would, among other things, destabilize iLQR's
-    // finite-difference search, whose trajectories live near center. The
-    // within-lane *bias* the `lane_keeping` metric also scores is left to
-    // those centerline pulls; a per-sample cost has no window to measure it.
-    let lane_over = (sample.lateral.abs() - lane_keeping::LANE_HALF_WIDTH_M).max(0.0)
-        / lane_keeping::LANE_HALF_WIDTH_M;
+    // Discourage prolonged excursions into the opposing route corridor while
+    // leaving the full road width available for racing lines and overtakes.
+    let route_over =
+        (sample.lateral.abs() - ROUTE_CORRIDOR_HALF_WIDTH_M).max(0.0) / ROUTE_CORRIDOR_HALF_WIDTH_M;
 
     [
         proximity,
@@ -121,7 +109,7 @@ pub(super) fn soft_features(
         sample.heading_err * sample.heading_err,
         lon_over * lon_over,
         lat_over * lat_over,
-        lane_over * lane_over,
+        route_over * route_over,
     ]
 }
 
@@ -197,8 +185,8 @@ mod tests {
     }
 
     #[test]
-    fn lane_keeping_feature_is_zero_in_lane_and_grows_when_straddling() {
-        let feat = |lateral: f64| {
+    fn route_corridor_cost_starts_outside_the_ego_side() {
+        let feature = |lateral: f64| {
             features(
                 &Sample {
                     lateral,
@@ -211,12 +199,8 @@ mod tests {
             )
             .unwrap()[5]
         };
-        // centered and anywhere inside the ego's own lane: no lane-keeping cost
-        assert_eq!(feat(0.0), 0.0);
-        assert_eq!(feat(lane_keeping::LANE_HALF_WIDTH_M - 0.01), 0.0);
-        // straddling into the next lane costs, and more the further across
-        assert!(feat(lane_keeping::LANE_HALF_WIDTH_M + 0.5) > 0.0);
-        assert!(feat(3.5) > feat(2.5));
+        assert_eq!(feature(ROUTE_CORRIDOR_HALF_WIDTH_M - 0.01), 0.0);
+        assert!(feature(ROUTE_CORRIDOR_HALF_WIDTH_M + 0.5) > 0.0);
     }
 
     #[test]
@@ -285,7 +269,7 @@ mod tests {
             heading_err: 0.3,
             speed: 14.0,
             curvature: 0.1, // lat accel 19.6, past the comfort bound
-            accel: 4.0,     // past MAX_LON_ACCEL
+            accel: 4.0,     // past SOFT_MAX_LON_ACCEL
             t: 1.0,
         };
         let actor = State {

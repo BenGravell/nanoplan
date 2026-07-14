@@ -140,7 +140,7 @@ const CONTINUITY_WEIGHT: f64 = 0.15;
 // within a few ticks, low enough to smooth over single-tick sampling jitter.
 const COMMIT_SMOOTHING: f64 = 0.5;
 // How far inside the road's own drivable half-width ([`Road::half_width`],
-// the bound the `drivable_area` metric and the shared cost score against)
+// the bound the `ttc` metric and the shared cost score against)
 // RRT* holds its detours, so a bypass never scores a "successful" avoidance
 // by driving right up against the true edge. Subtracted from the road's
 // actual half-width per plan (see `drivable_bound`) rather than a fixed
@@ -246,7 +246,7 @@ fn steer_cost(
         // only the *target* d (see the bypass-seeding comment in `plan`)
         // still let some edges drift off-road mid-segment, caught the same
         // way as the other structural bugs here: running the batch runner
-        // over varied synthetic runs and finding `drivable_area`
+        // over varied synthetic runs and finding `ttc`
         // scoring 0 despite every sampled *target* being in-bounds. This
         // is tighter than the shared cost function's own road-edge check
         // (the road's `half_width`), on purpose: a bypass should never count

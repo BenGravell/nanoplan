@@ -1,9 +1,8 @@
-//! Progress ratio: the ego's station rate at this tick relative to driving
-//! at the vehicle's physical maximum speed, clamped to [0, 1]. Smooth —
-//! aggregates by average.
-//! ponytail: no expert trajectory; the physical envelope stands in
+//! Forward progress along the race track, normalized by the vehicle's
+//! drag-limited terminal speed and clamped to [0, 1].
 
 use crate::metrics::TickCtx;
+use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 
 pub fn score(ctx: &TickCtx, i: usize) -> f64 {
     let station = ctx.station;
@@ -15,5 +14,5 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
     } else {
         0.0
     };
-    (ds / ctx.dt / ctx.max_speed.max(0.1)).clamp(0.0, 1.0)
+    (ds / ctx.dt / *MAX_TERMINAL_SPEED_MPS).clamp(0.0, 1.0)
 }

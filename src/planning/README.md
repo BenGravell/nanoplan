@@ -206,7 +206,7 @@ than inventing new ones:
   point proxy to any actor's predicted position, or further than
   `road_half_width` from the centerline. That bound is the road's *actual*
   drivable half-width (`Road::half_width`, the same value used to generate
-  the barrier geometry that `drivable_area` scores), passed in per plan
+  the barrier geometry that `ttc` scores), passed in per plan
   rather than read from a fixed constant — so on a narrow street the reject
   fires at the true edge. A planner should reject these outright, not merely
   disfavor them.
@@ -227,17 +227,15 @@ than inventing new ones:
   oncoming and crossing traffic fall back to `prediction::project`, the
   constant-velocity model `metrics::ttc` scores against. The planner
   predicting more accurately than the deliberately-simple TTC metric is the
-  point — the ground-truth `metrics::collisions` score over the real traces
+  point — the ground-truth zero-time `metrics::ttc` result over the real traces
   is the bar a better prediction has to clear.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
-  the hard point-collision proxy), road-edge proximity, comfort (longitudinal
-  and lateral accel) tracked against `comfort`'s own empirical bounds, and lane keeping —
-  a hinge on straddling the lane line into the next lane, aligned with the
-  `lane_keeping` metric and weighted well below the collision/off-road terms
-  so it never fights an obstacle swerve. Lateral accel is
+  the hard point-collision proxy), road-edge proximity, and comfort (longitudinal
+  and lateral accel) tracked against a planner-local soft envelope, plus a
+  route-corridor term that discourages prolonged travel on the opposing side
+  without scoring lane centering. Lateral accel is
   `speed² × curvature` — algebraically the same quantity
-  `comfort::Kinematics` measures as `yaw_rate × speed`, since the kinematic
-  model defines `yaw_rate = speed × curvature`.
+  `comfort::Kinematics` measures directly from velocity changes.
 
 **No analytic derivatives, by construction.** `point_cost` takes
 already-known numbers — position, speed, curvature, accel — and returns a

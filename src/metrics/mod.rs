@@ -2,12 +2,11 @@
 //! one module per metric.
 //!
 //! Every metric is a per-tick score in [0, 1]. Rollout values aggregate the
-//! per-tick scores with a per-metric rule: event-driven metrics (collisions,
-//! drivable area, driving direction, TTC) take the worst case (min) — one bad
-//! tick is a violation — while smooth quantities (progress and comfort)
-//! take the average; making-progress thresholds the aggregated
-//! progress ratio, as in nuPlan. The composite score multiplies hard gates
-//! by a weighted average of the remaining race-quality signals. Everything here is a pure
+//! per-tick scores with a per-metric rule: event-driven TTC takes the worst
+//! case (min) — one bad tick is a violation — while smooth quantities
+//! (progress and comfort)
+//! take the average. The composite score multiplies hard gates by a weighted
+//! average of the remaining race-quality signals. Everything here is a pure
 //! function of simulation outputs (ego trace, actor traces, and the
 //! [`Road`] geometry) — planner internals are off limits.
 //!
@@ -19,12 +18,7 @@
 //! module and adding one row here, and no consumer indexes scores by magic
 //! number.
 
-pub mod collisions;
 pub mod comfort;
-pub mod drivable_area;
-pub mod driving_direction;
-pub mod lane_keeping;
-pub mod making_progress;
 pub mod progress;
 pub mod ttc;
 
@@ -49,14 +43,10 @@ pub struct TickCtx<'a> {
     pub actors_at: &'a [Vec<State>],
     /// Ego arc length along the route at every tick.
     pub station: &'a [f64],
-    /// Ego signed lateral offset from the centerline at every tick.
-    pub lateral: &'a [f64],
     /// Tickwise ego kinematics (accels and yaw rates).
     pub kinematics: &'a comfort::Kinematics,
-    /// Physical racing-speed envelope used to normalize progress.
-    pub max_speed: f64,
-    /// Whether the ego footprint is inside the road geometry at each tick.
-    pub drivable_area: &'a [bool],
+    /// Road geometry, including its static side barriers.
+    pub road: &'a Road,
     pub dt: f64,
 }
 
@@ -76,46 +66,21 @@ pub struct MetricSpec {
     pub score: fn(&TickCtx, usize) -> f64,
     /// Rollout value from this metric's per-tick score column
     /// ([`aggregation::min`] for event-driven metrics, [`aggregation::avg`]
-    /// for smooth quantities, or a metric-specific rule like
-    /// [`making_progress::aggregate`]).
+    /// for smooth quantities).
     pub aggregate: fn(&TickCtx, &[f64]) -> f64,
     pub role: CompositeRole,
 }
 
 /// The metric registry: row order defines score-array order everywhere.
-pub const METRICS: [MetricSpec; 8] = [
-    MetricSpec {
-        label: "no at-fault collisions",
-        score: collisions::score,
-        aggregate: agg::min,
-        role: CompositeRole::Multiplier,
-    },
-    MetricSpec {
-        label: "drivable area",
-        score: drivable_area::score,
-        aggregate: agg::min,
-        role: CompositeRole::Multiplier,
-    },
-    MetricSpec {
-        label: "driving direction",
-        score: driving_direction::score,
-        aggregate: agg::min,
-        role: CompositeRole::Multiplier,
-    },
-    MetricSpec {
-        label: "making progress",
-        score: making_progress::score,
-        aggregate: making_progress::aggregate,
-        role: CompositeRole::Multiplier,
-    },
+pub const METRICS: [MetricSpec; 3] = [
     MetricSpec {
         label: "TTC within bound",
         score: ttc::score,
         aggregate: agg::min,
-        role: CompositeRole::Weighted(5.0),
+        role: CompositeRole::Multiplier,
     },
     MetricSpec {
-        label: "progress ratio",
+        label: "progress",
         score: progress::score,
         aggregate: agg::avg,
         role: CompositeRole::Weighted(5.0),
@@ -124,13 +89,7 @@ pub const METRICS: [MetricSpec; 8] = [
         label: "comfort",
         score: comfort::score,
         aggregate: agg::avg,
-        role: CompositeRole::Weighted(2.0),
-    },
-    MetricSpec {
-        label: "lane keeping",
-        score: lane_keeping::score,
-        aggregate: agg::avg,
-        role: CompositeRole::Weighted(2.0),
+        role: CompositeRole::Weighted(0.001),
     },
 ];
 
@@ -165,22 +124,17 @@ pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
         return Metrics::default();
     }
     let path = Path::new(&road.centerline);
-    let frenet: Vec<(f64, f64)> = ego.iter().map(|s| path.project(s.position())).collect();
-    let station: Vec<f64> = frenet.iter().map(|f| f.0).collect();
-    let lateral: Vec<f64> = frenet.iter().map(|f| f.1).collect();
+    let station: Vec<f64> = ego.iter().map(|s| path.project(s.position()).0).collect();
     let actors_at: Vec<Vec<State>> = (0..n)
         .map(|i| actors.iter().map(|a| a[i]).collect())
         .collect();
     let kinematics = comfort::Kinematics::new(ego, road.dt);
-    let drivable_area = drivable_area::compliance(ego, road);
     let ctx = TickCtx {
         ego,
         actors_at: &actors_at,
         station: &station,
-        lateral: &lateral,
         kinematics: &kinematics,
-        max_speed: road.target_speed,
-        drivable_area: &drivable_area,
+        road,
         dt: road.dt,
     };
 
@@ -208,6 +162,7 @@ pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 
     const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
     const DT: f64 = 0.1;
@@ -229,7 +184,7 @@ mod tests {
 
     #[test]
     fn perfect_cruise_scores_one_every_tick() {
-        let m = evaluate(&cruise(10.0, 200), &[], &road());
+        let m = evaluate(&cruise(*MAX_TERMINAL_SPEED_MPS, 20), &[], &road());
         assert!(
             m.per_tick
                 .iter()
@@ -237,6 +192,12 @@ mod tests {
         );
         assert!(m.aggregate.iter().all(|a| (a - 1.0).abs() < 1e-9));
         assert!((m.score - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn progress_uses_the_physical_terminal_speed() {
+        let m = evaluate(&cruise(*MAX_TERMINAL_SPEED_MPS / 2.0, 20), &[], &road());
+        assert!((m.aggregate[1] - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -261,69 +222,49 @@ mod tests {
     }
 
     #[test]
-    fn harsh_braking_is_uncomfortable_only_while_braking() {
+    fn race_braking_within_vehicle_limit_is_fully_comfortable() {
         let mut ego = cruise(10.0, 200);
         for (i, s) in ego.iter_mut().enumerate().skip(100) {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
         }
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[6], 1.0);
-        assert_eq!(m.at(110).0[6], 0.0);
-        // comfort is a smooth quantity: averaged, not zeroed by the event
-        assert!(m.aggregate[6] > 0.0 && m.aggregate[6] < 1.0);
+        assert_eq!(m.at(50).0[2], 1.0);
+        assert_eq!(m.at(110).0[2], 1.0);
+        assert_eq!(m.aggregate[2], 1.0);
     }
 
     #[test]
-    fn driving_backwards_is_noncompliant() {
+    fn comfort_only_breaks_tiny_progress_ties() {
+        let uncomfortable = aggregation::composite(&METRICS, &[1.0, 0.5, 0.0]);
+        let comfortable = aggregation::composite(&METRICS, &[1.0, 0.5, 1.0]);
+        let tiny_progress_edge = aggregation::composite(&METRICS, &[1.0, 0.500_3, 0.0]);
+        assert!(comfortable - uncomfortable < 0.000_2);
+        assert!(tiny_progress_edge > comfortable);
+        assert_eq!(aggregation::composite(&METRICS, &[0.0, 1.0, 1.0]), 0.0);
+    }
+
+    #[test]
+    fn progress_clamps_backward_motion_to_zero() {
         let mut ego = cruise(10.0, 200);
         ego.reverse();
         let m = evaluate(&ego, &[], &road());
-        // once the trailing window fills, direction is fully violated
-        assert_eq!(m.at(50).0[2], 0.0);
-        assert_eq!(m.aggregate[2], 0.0);
-        assert_eq!(m.aggregate[3], 0.0); // no forward progress either
-        assert_eq!(m.score, 0.0);
+        assert_eq!(m.at(50).0[1], 0.0);
+        assert_eq!(m.aggregate[1], 0.0);
     }
 
     #[test]
-    fn leaving_the_road_once_zeroes_drivable_area() {
+    fn leaving_the_road_once_zeroes_ttc() {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[1], 0.0);
-        assert_eq!(m.at(51).0[1], 1.0);
-        assert_eq!(m.aggregate[1], 0.0); // min aggregation: one bad tick
+        assert_eq!(m.at(50).0[0], 0.0);
+        assert_eq!(m.at(51).0[0], 1.0);
+        assert_eq!(m.aggregate[0], 0.0); // min aggregation: one bad tick
         assert_eq!(m.score, 0.0);
     }
 
     #[test]
-    fn lane_keeping_penalizes_sustained_bias_and_straddling() {
-        let biased = |offset: f64| -> Vec<State> {
-            (0..=200)
-                .map(|i| State {
-                    x: 10.0 * DT * i as f64,
-                    y: offset,
-                    speed: 10.0,
-                    ..Default::default()
-                })
-                .collect()
-        };
-        let lk = |ego: &[State]| evaluate(ego, &[], &road()).aggregate[7];
-        // a centered cruise keeps its lane perfectly
-        assert_eq!(lk(&cruise(10.0, 200)), 1.0);
-        // sustained one-sided bias scores below a full 1 …
-        let bias = lk(&biased(1.2));
-        assert!(bias > 0.0 && bias < 0.8, "biased lane keeping {bias}");
-        // … and straddling the lane line the whole way scores worse still
-        let straddle = lk(&biased(1.7));
-        assert!(
-            straddle < bias,
-            "straddle {straddle} not worse than bias {bias}"
-        );
-    }
-
-    #[test]
-    fn drivable_area_tracks_the_road_half_width() {
+    fn ttc_tracks_the_road_half_width() {
         // the same 4 m lateral excursion is on a wide road but off a narrow
         // one: the barrier geometry follows the road's own half-width, not a
         // fixed constant
@@ -339,7 +280,7 @@ mod tests {
             barriers: crate::simulation::road_side_barriers(&road().centerline, 3.5),
             ..road()
         };
-        assert_eq!(evaluate(&ego, &[], &wide).aggregate[1], 1.0);
-        assert_eq!(evaluate(&ego, &[], &narrow).aggregate[1], 0.0);
+        assert_eq!(evaluate(&ego, &[], &wide).aggregate[0], 1.0);
+        assert_eq!(evaluate(&ego, &[], &narrow).aggregate[0], 0.0);
     }
 }

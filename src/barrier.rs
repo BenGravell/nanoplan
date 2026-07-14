@@ -194,6 +194,10 @@ pub(crate) fn collide_with_road_barriers(prev: State, state: State, road: &Road)
     collide_with_barriers(prev, state, barriers.iter().copied())
 }
 
+pub(crate) fn collides_with_road_barrier(state: State, road: &Road) -> bool {
+    collide_with_road_barriers(state, state, road) != state
+}
+
 fn closest_centerline_segment(centerline: &[[f64; 2]], p: Position) -> Option<usize> {
     centerline
         .windows(2)
