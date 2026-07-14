@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use nanoplan::PlannerKind;
 
+mod carpet;
 mod draw;
 mod live;
 mod ui;
@@ -15,6 +16,7 @@ pub(crate) struct UiState {
     pub planner: PlannerKind,
     pub preview_s: f32,
     pub show_grid: bool,
+    pub show_carpet: bool,
     pub show_plan: bool,
     pub show_hud: bool,
     pub show_diag_points: bool,
@@ -32,11 +34,13 @@ pub fn run() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
+        .init_gizmo_group::<carpet::EgoCarpetGizmos>()
         .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
         .insert_resource(UiState {
             planner: PlannerKind::BezierIdm,
             preview_s: 3.0,
             show_grid: true,
+            show_carpet: true,
             show_plan: true,
             show_hud: true,
             show_diag_points: false,
@@ -49,7 +53,13 @@ pub fn run() {
         .add_systems(EguiPrimaryContextPass, ui::ui)
         .add_systems(
             Update,
-            (live::camera_input, live::update, live::draw).chain(),
+            (
+                live::camera_input,
+                live::update,
+                carpet::configure,
+                live::draw,
+            )
+                .chain(),
         )
         .run();
 }

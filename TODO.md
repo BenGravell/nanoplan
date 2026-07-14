@@ -26,11 +26,6 @@ Taxonomy of planners
 - Local optimization (iLQR)
 
 
-## Ego carpet
-- Take the locus of all ego footprint. Use a finer time grid than 0.1s to ensure spatial overlap at high speed.
-Slice the locus into oriented rectangular bands.
-Color each band by the time it is occupied (occupancy is actually an interval, so choose min or max or avg).
-
 ## Cost map.
 - Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
 This works for static obstacles.

@@ -8,6 +8,7 @@ use nanoplan::planning::{Latency, LatencyStats};
 use nanoplan::world::LiveWorld;
 use nanoplan::{CAR_FOOTPRINT, Path, PlannerKind, State};
 
+use super::carpet::{self, EgoCarpetGizmos};
 use super::draw::{ACCENT, draw_agent, draw_car, ppx, px};
 use super::{DT, UiState};
 
@@ -318,6 +319,7 @@ mod tests {
 
 pub(crate) fn draw(
     mut gizmos: Gizmos,
+    mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
     state: Res<UiState>,
     mut live: NonSendMut<Live>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
@@ -368,6 +370,10 @@ pub(crate) fn draw(
     }
 
     let w = &live.world;
+
+    if state.show_carpet && !w.plan.is_empty() {
+        carpet::draw(&mut carpet_gizmos, ego, &w.plan, w.dt);
+    }
 
     let xs = ((w.ego.x - 250.0) / 5.0).floor() as i64..=((w.ego.x + 750.0) / 5.0).ceil() as i64;
     let samples: Vec<_> = xs

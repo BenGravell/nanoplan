@@ -150,6 +150,7 @@ pub(crate) fn ui(
                     section_heading(ui, "VIEWER VISIBILITY");
                     ui.horizontal_wrapped(|ui| {
                         ui.checkbox(&mut state.show_grid, "Grid");
+                        ui.checkbox(&mut state.show_carpet, "Ego carpet");
                         ui.checkbox(&mut state.show_plan, "Planned path");
                         ui.checkbox(&mut state.show_hud, "Driving HUD");
                     });
