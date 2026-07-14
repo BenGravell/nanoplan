@@ -11,6 +11,7 @@ mod live;
 mod ui;
 
 pub(crate) const DT: f64 = 0.1;
+const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
 
 #[derive(Resource)]
 pub(crate) struct UiState {
@@ -58,7 +59,11 @@ pub fn run() {
         .init_gizmo_group::<carpet::EgoCarpetGizmos>()
         .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticPointGizmos>()
-        .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
+        .insert_resource(ClearColor(Color::srgb_u8(
+            CANVAS_RGB.0,
+            CANVAS_RGB.1,
+            CANVAS_RGB.2,
+        )))
         .init_resource::<UiState>()
         .init_non_send::<live::Live>()
         .add_systems(Startup, |mut commands: Commands| {

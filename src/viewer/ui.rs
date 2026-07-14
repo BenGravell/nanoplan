@@ -9,13 +9,16 @@ use super::UiState;
 use super::friction_box;
 use super::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
-const PINK: egui::Color32 = egui::Color32::from_rgb(255, 58, 190);
-const BLUE: egui::Color32 = egui::Color32::from_rgb(40, 160, 255);
+const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
+const BLUE: egui::Color32 = egui::Color32::from_rgb(45, 135, 160);
 const RED: egui::Color32 = egui::Color32::from_rgb(255, 65, 80);
-const TEXT: egui::Color32 = egui::Color32::from_rgb(226, 241, 250);
-const DIM: egui::Color32 = egui::Color32::from_rgb(105, 135, 153);
-const PANEL: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 15, 24, 242);
-const STEEL: egui::Color32 = egui::Color32::from_rgb(48, 70, 84);
+pub(super) const TEXT: egui::Color32 = egui::Color32::from_rgb(25, 29, 30);
+pub(super) const DIM: egui::Color32 = egui::Color32::from_rgb(95, 108, 111);
+const PANEL: egui::Color32 = egui::Color32::from_rgb(250, 250, 246);
+pub(super) const SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 252);
+const CONTROL: egui::Color32 = egui::Color32::from_rgb(232, 235, 229);
+pub(super) const FAINT: egui::Color32 = egui::Color32::from_rgb(224, 229, 223);
+pub(super) const STEEL: egui::Color32 = egui::Color32::from_rgb(147, 158, 156);
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) enum ControlTab {
@@ -65,7 +68,6 @@ fn viewer_layout(
     }
     let frame = egui::Frame::new()
         .fill(PANEL)
-        .stroke(egui::Stroke::new(1.0, STEEL))
         .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
     if compact {
         egui::Panel::left("control_deck")
@@ -104,18 +106,12 @@ fn control_deck(
     active_tab: &mut ControlTab,
     compact: bool,
 ) {
-    let title = || {
-        egui::RichText::new("NANOPLAN")
-            .font(heading_font(if compact { 20.0 } else { 24.0 }))
-            .color(TEXT)
-    };
+    brand_header(ui, compact);
     if compact {
-        ui.label(title());
         ui.add_space(4.0);
         transport_controls(ui, state, live);
         ui.add_space(6.0);
     } else {
-        ui.label(title());
         ui.add_space(12.0);
         transport_controls(ui, state, live);
         ui.add_space(9.0);
@@ -136,7 +132,12 @@ fn control_deck(
                 if ui
                     .add_sized(
                         [width, 32.0],
-                        egui::Button::new(egui::RichText::new(title).size(12.0)).selected(selected),
+                        egui::Button::new(
+                            egui::RichText::new(title)
+                                .font(caps_font(12.0))
+                                .color(if selected { egui::Color32::WHITE } else { TEXT }),
+                        )
+                        .selected(selected),
                     )
                     .clicked()
                 {
@@ -150,7 +151,11 @@ fn control_deck(
     egui::ScrollArea::vertical().show(ui, |ui| {
             match *active_tab {
                 ControlTab::Planner => {
-                    ui.label(egui::RichText::new("ACTIVE PLANNER").small().color(DIM));
+                    ui.label(
+                        egui::RichText::new("ACTIVE PLANNER")
+                            .font(caps_font(11.0))
+                            .color(DIM),
+                    );
                     egui::ComboBox::from_id_salt("planner")
                         .selected_text(state.planner.name())
                         .width(ui.available_width())
@@ -263,9 +268,13 @@ fn control_deck(
                         .default_open(false)
                         .show(ui, |ui| {
                             egui::Grid::new("latency").striped(true).show(ui, |ui| {
-                                ui.weak("SEAM");
-                                ui.weak("MEAN");
-                                ui.weak("MAX");
+                                for heading in ["SEAM", "MEAN", "MAX"] {
+                                    ui.label(
+                                        egui::RichText::new(heading)
+                                            .font(caps_font(11.0))
+                                            .color(DIM),
+                                    );
+                                }
                                 ui.end_row();
                                 for seam in &live.latency.seams {
                                     ui.label(seam.name);
@@ -305,12 +314,29 @@ fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
     });
 }
 
+fn brand_header(ui: &mut egui::Ui, compact: bool) {
+    let width = ui.available_width();
+    egui::Frame::new()
+        .fill(ORANGE)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_min_width(width - 16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("NANOPLAN")
+                        .font(caps_font(if compact { 20.0 } else { 24.0 }))
+                        .color(egui::Color32::WHITE),
+                );
+            });
+        });
+}
+
 fn equal_button_width(ui: &egui::Ui, count: usize) -> f32 {
     (ui.available_width() - ui.spacing().item_spacing.x * (count - 1) as f32) / count as f32
 }
 
 fn configure(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
+    ctx.set_theme(egui::Theme::Light);
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "atkinson".into(),
@@ -326,10 +352,12 @@ fn configure(ctx: &egui::Context) {
         ))
         .into(),
     );
-    fonts.font_data.insert(
-        "space_grotesk".into(),
-        egui::FontData::from_static(include_bytes!("../../assets/fonts/SpaceGrotesk.ttf")).into(),
-    );
+    let mut space_grotesk_bold =
+        egui::FontData::from_static(include_bytes!("../../assets/fonts/SpaceGrotesk.ttf"));
+    space_grotesk_bold.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", 700.0)]);
+    fonts
+        .font_data
+        .insert("space_grotesk_bold".into(), space_grotesk_bold.into());
     fonts
         .families
         .get_mut(&egui::FontFamily::Proportional)
@@ -341,12 +369,12 @@ fn configure(ctx: &egui::Context) {
         .unwrap()
         .insert(0, "atkinson_mono".into());
     fonts.families.insert(
-        egui::FontFamily::Name("heading".into()),
-        vec!["space_grotesk".into(), "atkinson".into()],
+        egui::FontFamily::Name("caps".into()),
+        vec!["space_grotesk_bold".into(), "atkinson".into()],
     );
     ctx.set_fonts(fonts);
 
-    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.spacing.item_spacing = egui::vec2(10.0, 9.0);
     style.spacing.interact_size = egui::vec2(44.0, 32.0);
     style.spacing.button_padding = egui::vec2(12.0, 7.0);
@@ -365,34 +393,48 @@ fn configure(ctx: &egui::Context) {
     style.visuals.override_text_color = Some(TEXT);
     style.visuals.window_fill = PANEL;
     style.visuals.panel_fill = PANEL;
-    style.visuals.window_stroke = egui::Stroke::new(1.0, STEEL);
-    style.visuals.window_corner_radius = 3.into();
-    style.visuals.faint_bg_color = egui::Color32::from_rgb(15, 24, 35);
-    style.visuals.extreme_bg_color = egui::Color32::from_rgb(7, 11, 18);
-    style.visuals.selection.bg_fill = PINK;
-    style.visuals.selection.stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.window_stroke = egui::Stroke::NONE;
+    style.visuals.window_corner_radius = 1.into();
+    style.visuals.faint_bg_color = FAINT;
+    style.visuals.extreme_bg_color = SURFACE;
+    style.visuals.code_bg_color = CONTROL;
+    style.visuals.hyperlink_color = ORANGE;
+    style.visuals.selection.bg_fill = ORANGE;
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     style.visuals.slider_trailing_fill = true;
-    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(18, 29, 42);
-    style.visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(18, 29, 42);
-    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, STEEL);
-    style.visuals.widgets.inactive.corner_radius = 2.into();
-    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(25, 55, 76);
-    style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(25, 55, 76);
-    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BLUE);
-    style.visuals.widgets.hovered.corner_radius = 2.into();
-    style.visuals.widgets.active.bg_fill = PINK;
-    style.visuals.widgets.active.weak_bg_fill = PINK;
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, TEXT);
-    style.visuals.widgets.active.corner_radius = 2.into();
-    ctx.set_style_of(egui::Theme::Dark, style);
+    style.visuals.widgets.noninteractive.bg_fill = PANEL;
+    style.visuals.widgets.noninteractive.weak_bg_fill = PANEL;
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+    style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.inactive.bg_fill = CONTROL;
+    style.visuals.widgets.inactive.weak_bg_fill = CONTROL;
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+    style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.inactive.corner_radius = 1.into();
+    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(255, 210, 105);
+    style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(255, 210, 105);
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+    style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.hovered.corner_radius = 1.into();
+    style.visuals.widgets.open.bg_fill = SURFACE;
+    style.visuals.widgets.open.weak_bg_fill = SURFACE;
+    style.visuals.widgets.open.bg_stroke = egui::Stroke::NONE;
+    style.visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.open.corner_radius = 1.into();
+    style.visuals.widgets.active.bg_fill = ORANGE;
+    style.visuals.widgets.active.weak_bg_fill = ORANGE;
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.widgets.active.corner_radius = 1.into();
+    ctx.set_style_of(egui::Theme::Light, style);
 }
 
-fn heading_font(size: f32) -> egui::FontId {
-    egui::FontId::new(size, egui::FontFamily::Name("heading".into()))
+pub(super) fn caps_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name("caps".into()))
 }
 
 fn metric(ui: &mut egui::Ui, label: &str, value: String) {
-    ui.label(egui::RichText::new(label).small().color(DIM));
+    ui.label(egui::RichText::new(label).font(caps_font(11.0)).color(DIM));
     ui.monospace(value);
     ui.end_row();
 }
@@ -405,7 +447,6 @@ fn compact_hud(ui: &mut egui::Ui, live: &Live, width: f32) {
         .frame(
             egui::Frame::new()
                 .fill(PANEL)
-                .stroke(egui::Stroke::new(1.0, STEEL))
                 .inner_margin(egui::Margin::same(8)),
         )
         .show(ui, |ui| {
@@ -415,14 +456,15 @@ fn compact_hud(ui: &mut egui::Ui, live: &Live, width: f32) {
                     ("ACCEL", format!("{:+.1} m/s²", actuation.acceleration)),
                     ("CURV", format!("{:+.3} m⁻¹", actuation.curvature)),
                 ] {
-                    ui.label(egui::RichText::new(label).size(10.0).color(DIM));
+                    ui.label(egui::RichText::new(label).font(caps_font(10.0)).color(DIM));
                     ui.monospace(value);
                     ui.add_space(4.0);
                 }
-                let size = ui.available_width().min(ui.available_height());
-                let (plot, _) =
-                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-                friction_box::draw(ui.painter(), plot, &live.friction_box);
+                let (plot, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), ui.available_height()),
+                    egui::Sense::hover(),
+                );
+                friction_box::draw(ui.painter(), plot, &live.friction_box, live.world.ego.speed);
             });
             hud_accessibility(ui);
         });
@@ -445,11 +487,7 @@ fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
     egui::Panel::right("driving_hud")
         .exact_size(width)
         .resizable(false)
-        .frame(
-            egui::Frame::new()
-                .fill(PANEL)
-                .stroke(egui::Stroke::new(1.0, STEEL)),
-        )
+        .frame(egui::Frame::new().fill(PANEL))
         .show(ui, |ui| {
             let rect = ui.max_rect();
             let painter = ui.painter_at(rect);
@@ -459,7 +497,7 @@ fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
                 egui::pos2(center_x, top + 10.0),
                 egui::Align2::CENTER_TOP,
                 "SPEED",
-                egui::FontId::monospace(10.0),
+                caps_font(10.0),
                 DIM,
             );
             painter.text(
@@ -482,7 +520,7 @@ fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
                 egui::pos2(center_x + 6.0, top + 178.0),
             );
             let accel_zero = accel_track.center().y;
-            painter.rect_filled(accel_track, 2.0, egui::Color32::from_white_alpha(20));
+            painter.rect_filled(accel_track, 2.0, FAINT);
             painter.line_segment(
                 [
                     egui::pos2(accel_track.left() - 5.0, accel_zero),
@@ -517,7 +555,7 @@ fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
                 egui::pos2(center_x - 68.0, top + 224.0),
                 egui::pos2(center_x + 68.0, top + 236.0),
             );
-            painter.rect_filled(curve_track, 2.0, egui::Color32::from_white_alpha(20));
+            painter.rect_filled(curve_track, 2.0, FAINT);
             painter.line_segment(
                 [
                     egui::pos2(center_x, curve_track.top() - 5.0),
@@ -551,6 +589,7 @@ fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
                     egui::vec2(rect.width(), 184.0),
                 ),
                 &live.friction_box,
+                speed,
             );
             hud_accessibility(ui);
         });
@@ -575,7 +614,7 @@ mod tests {
         ControlTab, UiState, compact_layout, compact_rail_widths, configure, signed_fraction,
         viewer_layout,
     };
-    use crate::viewer::live::Live;
+    use crate::viewer::{CANVAS_RGB, live::Live};
 
     const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
         ("phone-iphone-se-3", egui::vec2(667.0, 375.0)),
@@ -646,6 +685,11 @@ mod tests {
                             ctx.clone(),
                             "viewer_render_test".into(),
                             egui::UiBuilder::new().max_rect(ctx.content_rect()),
+                        );
+                        root.painter().rect_filled(
+                            root.max_rect(),
+                            0.0,
+                            egui::Color32::from_rgb(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2),
                         );
                         viewer_layout(&mut root, &mut state.ui, &mut state.live, &mut state.tab);
                     },

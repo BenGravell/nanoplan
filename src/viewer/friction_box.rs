@@ -4,7 +4,10 @@ use std::collections::VecDeque;
 
 use bevy_egui::egui;
 use nanoplan::State;
+use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+
+use super::ui::{DIM, FAINT, STEEL, SURFACE, TEXT, caps_font};
 
 const COMFORT_QUANTILES: [(f32, egui::Color32); 4] = [
     (0.50, egui::Color32::from_rgb(64, 210, 145)),
@@ -62,54 +65,58 @@ impl FrictionBox {
     }
 }
 
-pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &FrictionBox) {
-    let plot = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.top() + 94.0),
-        egui::vec2(144.0, 144.0),
-    );
+pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &FrictionBox, speed: f64) {
+    let plot = plot_rect(rect);
     let center = plot.center();
 
     painter.text(
         egui::pos2(rect.center().x, rect.top()),
         egui::Align2::CENTER_TOP,
         "FRICTION BOX",
-        egui::FontId::monospace(10.0),
-        egui::Color32::from_rgb(105, 135, 153),
+        caps_font(10.0),
+        DIM,
     );
-    painter.rect_filled(plot, 2.0, egui::Color32::from_rgb(7, 11, 18));
-    painter.rect_stroke(
-        plot,
-        2.0,
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 70, 84)),
-        egui::StrokeKind::Inside,
-    );
+    painter.rect_filled(plot, 2.0, SURFACE);
+    let feasible_half_width = attainable_lateral_fraction(speed) * plot.width() / 2.0;
+    if feasible_half_width < plot.width() / 2.0 {
+        for x_range in [
+            plot.left()..=center.x - feasible_half_width,
+            center.x + feasible_half_width..=plot.right(),
+        ] {
+            painter.rect_filled(
+                egui::Rect::from_x_y_ranges(x_range, plot.y_range()),
+                0.0,
+                FAINT,
+            );
+        }
+    }
     painter.line_segment(
         [
             egui::pos2(plot.left(), center.y),
             egui::pos2(plot.right(), center.y),
         ],
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)),
+        egui::Stroke::new(1.0, STEEL),
     );
     painter.line_segment(
         [
             egui::pos2(center.x, plot.top()),
             egui::pos2(center.x, plot.bottom()),
         ],
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)),
+        egui::Stroke::new(1.0, STEEL),
     );
     painter.text(
         plot.left_top() + egui::vec2(4.0, 4.0),
         egui::Align2::LEFT_TOP,
         "+LON",
         egui::FontId::monospace(9.0),
-        egui::Color32::from_rgb(105, 135, 153),
+        DIM,
     );
     painter.text(
         plot.right_center() - egui::vec2(4.0, 0.0),
         egui::Align2::RIGHT_CENTER,
         "+LAT",
         egui::FontId::monospace(9.0),
-        egui::Color32::from_rgb(105, 135, 153),
+        DIM,
     );
 
     for (older, newer) in friction.samples.iter().zip(friction.samples.iter().skip(1)) {
@@ -130,14 +137,28 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
     let color = comfort_color(utilization(current));
     painter.line_segment([center, ball], egui::Stroke::new(1.0, color));
     painter.circle_filled(ball, 6.0, color);
-    painter.circle_stroke(ball, 6.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+    painter.circle_stroke(ball, 6.0, egui::Stroke::new(1.0, TEXT));
     painter.text(
         egui::pos2(rect.center().x, plot.bottom() + 7.0),
         egui::Align2::CENTER_TOP,
         format!("LON {:+.1}  LAT {:+.1}", current.lon, current.lat),
         egui::FontId::monospace(9.0),
-        egui::Color32::from_rgb(226, 241, 250),
+        TEXT,
     );
+}
+
+fn plot_rect(rect: egui::Rect) -> egui::Rect {
+    let size = (rect.width() - 12.0)
+        .min(rect.height() - 40.0)
+        .clamp(0.0, 144.0);
+    egui::Rect::from_min_size(
+        egui::pos2(rect.center().x - size / 2.0, rect.top() + 16.0),
+        egui::vec2(size, size),
+    )
+}
+
+fn attainable_lateral_fraction(speed: f64) -> f32 {
+    (speed * speed * curvature_limit(speed) / MAX_ABS_LAT_ACCEL).clamp(0.0, 1.0) as f32
 }
 
 fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
@@ -234,5 +255,21 @@ mod tests {
             })[0],
             1.0
         );
+    }
+
+    #[test]
+    fn curvature_reduces_attainable_lateral_acceleration_at_low_speed() {
+        assert_eq!(attainable_lateral_fraction(0.0), 0.0);
+        assert!(attainable_lateral_fraction(5.0) < 1.0);
+        assert_eq!(attainable_lateral_fraction(10.0), 1.0);
+    }
+
+    #[test]
+    fn plot_fits_a_compact_phone_hud() {
+        let widget = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(116.0, 180.0));
+        let plot = plot_rect(widget);
+
+        assert!(widget.contains_rect(plot.expand(6.0)));
+        assert!(plot.bottom() + 18.0 <= widget.bottom());
     }
 }

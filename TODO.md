@@ -39,8 +39,28 @@ Must stay lightweight on compute and rendering side.
 Add checkbox in VIZ options for showing them.
 
 --
-friction box
-make the lateral acceleration left right have extra shading on the infeasible region for low speeds where curvature is the binding factor.
+flickering line at end of ego carpet
+
+--
+add toggle for showing track centerline
+
+--
+make the metrics tab show the safety, progress, comfort metrics
+
+--
+planner latency seams in metrics tab should be their own section, not under dropdown. display style same as metrics.
+
+-- 
+harmonize camera controls settings
+follow ego vs follow track centerline should be a toggle, not simulatanesouly selectable.
+align camera to ego heading/track heading should be a separate control, does the same conceptual thing, conditioned on the follow ego vs follow track.
+
+--
+planning horizon might be too long, seems to cause bad behaviors like flickering and slowdown
+
+--
+MMB / WASD PAN   ·   RMB / Q E ROTATE   ·   WHEEL ZOOM   ·   F FOLLOW   ·   R RESET
+keyboard controls need to render one per row in a dedicated section
 
 --
 friction box and curv and accel bars

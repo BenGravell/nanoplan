@@ -490,7 +490,7 @@ pub(crate) fn draw(
     if state.show_plan && !w.plan.is_empty() {
         gizmos.linestrip_2d(std::iter::once(&ego).chain(&w.plan).map(px), ACCENT);
     }
-    draw_car(&mut gizmos, &ego, Color::WHITE);
+    draw_car(&mut gizmos, &ego, Color::srgb(0.08, 0.1, 0.1));
     for actor in &w.actors {
         let state = live
             .previous
@@ -511,7 +511,7 @@ pub(crate) fn draw(
             &mut gizmos,
             &state,
             CAR_FOOTPRINT,
-            Color::srgb(0.6, 0.6, 0.6),
+            Color::srgb(0.35, 0.38, 0.38),
         );
     }
 }
