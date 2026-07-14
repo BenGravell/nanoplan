@@ -39,6 +39,19 @@ Must stay lightweight on compute and rendering side.
 Add checkbox in VIZ options for showing them.
 
 --
+give the gui a DORFic style.
+https://frutigeraero.fandom.com/wiki/DORFic
+
+--
+tabs
+center labels within the tabs
+make the tabs have a faint shading when inactive so we can see their bounds more clearly
+each tab should have equal size within the  menu container
+
+the pause and new track buttons should have equal width within the menu container and should span the same width as the tabs, with equal padding to the menu left right sides
+
+
+--
 Give nanoplan a unique icon/favicon.
 Display the favicon on the website app ( browser tab), both local and cloud deployed.
 Use a combination of AI generation and open source iconography according to Best design principles a la Allan Peters.
