@@ -24,25 +24,9 @@ pub(crate) struct UiState {
     pub show_diag_trajectories: bool,
 }
 
-pub fn run() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "nanoplan".into(),
-                fit_canvas_to_parent: true,
-                resize_constraints: WindowResizeConstraints {
-                    min_width: 640.0,
-                    min_height: 500.0,
-                    ..default()
-                },
-                ..default()
-            }),
-            ..default()
-        }))
-        .add_plugins(EguiPlugin::default())
-        .init_gizmo_group::<carpet::EgoCarpetGizmos>()
-        .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
-        .insert_resource(UiState {
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
             planner: PlannerKind::BezierToppra,
             preview_s: 3.0,
             show_grid: true,
@@ -51,7 +35,31 @@ pub fn run() {
             show_hud: true,
             show_diag_points: false,
             show_diag_trajectories: false,
-        })
+        }
+    }
+}
+
+pub fn run() {
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "nanoplan".into(),
+                fit_canvas_to_parent: true,
+                resize_constraints: WindowResizeConstraints {
+                    min_width: 568.0,
+                    min_height: 320.0,
+                    ..default()
+                },
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_plugins(EguiPlugin::default())
+        .init_gizmo_group::<carpet::EgoCarpetGizmos>()
+        .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
+        .init_gizmo_group::<live::DiagnosticPointGizmos>()
+        .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
+        .init_resource::<UiState>()
         .init_non_send::<live::Live>()
         .add_systems(Startup, |mut commands: Commands| {
             commands.spawn(Camera2d);
@@ -63,6 +71,7 @@ pub fn run() {
                 live::camera_input,
                 live::update,
                 carpet::configure,
+                live::configure_diagnostics,
                 live::draw,
             )
                 .chain(),

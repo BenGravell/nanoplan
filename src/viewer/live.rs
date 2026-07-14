@@ -1,5 +1,6 @@
 //! Bevy plumbing for the endless-track demo.
 
+use bevy::gizmos::config::GizmoConfigStore;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_egui::input::EguiWantsInput;
@@ -22,6 +23,14 @@ const CAMERA_SMOOTH_RATE: f32 = 8.0;
 const CAMERA_BOTTOM_PADDING_PX: f32 = 48.0;
 const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
+const DIAGNOSTIC_COLOR: Color = Color::srgba(0.2, 0.85, 0.95, 0.28);
+const DIAGNOSTIC_POINT_RADIUS_M: f32 = 0.14;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub(crate) struct DiagnosticTrajectoryGizmos;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub(crate) struct DiagnosticPointGizmos;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
@@ -227,6 +236,16 @@ pub(crate) fn camera_input(
     }
 }
 
+pub(crate) fn configure_diagnostics(live: NonSend<Live>, mut configs: ResMut<GizmoConfigStore>) {
+    configs
+        .config_mut::<DiagnosticTrajectoryGizmos>()
+        .0
+        .line
+        .width = 1.0;
+    configs.config_mut::<DiagnosticPointGizmos>().0.line.width =
+        DIAGNOSTIC_POINT_RADIUS_M * PX_PER_M * live.camera.zoom * 1.05;
+}
+
 pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<Time>) {
     live.set_planner(state.planner);
     live.world.preview_ticks = (state.preview_s as f64 / DT).round() as usize;
@@ -357,6 +376,8 @@ mod tests {
 pub(crate) fn draw(
     mut gizmos: Gizmos,
     mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
+    mut diagnostic_trajectories: Gizmos<DiagnosticTrajectoryGizmos>,
+    mut diagnostic_points: Gizmos<DiagnosticPointGizmos>,
     state: Res<UiState>,
     mut live: NonSendMut<Live>,
     mut camera: Single<&mut Transform, With<Camera2d>>,
@@ -452,18 +473,16 @@ pub(crate) fn draw(
 
     if state.show_diag_trajectories && state.planner.has_diagnostics() {
         for trajectory in &w.diagnostics.trajectories {
-            gizmos.linestrip_2d(
-                trajectory.iter().copied().map(ppx),
-                Color::srgb(0.2, 0.85, 0.95),
-            );
+            diagnostic_trajectories
+                .linestrip_2d(trajectory.iter().copied().map(ppx), DIAGNOSTIC_COLOR);
         }
     }
     if state.show_diag_points && state.planner.has_diagnostics() {
         for &point in &w.diagnostics.points {
-            gizmos.circle_2d(
+            diagnostic_points.circle_2d(
                 ppx(point),
-                0.3 * super::draw::PX_PER_M,
-                Color::srgb(0.95, 0.85, 0.2),
+                0.5 * DIAGNOSTIC_POINT_RADIUS_M * PX_PER_M,
+                DIAGNOSTIC_COLOR,
             );
         }
     }

@@ -55,6 +55,10 @@ web-time = "1" # std::time::Instant shim that works on wasm
 # spatial index R*-tree (wasm-compatible) for near(est)-neighbour queries, with incremental insertion
 rstar = "0.12"
 
+[dev-dependencies]
+egui_kittest = { version = "0.35", features = ["wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
 [profile.dev]
 opt-level = 1

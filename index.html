@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>nanoplan</title>
     <link data-trunk rel="rust" data-bin="nanoplan" data-wasm-opt="s" />
     <style>
@@ -10,6 +13,10 @@
       body {
         margin: 0;
         height: 100%;
+        height: 100dvh;
+        box-sizing: border-box;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
         overflow: hidden;
         background: #2b2c2f;
       }
@@ -18,6 +25,7 @@
         height: 100%;
         display: block;
         outline: none;
+        touch-action: none;
       }
     </style>
   </head>

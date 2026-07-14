@@ -45,67 +45,109 @@ pub(crate) fn ui(
         "viewer_ui".into(),
         egui::UiBuilder::new().max_rect(ctx.content_rect()),
     );
+    viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
+}
+
+fn viewer_layout(
+    root: &mut egui::Ui,
+    state: &mut UiState,
+    live: &mut Live,
+    active_tab: &mut ControlTab,
+) {
+    let viewport = root.max_rect().size();
+    let compact = compact_layout(viewport);
     if state.show_hud {
-        hud(&mut root, &live);
+        if compact {
+            compact_hud(root, live, compact_rail_widths(viewport).1);
+        } else {
+            hud(root, live, (viewport.x * 0.1).clamp(184.0, 220.0));
+        }
     }
-    egui::Panel::left("control_deck")
-        .exact_size(372.0)
-        .resizable(false)
-        .frame(
-            egui::Frame::new()
-                .fill(PANEL)
-                .stroke(egui::Stroke::new(1.0, STEEL))
-                .inner_margin(egui::Margin::same(16)),
-        )
-        .show(&mut root, |ui| {
-            ui.set_min_width(340.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("NANOPLAN")
-                        .font(heading_font(24.0))
-                        .color(TEXT),
-                );
+    let frame = egui::Frame::new()
+        .fill(PANEL)
+        .stroke(egui::Stroke::new(1.0, STEEL))
+        .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
+    if compact {
+        egui::Panel::left("control_deck")
+            .exact_size(compact_rail_widths(viewport).0)
+            .resizable(false)
+            .frame(frame)
+            .show(root, |ui| {
+                control_deck(ui, state, live, active_tab, true);
             });
-            let header_line = ui.available_rect_before_wrap();
-            ui.painter().line_segment(
-                [header_line.left_bottom(), header_line.right_bottom()],
-                egui::Stroke::new(2.0, PINK),
-            );
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                let pause_label = if live.paused { "RESUME" } else { "PAUSE" };
+    } else {
+        egui::Panel::left("control_deck")
+            .exact_size((viewport.x * 0.2).clamp(372.0, 440.0))
+            .resizable(false)
+            .frame(frame)
+            .show(root, |ui| {
+                control_deck(ui, state, live, active_tab, false);
+            });
+    }
+}
+
+fn compact_layout(viewport: egui::Vec2) -> bool {
+    viewport.x < 900.0 || viewport.y < 600.0
+}
+
+fn compact_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
+    (
+        (viewport.x * 0.31).clamp(252.0, 280.0),
+        (viewport.x * 0.17).clamp(132.0, 152.0),
+    )
+}
+
+fn control_deck(
+    ui: &mut egui::Ui,
+    state: &mut UiState,
+    live: &mut Live,
+    active_tab: &mut ControlTab,
+    compact: bool,
+) {
+    let title = || {
+        egui::RichText::new("NANOPLAN")
+            .font(heading_font(if compact { 20.0 } else { 24.0 }))
+            .color(TEXT)
+    };
+    if compact {
+        ui.label(title());
+        ui.add_space(4.0);
+        transport_controls(ui, state, live);
+        ui.add_space(6.0);
+    } else {
+        ui.label(title());
+        ui.add_space(12.0);
+        transport_controls(ui, state, live);
+        ui.add_space(9.0);
+    }
+
+    let tabs = [
+        (ControlTab::Planner, "PLANNER"),
+        (ControlTab::Camera, "CAMERA"),
+        (ControlTab::Visibility, "VIZ"),
+        (ControlTab::Metrics, "METRICS"),
+    ];
+    let columns = if compact { 2 } else { 4 };
+    for row in tabs.chunks(columns) {
+        let width = equal_button_width(ui, columns);
+        ui.horizontal(|ui| {
+            for &(tab, title) in row {
+                let selected = *active_tab == tab;
                 if ui
-                    .add_sized([154.0, 36.0], egui::Button::new(pause_label))
+                    .add_sized(
+                        [width, 32.0],
+                        egui::Button::new(egui::RichText::new(title).size(12.0)).selected(selected),
+                    )
                     .clicked()
                 {
-                    live.toggle_pause();
+                    *active_tab = tab;
                 }
-                if ui
-                    .add_sized([154.0, 36.0], egui::Button::new("↻ NEW TRACK"))
-                    .clicked()
-                {
-                    let seed = live.seed + 1;
-                    live.regenerate(seed, state.planner);
-                }
-            });
+            }
+        });
+    }
+    ui.add_space(if compact { 3.0 } else { 9.0 });
 
-            ui.add_space(9.0);
-            ui.columns(4, |columns| {
-                for (column, tab, title) in [
-                    (0, ControlTab::Planner, "PLANNER"),
-                    (1, ControlTab::Camera, "CAMERA"),
-                    (2, ControlTab::Visibility, "VIZ"),
-                    (3, ControlTab::Metrics, "METRICS"),
-                ] {
-                    columns[column].selectable_value(
-                        &mut *active_tab,
-                        tab,
-                        egui::RichText::new(title).size(12.0),
-                    );
-                }
-            });
-            ui.add_space(9.0);
-
+    egui::ScrollArea::vertical().show(ui, |ui| {
             match *active_tab {
                 ControlTab::Planner => {
                     ui.label(egui::RichText::new("ACTIVE PLANNER").small().color(DIM));
@@ -124,7 +166,11 @@ pub(crate) fn ui(
                             0.0..=PLANNING_HORIZON_S as f32,
                         )
                         .step_by(0.5)
-                        .text("future preview [s]")
+                        .text(if compact {
+                            "preview"
+                        } else {
+                            "future preview [s]"
+                        })
                         .trailing_fill(true),
                     );
                 }
@@ -231,7 +277,36 @@ pub(crate) fn ui(
                         });
                 }
             }
-        });
+    });
+}
+
+fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
+    let width = equal_button_width(ui, 2);
+    ui.horizontal(|ui| {
+        let pause_label = if live.paused { "RESUME" } else { "PAUSE" };
+        if ui
+            .add_sized(
+                [width, 36.0],
+                egui::Button::new(egui::RichText::new(pause_label).size(13.0)),
+            )
+            .clicked()
+        {
+            live.toggle_pause();
+        }
+        if ui
+            .add_sized(
+                [width, 36.0],
+                egui::Button::new(egui::RichText::new("↻ NEW TRACK").size(13.0)),
+            )
+            .clicked()
+        {
+            live.regenerate(live.seed + 1, state.planner);
+        }
+    });
+}
+
+fn equal_button_width(ui: &egui::Ui, count: usize) -> f32 {
+    (ui.available_width() - ui.spacing().item_spacing.x * (count - 1) as f32) / count as f32
 }
 
 fn configure(ctx: &egui::Context) {
@@ -322,14 +397,53 @@ fn metric(ui: &mut egui::Ui, label: &str, value: String) {
     ui.end_row();
 }
 
-fn hud(ui: &mut egui::Ui, live: &Live) {
-    const WIDTH: f32 = 184.0;
+fn compact_hud(ui: &mut egui::Ui, live: &Live, width: f32) {
+    let actuation = live.world.actuation();
+    egui::Panel::right("driving_hud")
+        .exact_size(width)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(PANEL)
+                .stroke(egui::Stroke::new(1.0, STEEL))
+                .inner_margin(egui::Margin::same(8)),
+        )
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                for (label, value) in [
+                    ("SPEED", format!("{:.1} m/s", live.world.ego.speed)),
+                    ("ACCEL", format!("{:+.1} m/s²", actuation.acceleration)),
+                    ("CURV", format!("{:+.3} m⁻¹", actuation.curvature)),
+                ] {
+                    ui.label(egui::RichText::new(label).size(10.0).color(DIM));
+                    ui.monospace(value);
+                    ui.add_space(4.0);
+                }
+                let size = ui.available_width().min(ui.available_height());
+                let (plot, _) =
+                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                friction_box::draw(ui.painter(), plot, &live.friction_box);
+            });
+            hud_accessibility(ui);
+        });
+}
+
+fn hud_accessibility(ui: &egui::Ui) {
+    ui.interact(
+        ui.max_rect(),
+        ui.id().with("accessibility"),
+        egui::Sense::hover(),
+    )
+    .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Driving HUD"));
+}
+
+fn hud(ui: &mut egui::Ui, live: &Live, width: f32) {
     const CONTENT_HEIGHT: f32 = 472.0;
 
     let speed = live.world.ego.speed;
     let actuation = live.world.actuation();
     egui::Panel::right("driving_hud")
-        .exact_size(WIDTH)
+        .exact_size(width)
         .resizable(false)
         .frame(
             egui::Frame::new()
@@ -341,14 +455,6 @@ fn hud(ui: &mut egui::Ui, live: &Live) {
             let painter = ui.painter_at(rect);
             let center_x = rect.center().x;
             let top = (rect.center().y - CONTENT_HEIGHT / 2.0).max(rect.top());
-
-            painter.line_segment(
-                [
-                    egui::pos2(rect.left() + 1.0, rect.top()),
-                    egui::pos2(rect.left() + 1.0, rect.bottom()),
-                ],
-                egui::Stroke::new(2.0, PINK),
-            );
             painter.text(
                 egui::pos2(center_x, top + 10.0),
                 egui::Align2::CENTER_TOP,
@@ -446,6 +552,7 @@ fn hud(ui: &mut egui::Ui, live: &Live) {
                 ),
                 &live.friction_box,
             );
+            hud_accessibility(ui);
         });
 }
 
@@ -459,7 +566,158 @@ fn signed_fraction(value: f32, positive_max: f32, negative_max: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::signed_fraction;
+    use std::path::Path;
+
+    use bevy_egui::egui;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    use super::{
+        ControlTab, UiState, compact_layout, compact_rail_widths, configure, signed_fraction,
+        viewer_layout,
+    };
+    use crate::viewer::live::Live;
+
+    const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
+        ("phone-iphone-se-3", egui::vec2(667.0, 375.0)),
+        ("phone-galaxy-s24", egui::vec2(780.0, 360.0)),
+        ("phone-iphone-14-15-pro", egui::vec2(852.0, 393.0)),
+        ("phone-galaxy-a55-wide", egui::vec2(1040.0, 480.0)),
+    ];
+
+    struct ViewerHarnessState {
+        ui: UiState,
+        live: Live,
+        tab: ControlTab,
+        configured: bool,
+    }
+
+    impl Default for ViewerHarnessState {
+        fn default() -> Self {
+            Self {
+                ui: UiState::default(),
+                live: Live::default(),
+                tab: ControlTab::Planner,
+                configured: false,
+            }
+        }
+    }
+
+    #[test]
+    fn layout_only_compacts_for_phone_sized_viewports() {
+        for (_, phone) in PHONE_LANDSCAPE_SIZES {
+            assert!(compact_layout(phone));
+            let (left, right) = compact_rail_widths(phone);
+            assert!(phone.x - left - right >= phone.x * 0.4);
+        }
+        assert!(compact_layout(egui::vec2(960.0, 540.0)));
+        assert!(!compact_layout(egui::vec2(1920.0, 1080.0)));
+        assert!(!compact_layout(egui::vec2(3440.0, 1440.0)));
+        assert!(!compact_layout(egui::vec2(3840.0, 2160.0)));
+    }
+
+    #[test]
+    fn viewer_elements_fit_and_render_at_target_sizes() {
+        let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("viewer-renders");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let target_sizes = [
+            ("desktop-1080p", egui::vec2(1920.0, 1080.0), 1.0),
+            ("desktop-ultrawide", egui::vec2(3440.0, 1440.0), 1.0),
+            ("desktop-2160p", egui::vec2(1920.0, 1080.0), 2.0),
+            (PHONE_LANDSCAPE_SIZES[0].0, PHONE_LANDSCAPE_SIZES[0].1, 1.0),
+            (PHONE_LANDSCAPE_SIZES[1].0, PHONE_LANDSCAPE_SIZES[1].1, 1.0),
+            (PHONE_LANDSCAPE_SIZES[2].0, PHONE_LANDSCAPE_SIZES[2].1, 1.0),
+            (PHONE_LANDSCAPE_SIZES[3].0, PHONE_LANDSCAPE_SIZES[3].1, 1.0),
+        ];
+        for (name, size, pixels_per_point) in target_sizes {
+            let mut harness = Harness::builder()
+                .with_size(size)
+                .with_pixels_per_point(pixels_per_point)
+                .build_ui_state(
+                    |ui, state: &mut ViewerHarnessState| {
+                        let ctx = ui.ctx().clone();
+                        if !state.configured {
+                            configure(&ctx);
+                            state.configured = true;
+                            ctx.request_repaint();
+                            return;
+                        }
+                        let mut root = egui::Ui::new(
+                            ctx.clone(),
+                            "viewer_render_test".into(),
+                            egui::UiBuilder::new().max_rect(ctx.content_rect()),
+                        );
+                        viewer_layout(&mut root, &mut state.ui, &mut state.live, &mut state.tab);
+                    },
+                    ViewerHarnessState::default(),
+                );
+            harness.run();
+
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size * pixels_per_point);
+            let compact = compact_layout(size);
+            let (control_width, hud_width) = if compact {
+                compact_rail_widths(size)
+            } else {
+                (
+                    (size.x * 0.2).clamp(372.0, 440.0),
+                    (size.x * 0.1).clamp(184.0, 220.0),
+                )
+            };
+            for label in [
+                "NANOPLAN",
+                "PAUSE",
+                "↻ NEW TRACK",
+                "PLANNER",
+                "CAMERA",
+                "VIZ",
+                "METRICS",
+                "ACTIVE PLANNER",
+                if compact {
+                    "preview"
+                } else {
+                    "future preview [s]"
+                },
+            ] {
+                for node in harness.get_all_by_label(label) {
+                    let rect = node.rect();
+                    assert!(
+                        screen.contains_rect(rect)
+                            && rect.max.x <= control_width * pixels_per_point
+                            && rect.is_positive(),
+                        "{label:?} is clipped at {name}: {rect:?} outside the control rail"
+                    );
+                }
+            }
+            let hud = harness.get_by_label("Driving HUD").rect();
+            assert!(
+                screen.contains_rect(hud) && hud.min.x >= (size.x - hud_width) * pixels_per_point,
+                "HUD is clipped at {name}: {hud:?} outside the HUD rail"
+            );
+
+            let pause = harness.get_by_label("PAUSE").rect();
+            let new_track = harness.get_by_label("↻ NEW TRACK").rect();
+            let planner = harness.get_by_label("PLANNER").rect();
+            assert!((pause.width() - new_track.width()).abs() <= 1.0);
+            assert!((pause.left() - planner.left()).abs() <= 1.0);
+            let last_tab = harness
+                .get_by_label(if compact { "CAMERA" } else { "METRICS" })
+                .rect();
+            assert!((new_track.right() - last_tab.right()).abs() <= 1.0);
+            for label in ["CAMERA", "VIZ", "METRICS"] {
+                let tab = harness.get_by_label(label).rect();
+                assert!(
+                    (tab.width() - planner.width()).abs() <= 1.0,
+                    "tab widths differ at {name}: PLANNER {planner:?}, {label} {tab:?}"
+                );
+            }
+
+            harness
+                .render()
+                .unwrap_or_else(|error| panic!("failed to render {name}: {error}"))
+                .save(output_dir.join(format!("{name}.png")))
+                .unwrap();
+        }
+    }
 
     #[test]
     fn signed_hud_values_use_their_own_side_of_zero() {

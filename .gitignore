@@ -23,5 +23,8 @@ target
 # Trunk build output
 dist
 
+# Headless viewer render-test output for manual layout inspection
+viewer-renders/
+
 # Python bytecode
 __pycache__/
