@@ -50,6 +50,13 @@ each tab should have equal size within the  menu container
 
 the pause and new track buttons should have equal width within the menu container and should span the same width as the tabs, with equal padding to the menu left right sides
 
+--
+friction box
+make the lateral acceleration left right have extra shading on the infeasible region for low speeds where curvature is the binding factor.
+
+--
+friction box and curv and accel bars
+pick one or the either, they are redundant
 
 --
 Give nanoplan a unique icon/favicon.
