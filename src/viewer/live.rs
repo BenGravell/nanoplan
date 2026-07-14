@@ -393,6 +393,14 @@ pub(crate) fn draw(
         samples.iter().map(|&(p, _, _)| ppx(p)),
         Color::srgb(0.25, 0.5, 0.35),
     );
+    for &(p, yaw, width) in &samples {
+        let offset = [width * yaw.sin(), -width * yaw.cos()];
+        gizmos.line_2d(
+            ppx([p[0] - offset[0], p[1] - offset[1]]),
+            ppx([p[0] + offset[0], p[1] + offset[1]]),
+            Color::srgba(0.6, 0.6, 0.6, 0.2),
+        );
+    }
 
     if state.show_diag_trajectories && state.planner.has_diagnostics() {
         for trajectory in &w.diagnostics.trajectories {

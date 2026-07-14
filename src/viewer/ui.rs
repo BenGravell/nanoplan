@@ -52,14 +52,6 @@ pub(crate) fn ui(
                         .font(heading_font(24.0))
                         .color(TEXT),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new("RACING SYSTEM / LIVE")
-                            .monospace()
-                            .size(10.0)
-                            .color(PINK),
-                    );
-                });
             });
             let header_line = ui.available_rect_before_wrap();
             ui.painter().line_segment(
@@ -90,7 +82,7 @@ pub(crate) fn ui(
                 .min_scrolled_height(deck_height)
                 .auto_shrink([true, false])
                 .show(ui, |ui| {
-                    section_heading(ui, "PLANNER + CONFIG");
+                    section_heading(ui, "PLANNER");
                     ui.label(egui::RichText::new("ACTIVE PLANNER").small().color(DIM));
                     egui::ComboBox::from_id_salt("planner")
                         .selected_text(state.planner.name())
