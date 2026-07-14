@@ -11,10 +11,9 @@ use std::collections::BinaryHeap;
 
 use crate::math::wrap_angle;
 use crate::planning::bezier_idm::{idm_accel, lead_vehicle};
-use crate::planning::model::step;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
 
@@ -164,7 +163,7 @@ pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Contr
                 acceleration: accel,
                 curvature: 0.0,
             };
-            x = step(x, u, ctx.road.dt);
+            x = world_step(x, u, ctx.road.dt);
             u
         })
         .collect()
@@ -179,14 +178,14 @@ pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Co
                 acceleration: accel,
                 curvature: 0.0,
             };
-            x = step(x, u, ctx.road.dt);
+            x = world_step(x, u, ctx.road.dt);
             u
         })
         .collect()
 }
 
 /// Roll `actions` out open-loop from `x0` through the kinematic model,
-/// letting [`step`] enforce the state and action limits.
+/// letting [`world_step`] enforce the state and action limits.
 pub(crate) fn rollout_constrained(
     x0: State,
     actions: &[Control],
@@ -197,7 +196,7 @@ pub(crate) fn rollout_constrained(
     xs.push(x0);
     let mut x = x0;
     for &u in actions {
-        x = step(x, u, dt);
+        x = world_step(x, u, dt);
         xs.push(x);
         us.push(u);
     }
@@ -225,7 +224,7 @@ pub(crate) fn centerline_follow_controls(
             acceleration: accel,
             curvature: base.curvature,
         };
-        x = step(x, u, ctx.road.dt);
+        x = world_step(x, u, ctx.road.dt);
         controls.push(u);
     }
     controls
@@ -259,7 +258,7 @@ pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Contex
                 acceleration: accel,
                 curvature,
             };
-            x = step(x, u, dt);
+            x = world_step(x, u, dt);
             u
         })
         .collect()
@@ -291,7 +290,7 @@ pub(crate) fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Contr
                 acceleration: accel,
                 curvature,
             };
-            x = step(x, u, dt);
+            x = world_step(x, u, dt);
             (v, yaw, prev) = (new_v, new_yaw, p);
             u
         })

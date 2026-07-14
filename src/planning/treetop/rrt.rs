@@ -53,7 +53,6 @@ use super::{
     zero_action_point,
 };
 use crate::math::wrap_angle;
-use crate::planning::model::step;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{
@@ -61,7 +60,7 @@ use crate::planning::search_tree::{
 };
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner, cost};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 /// Lateral half-width cold samples span. Wide enough to let the optimizer
@@ -536,9 +535,9 @@ impl Planner for RrtPlanner {
         for u in &mut out {
             let speed_hold = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-4.0, 1.5);
             u.acceleration = u.acceleration.min(speed_hold);
-            x = step(x, *u, ctx.road.dt);
+            x = world_step(x, *u, ctx.road.dt);
         }
-        self.expected_next = step(ego, out[0], ctx.road.dt);
+        self.expected_next = world_step(ego, out[0], ctx.road.dt);
         self.prev = Some(controls);
         out
     }

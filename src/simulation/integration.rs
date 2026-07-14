@@ -5,7 +5,7 @@ use super::{Control, State};
 /// using an already-applied direct control. This includes passive
 /// longitudinal resistance. [`crate::simulation::Simulator`] and live world
 /// code own actuator memory and collision response around it.
-pub(super) fn world_step(s: State, u: Control, dt: f64) -> State {
+pub fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
     let net_accel = u.acceleration - longitudinal_resistance_accel(s.speed);
     State {
@@ -46,7 +46,7 @@ mod tests {
     };
 
     #[test]
-    fn step_applies_action_limits() {
+    fn world_step_applies_limits_without_actuator_slew() {
         let s = State {
             speed: 3.0,
             ..Default::default()

@@ -7,7 +7,6 @@ pub(crate) mod cost;
 pub mod diagnostics;
 pub mod latency;
 pub mod lattice;
-pub mod model;
 pub mod pi2ddp;
 pub(crate) mod planner_math;
 pub(crate) mod policy;

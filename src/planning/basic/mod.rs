@@ -120,8 +120,8 @@ fn cruise_goal_state(path: &Path, s: f64, target_speed: f64) -> State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning::model::step;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
+    use crate::simulation::world_step;
 
     #[test]
     fn converges_to_centerline() {
@@ -181,7 +181,7 @@ mod tests {
         };
         let mut max_x = state.x;
         for u in BasicPlanner.plan(state, &ctx) {
-            state = step(state, u, road.dt);
+            state = world_step(state, u, road.dt);
             max_x = max_x.max(state.x);
         }
         assert!(max_x <= 52.0, "preview reached x {max_x}");

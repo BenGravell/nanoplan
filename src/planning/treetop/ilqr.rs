@@ -19,7 +19,7 @@
 //! treetop's `Loss` carries ~200 lines of hand-derived gradients and
 //! Hessians (`loss.h`), and its `Dynamics::jacobian` is closed-form.
 //! nanoplan deliberately provides neither: its shared cost
-//! ([`cost::HardConstraints`]) and dynamics ([`step`]) are black-box scalars
+//! ([`cost::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/planning/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the state-cost gradient/Hessian
@@ -71,7 +71,6 @@
 
 use super::{TICKS, goal_state, take_warm};
 use crate::math::wrap_angle;
-use crate::planning::model::step;
 use crate::planning::planner_math::{
     M4, M22, M24, M42, TrajectoryCost, TrajectoryCostWeights, V2, V4, dot, mat_add, mat_mul,
     mat_vec, state, state_from_v4, transpose, vec_add,
@@ -81,7 +80,7 @@ use crate::planning::search_tree::{
 };
 use crate::planning::{Context, Planner};
 use crate::prediction::predict;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
@@ -295,7 +294,7 @@ fn fd_grad_hess<const N: usize>(
 }
 
 /// Dynamics Jacobians `A = ∂step/∂x`, `B = ∂step/∂u` by central finite
-/// differences on [`step`] — treetop's closed-form `Dynamics::jacobian`,
+/// differences on [`world_step`] — treetop's closed-form `Dynamics::jacobian`,
 /// derived numerically instead.
 fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M4, M42) {
     let mut a = [[0.0; 4]; 4];
@@ -304,15 +303,15 @@ fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M4, M42) {
         zp[j] += H_DYN;
         let mut zm = state(x);
         zm[j] -= H_DYN;
-        let sp = state(&step(state_from_v4(zp), *u, dt));
-        let sm = state(&step(state_from_v4(zm), *u, dt));
+        let sp = state(&world_step(state_from_v4(zp), *u, dt));
+        let sm = state(&world_step(state_from_v4(zm), *u, dt));
         for i in 0..4 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
     let col = |up: Control, um: Control| -> V4 {
-        let sp = state(&step(*x, up, dt));
-        let sm = state(&step(*x, um, dt));
+        let sp = state(&world_step(*x, up, dt));
+        let sm = state(&world_step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
     let ca = col(
@@ -477,7 +476,7 @@ fn forward(
             curvature: us[t].curvature + scale * gains[t].k[1] + fb[1],
         };
         cost_total += ocp.stage_cost(&x, &u, t, None);
-        x = step(x, u, ocp.ctx.road.dt);
+        x = world_step(x, u, ocp.ctx.road.dt);
         if !(x.x.is_finite() && x.y.is_finite() && x.yaw.is_finite() && x.speed.is_finite()) {
             return None;
         }
@@ -612,7 +611,7 @@ impl Planner for IlqrPlanner {
         let controls = ctx.time("extract", || {
             repeat_last_controls(&sol.controls, ctx.horizon)
         });
-        self.expected_next = step(ego, controls[0], ctx.road.dt);
+        self.expected_next = world_step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);
         controls
     }
@@ -636,7 +635,7 @@ mod tests {
 
     #[test]
     fn fd_dynamics_jacobian_matches_the_analytic_one() {
-        // the kinematic model's Jacobian is known in closed form (treetop
+        // the vehicle model's Jacobian is known in closed form (treetop
         // `Dynamics::jacobian`); the FD version must reproduce it
         let x = State {
             x: 1.0,
@@ -650,11 +649,14 @@ mod tests {
         };
         let dt = 0.1;
         let (a, b) = dynamics_jacobian(&x, &u, dt);
+        let drag_slope = crate::vehicle::AIR_DENSITY_KG_M3 * crate::vehicle::DRAG_AREA_M2
+            / crate::vehicle::EGO_MASS_KG
+            * x.speed;
         let expect_a = [
             [1.0, 0.0, -x.speed * dt * x.yaw.sin(), dt * x.yaw.cos()],
             [0.0, 1.0, x.speed * dt * x.yaw.cos(), dt * x.yaw.sin()],
             [0.0, 0.0, 1.0, dt * u.curvature],
-            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0 - drag_slope * dt],
         ];
         let expect_b = [[0.0, 0.0], [0.0, 0.0], [0.0, x.speed * dt], [dt, 0.0]];
         for i in 0..4 {

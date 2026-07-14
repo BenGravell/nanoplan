@@ -14,6 +14,8 @@ pub use crate::vehicle::{
 };
 pub(crate) use collision::{collide_with_actors, collide_with_car_actors};
 pub(crate) use integration::CommandLimiter;
+pub use integration::world_step;
+pub use physics::{clamp_control, curvature_limit};
 pub use state_control::{Control, Pose, Position, State};
 
 /// Replan and advance one fixed-size tick.

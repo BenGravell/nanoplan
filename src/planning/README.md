@@ -811,7 +811,7 @@ tests.
 Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100`
 ticks (10 s, the common `PLANNING_HORIZON_S`), split into `SEGMENTS = 10`
 steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that
-advances every candidate through `planning::model::step`.
+advances every candidate through `simulation::world_step`.
 
 ### RRT (treetop tree)
 
@@ -902,7 +902,7 @@ closed-form dynamics Jacobian; nanoplan deliberately provides neither (see
 differentiates numerically: central differences over the packed
 `(x, y, yaw, v, accel, curvature)` vector for the cost gradient and
 (symmetrized) Hessian — 73 probes of the black-box scalar per timestep —
-and central differences on `planning::model::step` for the dynamics Jacobians
+and central differences on `simulation::world_step` for the dynamics Jacobians
 `A`, `B` (pinned against the known closed form by
 `fd_dynamics_jacobian_matches_the_analytic_one`). FD Hessians of a
 piecewise cost are noisy near hinge corners, so where treetop asserts

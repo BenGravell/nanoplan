@@ -5,8 +5,7 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
-use crate::planning::model::{clamp_control, step};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, clamp_control, world_step};
 
 /// Cubic flat-output connector between two states/poses.
 ///
@@ -122,7 +121,7 @@ pub(crate) fn steer_controls(
             let accel_floor = -x.speed / dt;
             u.acceleration = u.acceleration.max(accel_floor);
             let u = clamp_control(u, x.speed);
-            x = step(x, u, dt);
+            x = world_step(x, u, dt);
             u
         })
         .collect();

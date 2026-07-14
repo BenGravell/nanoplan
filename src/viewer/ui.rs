@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use nanoplan::PlannerKind;
-use nanoplan::planning::{PLANNING_HORIZON_S, model::curvature_limit};
+use nanoplan::planning::PLANNING_HORIZON_S;
+use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 use super::UiState;

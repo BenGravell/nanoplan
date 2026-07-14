@@ -29,7 +29,6 @@ pub use geometry::{
     Footprint, PEDESTRIAN_FOOTPRINT, TRUCK_FOOTPRINT,
 };
 pub use metrics::Metrics;
-pub use planning::model::step as planner_step;
 pub use planning::{
     BasicPlanner, BezierIdmPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner,
     Planner, PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner,

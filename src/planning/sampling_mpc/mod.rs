@@ -35,8 +35,8 @@
 //!   linearly interpolated to a per-tick sequence (`control_at`) — judo's
 //!   spline interpolation, at its simplest order.
 //! - **The planner-internal forward model.** Every rollout advances through
-//!   [`crate::planning::model::step`] — pure kinematics plus state/control
-//!   vehicle limits, without world-only drag, actuator memory, or collisions.
+//!   [`crate::simulation::world_step`] — shared memoryless simulation physics
+//!   with vehicle limits and drag, but without actuator memory or collisions.
 //! - **The shared cost function.** Each rolled-out state is priced through
 //!   [`crate::planning::cost::HardConstraints`], the same cost interface the
 //!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
@@ -67,11 +67,10 @@ pub use ps::PredictiveSampling;
 
 use crate::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
-use crate::planning::model::step;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 /// Control dimension: `[acceleration, curvature]`. judo's `nu`.
@@ -341,7 +340,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
         for t in 0..HORIZON {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
-            x = step(x, u, ctx.road.dt);
+            x = world_step(x, u, ctx.road.dt);
             let next_station = path.project(x.position()).0;
             total += Self::state_cost(path, &x, u, t + 1, ctx);
             // control-effort penalty on the deviation from the base policy
@@ -420,13 +419,13 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
             (0..ctx.horizon)
                 .map(|t| {
                     let u = Self::command(&path, &x, control_at(&nominal, t, HORIZON), ctx);
-                    x = step(x, u, ctx.road.dt);
+                    x = world_step(x, u, ctx.road.dt);
                     u
                 })
                 .collect::<Vec<_>>()
         });
 
-        self.expected_next = step(ego, controls[0], ctx.road.dt);
+        self.expected_next = world_step(ego, controls[0], ctx.road.dt);
         self.nominal = Some(nominal);
         controls
     }

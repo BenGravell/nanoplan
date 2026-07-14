@@ -61,10 +61,9 @@ pub mod rrt;
 pub use ilqr::IlqrPlanner;
 pub use rrt::RrtPlanner;
 
-use crate::planning::model::step;
 use crate::planning::search_tree::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, warm_start_matches};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 /// Planning-horizon length in ticks — treetop's `TRAJ_LENGTH_OPT`, here
@@ -92,7 +91,7 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
     let dt = t / steps as f64;
     let mut x = x;
     for _ in 0..steps {
-        x = step(x, Control::default(), dt);
+        x = world_step(x, Control::default(), dt);
     }
     x
 }
@@ -269,7 +268,7 @@ impl Planner for TreetopPlanner {
         let controls = ctx.time("extract", || {
             repeat_last_controls(&sol.controls, ctx.horizon)
         });
-        self.expected_next = step(ego, controls[0], ctx.road.dt);
+        self.expected_next = world_step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);
         controls
     }
@@ -308,11 +307,11 @@ mod tests {
         }];
         let (xs, us) = crate::planning::search_tree::rollout_constrained(x0, &actions, 0.1);
         assert_eq!(us, actions);
-        assert_eq!(xs[1], step(x0, actions[0], 0.1));
+        assert_eq!(xs[1], world_step(x0, actions[0], 0.1));
     }
 
     #[test]
-    fn zero_action_point_coasts_straight() {
+    fn zero_action_point_coasts_straight_and_slows() {
         let x = State {
             x: 1.0,
             y: 2.0,
@@ -321,8 +320,8 @@ mod tests {
             ..Default::default()
         };
         let z = zero_action_point(x, 2.0);
-        assert_eq!(z.x, 11.0);
-        assert_eq!(z.speed, x.speed);
+        assert!(z.x > x.x && z.x < x.x + x.speed * 2.0);
+        assert!(z.speed < x.speed);
         assert_eq!((z.y, z.yaw), (x.y, x.yaw));
     }
 

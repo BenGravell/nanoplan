@@ -14,14 +14,13 @@
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
-use crate::planning::model::step;
 use crate::planning::planner_math::{
     self, M2, M4, M6, M24, TrajectoryCost, TrajectoryCostWeights, V2,
 };
 use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::rng::Rng;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 const HORIZON: usize = PLANNING_TICKS;
@@ -185,7 +184,7 @@ impl Planner for Pi2DdpPlanner {
             let mut cost = 0.0;
             for (j, &uj) in u.iter().enumerate() {
                 cost += effort(&uj);
-                x = step(
+                x = world_step(
                     x,
                     Control {
                         acceleration: uj[0],
@@ -243,7 +242,7 @@ impl Planner for Pi2DdpPlanner {
                         ]);
                         ctg[k][j] = effort(&u);
                         us[k][j] = u;
-                        x = step(x, planner_math::control(u), ctx.road.dt);
+                        x = world_step(x, planner_math::control(u), ctx.road.dt);
                         ctg[k][j] += state_cost(&x, j + 1);
                         xs[k][j + 1] = x;
                     }
@@ -423,7 +422,7 @@ impl Planner for Pi2DdpPlanner {
                             .sum::<f64>(),
                 ]);
                 u_exec.push(u);
-                x = step(x, planner_math::control(u), ctx.road.dt);
+                x = world_step(x, planner_math::control(u), ctx.road.dt);
             }
             let (_, cost) = noise_free(&u_exec);
 
@@ -452,7 +451,7 @@ impl Planner for Pi2DdpPlanner {
         }
 
         let out: Vec<Control> = pol.u.iter().map(|&u| planner_math::control(u)).collect();
-        pol.expected_next = step(ego, out[0], ctx.road.dt);
+        pol.expected_next = world_step(ego, out[0], ctx.road.dt);
         self.policy = Some(pol);
         out
     }

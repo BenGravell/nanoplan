@@ -1,9 +1,8 @@
 //! Steer toward the lane centerline along a cubic Bezier path, with the
 //! Intelligent Driver Model for the speed profile.
 
-use crate::planning::model::step;
 use crate::planning::{Context, Planner};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
 /// Intelligent Driver Model acceleration. `lead` is (gap, lead speed).
@@ -80,7 +79,7 @@ impl Planner for BezierIdmPlanner {
                         acceleration: accel,
                         curvature,
                     };
-                    x = step(x, u, ctx.road.dt);
+                    x = world_step(x, u, ctx.road.dt);
                     let d1 = bezier_d1(&b, t);
                     t = (t + x.speed * ctx.road.dt / d1[0].hypot(d1[1]).max(1e-6)).min(1.0);
                     if let Some((gap, lead_v)) = &mut lead {
