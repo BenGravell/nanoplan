@@ -72,7 +72,7 @@ pub(crate) fn ui(
                     .add_sized([154.0, 36.0], egui::Button::new(pause_label))
                     .clicked()
                 {
-                    live.paused = !live.paused;
+                    live.toggle_pause();
                 }
                 if ui
                     .add_sized([154.0, 36.0], egui::Button::new("↻ NEW TRACK"))
@@ -89,7 +89,7 @@ pub(crate) fn ui(
                 .min_scrolled_height(deck_height)
                 .auto_shrink([true, false])
                 .show(ui, |ui| {
-                    section_heading(ui, "01  PLANNER + CONFIG");
+                    section_heading(ui, "PLANNER + CONFIG");
                     ui.label(egui::RichText::new("ACTIVE PLANNER").small().color(DIM));
                     egui::ComboBox::from_id_salt("planner")
                         .selected_text(state.planner.name())
@@ -109,7 +109,7 @@ pub(crate) fn ui(
                         .trailing_fill(true),
                     );
 
-                    section_heading(ui, "02  CAMERA");
+                    section_heading(ui, "CAMERA");
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut live.camera.follow_position, "Follow ego");
                         ui.checkbox(&mut live.camera.follow_heading, "Ego heading");
@@ -154,14 +154,14 @@ pub(crate) fn ui(
                         .color(DIM),
                     );
 
-                    section_heading(ui, "03  VIEWER VISIBILITY");
+                    section_heading(ui, "VIEWER VISIBILITY");
                     ui.horizontal_wrapped(|ui| {
                         ui.checkbox(&mut state.show_grid, "Grid");
                         ui.checkbox(&mut state.show_plan, "Planned path");
                         ui.checkbox(&mut state.show_hud, "Driving HUD");
                     });
 
-                    section_heading(ui, "04  METRICS");
+                    section_heading(ui, "METRICS");
                     let actuation = live.world.actuation();
                     egui::Grid::new("live_metrics")
                         .num_columns(2)
@@ -197,7 +197,7 @@ pub(crate) fn ui(
                             });
                         });
 
-                    section_heading(ui, "05  DIAGNOSTICS");
+                    section_heading(ui, "DIAGNOSTICS");
                     if state.planner.has_diagnostics() {
                         ui.checkbox(&mut state.show_diag_points, "Search points");
                         ui.checkbox(

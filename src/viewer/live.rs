@@ -6,7 +6,7 @@ use bevy_egui::input::EguiWantsInput;
 
 use nanoplan::planning::{Latency, LatencyStats};
 use nanoplan::world::LiveWorld;
-use nanoplan::{CAR_FOOTPRINT, Path, PlannerKind};
+use nanoplan::{CAR_FOOTPRINT, Path, PlannerKind, State};
 
 use super::draw::{ACCENT, draw_agent, draw_car, ppx, px};
 use super::{DT, UiState};
@@ -17,6 +17,7 @@ const DEFAULT_ZOOM: f32 = 0.5;
 pub(crate) const MIN_ZOOM: f32 = 0.125;
 pub(crate) const MAX_ZOOM: f32 = 4.0;
 const CAMERA_SMOOTH_RATE: f32 = 8.0;
+const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
@@ -57,12 +58,27 @@ impl Default for CameraState {
     }
 }
 
+struct RenderSnapshot {
+    ego: State,
+    actors: Vec<(usize, State)>,
+}
+
+impl RenderSnapshot {
+    fn capture(world: &LiveWorld) -> Self {
+        Self {
+            ego: world.ego,
+            actors: world.actors.iter().map(|a| (a.id, a.state)).collect(),
+        }
+    }
+}
+
 pub(crate) struct Live {
     pub world: LiveWorld,
     pub seed: u64,
     pub paused: bool,
     pub camera: CameraState,
     pub latency: LatencyStats,
+    previous: RenderSnapshot,
     planner: PlannerKind,
     recorder: Latency,
     acc: f32,
@@ -75,11 +91,22 @@ impl Live {
         self.planner = planner;
         self.latency = LatencyStats::default();
         self.recorder.take();
+        self.acc = 0.0;
+        self.reset_render_history();
         self.reset_camera();
     }
 
     pub fn reset_camera(&mut self) {
         self.camera.reset(px(&self.world.ego));
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+        self.reset_render_history();
+    }
+
+    fn reset_render_history(&mut self) {
+        self.previous = RenderSnapshot::capture(&self.world);
     }
 
     fn set_planner(&mut self, planner: PlannerKind) {
@@ -92,6 +119,7 @@ impl Live {
     }
 
     fn tick(&mut self) {
+        self.previous = RenderSnapshot::capture(&self.world);
         self.world.tick_recording_latency(&self.recorder);
         self.latency.absorb(self.recorder.take());
     }
@@ -100,6 +128,7 @@ impl Live {
 impl Default for Live {
     fn default() -> Self {
         let world = LiveWorld::new(1, PlannerKind::BezierIdm, MAX_ACTORS, DT);
+        let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {
                 center: px(&world.ego),
@@ -109,6 +138,7 @@ impl Default for Live {
             seed: 1,
             paused: false,
             latency: LatencyStats::default(),
+            previous,
             planner: PlannerKind::BezierIdm,
             recorder: Latency::default(),
             acc: 0.0,
@@ -248,6 +278,42 @@ mod tests {
         let almost_negative_pi = -std::f32::consts::PI + 0.1;
         assert!(smooth_angle(almost_pi, almost_negative_pi, 0.5) > almost_pi);
     }
+
+    #[test]
+    fn render_interpolation_blends_pose_and_wraps_yaw() {
+        let previous = State {
+            x: 2.0,
+            yaw: std::f64::consts::PI - 0.2,
+            speed: 4.0,
+            ..Default::default()
+        };
+        let current = State {
+            x: 6.0,
+            y: 2.0,
+            yaw: -std::f64::consts::PI + 0.2,
+            speed: 8.0,
+        };
+
+        let rendered = interpolate_state(previous, current, 0.5);
+
+        assert_eq!(rendered.x, 4.0);
+        assert_eq!(rendered.y, 1.0);
+        assert_eq!(rendered.speed, 6.0);
+        assert!((rendered.yaw - std::f64::consts::PI).abs() < 1e-9);
+    }
+
+    #[test]
+    fn new_track_starts_with_ego_aligned_to_its_tangent() {
+        let mut live = Live::default();
+        live.acc = DT as f32 * 0.9;
+
+        live.regenerate(2, PlannerKind::BezierIdm);
+
+        let (_, track_yaw) = live.world.track.pose(live.world.ego.x);
+        assert!((live.world.ego.yaw - track_yaw).abs() < 1e-12);
+        assert_eq!(live.previous.ego.yaw, track_yaw);
+        assert_eq!(live.acc, 0.0);
+    }
 }
 
 pub(crate) fn draw(
@@ -258,9 +324,17 @@ pub(crate) fn draw(
     window: Single<&Window>,
     time: Res<Time>,
 ) {
+    // Standard fixed-step interpolation. Rendering stays one simulation tick
+    // behind so it can blend completed states without predicting physics.
+    let render_alpha = if live.paused {
+        1.0
+    } else {
+        (live.acc as f64 / DT).clamp(0.0, 1.0)
+    };
+    let ego = interpolate_state(live.previous.ego, live.world.ego, render_alpha);
     let (target_center, target_rotation) = if live.camera.align_track {
         let path = Path::new(&live.world.road.centerline);
-        let (s, _) = path.project(live.world.ego);
+        let (s, _) = path.project(ego);
         let (position, yaw) = path.pose_at(s);
         (
             Some(ppx(position)),
@@ -268,10 +342,10 @@ pub(crate) fn draw(
         )
     } else {
         (
-            live.camera.follow_position.then(|| px(&live.world.ego)),
+            live.camera.follow_position.then(|| px(&ego)),
             live.camera
                 .follow_heading
-                .then(|| live.world.ego.yaw as f32 - std::f32::consts::FRAC_PI_2),
+                .then(|| ego.yaw as f32 - std::f32::consts::FRAC_PI_2),
         )
     };
     let blend = if live.camera.smooth {
@@ -339,16 +413,43 @@ pub(crate) fn draw(
     }
 
     if state.show_plan && !w.plan.is_empty() {
-        gizmos.linestrip_2d(std::iter::once(&w.ego).chain(&w.plan).map(px), ACCENT);
+        gizmos.linestrip_2d(std::iter::once(&ego).chain(&w.plan).map(px), ACCENT);
     }
-    draw_car(&mut gizmos, &w.ego, Color::WHITE);
+    draw_car(&mut gizmos, &ego, Color::WHITE);
     for actor in &w.actors {
+        let state = live
+            .previous
+            .actors
+            .iter()
+            .find(|(id, _)| *id == actor.id)
+            .map(|(_, previous)| {
+                if (actor.state.x - previous.x).hypot(actor.state.y - previous.y)
+                    > MAX_ACTOR_INTERPOLATION_M
+                {
+                    actor.state
+                } else {
+                    interpolate_state(*previous, actor.state, render_alpha)
+                }
+            })
+            .unwrap_or(actor.state);
         draw_agent(
             &mut gizmos,
-            &actor.state,
+            &state,
             CAR_FOOTPRINT,
             Color::srgb(0.6, 0.6, 0.6),
         );
+    }
+}
+
+fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
+    let yaw_delta = (current.yaw - previous.yaw + std::f64::consts::PI)
+        .rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    State {
+        x: previous.x + (current.x - previous.x) * alpha,
+        y: previous.y + (current.y - previous.y) * alpha,
+        yaw: previous.yaw + yaw_delta * alpha,
+        speed: previous.speed + (current.speed - previous.speed) * alpha,
     }
 }
 

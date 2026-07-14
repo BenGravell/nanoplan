@@ -21,6 +21,7 @@ const ACTOR_MARGIN_M: f64 = 25.0;
 
 /// A car following the same single track as the ego.
 pub struct SmartActor {
+    pub id: usize,
     pub state: State,
     pub personality: Personality,
     track_x: f64,
@@ -88,6 +89,7 @@ impl LiveWorld {
                 let lateral = lateral_target(personality, track.half_width(x), actor_rng.uniform());
                 let (p, yaw) = track.pose(x);
                 SmartActor {
+                    id: i,
                     state: State {
                         x: p[0] - lateral * yaw.sin(),
                         y: p[1] + lateral * yaw.cos(),
