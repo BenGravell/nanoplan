@@ -8,12 +8,10 @@
 //! an actor travelling along the route is rolled forward following the
 //! lane's curve and eased back toward its center, so on a bend the planner
 //! prices it where it will actually be rather than off on the straight
-//! tangent the constant-velocity `metrics::ttc` model assumes. An actor not
-//! associated with the lane (oncoming, crossing) still falls back to that
-//! same constant-velocity projection. The planner predicting more accurately
-//! than the deliberately-simple TTC metric is the point — the ground-truth
-//! zero-time `metrics::ttc` result over the real actor traces is what a better
-//! prediction ultimately has to improve.
+//! tangent. An actor not associated with the lane (oncoming, crossing) still
+//! falls back to a constant-velocity projection. The rollout's
+//! `metrics::safety` metric evaluates the actual future ego and actor traces
+//! rather than repeating a prediction model.
 //!
 //! The cost splits into two parts with different standing. Hard rules —
 //! collision and leaving the drivable area — live behind

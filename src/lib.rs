@@ -30,9 +30,9 @@ pub use geometry::{
 };
 pub use metrics::Metrics;
 pub use planning::{
-    BasicPlanner, BezierIdmPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner,
-    Planner, PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner,
-    StraightPlanner, TreetopPlanner,
+    BasicPlanner, BezierToppraPlanner, Cem, Context, IlqrPlanner, LatticePlanner, Mppi,
+    Pi2DdpPlanner, Planner, PlannerKind, PredictiveSampling, RrtPlanner, RrtStarPlanner,
+    SamplingPlanner, StraightPlanner, TreetopPlanner,
 };
 pub use simulation::{Control, Pose, Position, Simulator, State};
 pub use track::{Path, Road, Track};

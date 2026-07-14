@@ -43,7 +43,7 @@ pub fn run() {
         .init_gizmo_group::<carpet::EgoCarpetGizmos>()
         .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.028)))
         .insert_resource(UiState {
-            planner: PlannerKind::BezierIdm,
+            planner: PlannerKind::BezierToppra,
             preview_s: 3.0,
             show_grid: true,
             show_carpet: true,

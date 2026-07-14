@@ -1,11 +1,13 @@
 //! EM/lattice-style planner. Samples a deterministic grid of (station,
 //! lateral) points in the road Frenet frame, connects successive layers into
-//! a layered DAG with cubic-in-time lateral segments, assigns edge costs
-//! (offset, smoothness, predicted-obstacle proximity), and finds the
-//! cheapest path with **A\*** (best-first) search.
+//! a layered DAG with cubic lateral segments, assigns edge costs (travel
+//! time, smoothness, predicted-obstacle proximity), and finds the cheapest
+//! path with **A\*** (best-first) search. The winning geometry then gets the
+//! fastest speed profile allowed by steering, lateral grip, engine thrust,
+//! drag, and braking.
 //!
 //! The grid is deliberately high-resolution — `STATION_LAYERS × LATERALS`
-//! is in the high hundreds — so the lattice can represent fine lateral
+//! is in the hundreds — so the lattice can represent fine lateral
 //! maneuvers and commit to them smoothly. At that size the exhaustive
 //! layer-by-layer dynamic program this planner used to run (which prices
 //! *every* `L`-to-`L` inter-layer edge, `O(S·L²)` cost-function evaluations)
@@ -18,35 +20,35 @@
 //! edge costs are non-negative, so the first final-layer node A\* settles is
 //! the global optimum); only the work to find it is smaller.
 
+use crate::EGO_FOOTPRINT;
 use crate::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
 use crate::planning::search_tree::{
     RoadFrame, best_first, brake_controls, parent_chain, xy_to_controls,
 };
 use crate::planning::{Context, Planner};
-use crate::simulation::{Control, State};
+use crate::simulation::physics::longitudinal_resistance_accel;
+use crate::simulation::{Control, State, curvature_limit};
+use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 pub struct LatticePlanner;
 
 /// Number of lateral samples per station layer (lateral grid resolution),
-/// evenly spaced over `[-LAT_BOUND_M, LAT_BOUND_M]`. Odd, so one sample
-/// lands exactly on the centerline (`d = 0`).
+/// evenly spaced over the usable road width. Odd, so one sample lands
+/// exactly on the centerline (`d = 0`).
 const LATERALS: usize = 17;
 /// Number of station layers reaching out to the planning horizon (progress
 /// grid resolution).
-const STATION_LAYERS: usize = 32;
-/// Half-width of the lateral sampling band. A bit inside the drivable
-/// half-width so a sampled path stays clearly on the road.
-const LAT_BOUND_M: f64 = 3.75;
+const STATION_LAYERS: usize = 16;
 /// Samples per lateral segment for cost integration and collision checking.
-/// Lower than the old exhaustive DP used because there are now ~5× as many
-/// (much shorter) segments spanning the horizon, so the whole path is still
+/// Lower than the old exhaustive DP used because there are more, shorter
+/// segments spanning the horizon, so the whole path is still
 /// sampled densely (`STATION_LAYERS × SAMPLES_PER_SEGMENT` points).
 const SAMPLES_PER_SEGMENT: usize = 4;
 /// How many lateral columns an edge may span between adjacent station
 /// layers. A layer is only ~`horizon/STATION_LAYERS` of travel, so a jump of
-/// more than a few columns (`≈ NEIGHBOR_SPAN × 0.47 m`) there is a curvature
-/// no real car has — the shared cost would reject it, or price it out of any
+/// more than a few columns there is a curvature no real car has — the edge
+/// feasibility check rejects it, or the shared cost prices it out of any
 /// optimal path, so never generating those edges costs nothing and keeps
 /// the search branching factor (and cost-function evaluations) bounded. Full
 /// lateral range is still reachable: over `STATION_LAYERS` layers the path
@@ -54,13 +56,20 @@ const SAMPLES_PER_SEGMENT: usize = 4;
 /// width. This is what keeps the high-resolution grid inside the real-time
 /// budget together with A*'s lazy expansion.
 const NEIGHBOR_SPAN: usize = 2;
+/// Curvature is measured across this much road, rather than at the corners
+/// of the piecewise-linear centerline supplied by the procedural track.
+const CURVATURE_WINDOW_M: f64 = 7.5;
+/// Station resolution of the forward/backward velocity pass.
+const SPEED_PROFILE_STEP_M: f64 = 2.0;
+/// Makes elapsed time comparable to the accumulated shared point costs.
+const TIME_COST: f64 = 20.0;
 
 /// Total grid nodes — the resolution knob. `STATION_LAYERS × LATERALS`.
 const GRID_NODES: usize = STATION_LAYERS * LATERALS;
 
-/// Lateral offset of grid column `j`.
-fn lateral(j: usize) -> f64 {
-    -LAT_BOUND_M + 2.0 * LAT_BOUND_M * j as f64 / (LATERALS - 1) as f64
+/// Lateral offset of grid column `j` over the usable road surface.
+fn lateral(j: usize, bound: f64) -> f64 {
+    -bound + 2.0 * bound * j as f64 / (LATERALS - 1) as f64
 }
 
 impl Planner for LatticePlanner {
@@ -73,6 +82,8 @@ impl Planner for LatticePlanner {
             horizon_m,
         } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
+        let lateral_bound = (ctx.road.half_width - EGO_FOOTPRINT.width / 2.0).max(0.0);
+        let horizon_m = horizon_m.min((path.length() - s0).max(1.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full
         // prediction horizon at the assumed cruise speed
         let stations_m: [f64; STATION_LAYERS] =
@@ -97,22 +108,37 @@ impl Planner for LatticePlanner {
         // evaluate directly, unlike RRT*'s steering function. Returns
         // `f64::INFINITY` for a colliding or off-road edge (A* skips it).
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
-            let mut total = 2.0 * (db - da).powi(2); // lateral smoothness
+            let mut total = 0.5 * (db - da).powi(2); // lateral smoothness
             let mut prev2: Option<[f64; 2]> = None;
             let mut prev1 = path.frenet_to_xy(sa, da);
+            let mut elapsed = 0.0;
             for i in 1..=SAMPLES_PER_SEGMENT {
                 let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
                 let s = sa + (sb - sa) * u;
                 let d = d_shape(da, db, m0, u);
-                total += d * d / SAMPLES_PER_SEGMENT as f64; // stay near centerline
+                total += 0.5 * d * d / SAMPLES_PER_SEGMENT as f64;
                 let p = path.frenet_to_xy(s, d);
                 let curvature = prev2.map_or(0.0, |p0| cost::curvature_of(p0, prev1, p));
+                if curvature > MAX_ABS_CURVATURE {
+                    return f64::INFINITY;
+                }
+                let curve_speed = if curvature > 1e-9 {
+                    (MAX_ABS_LAT_ACCEL / curvature).sqrt()
+                } else {
+                    ctx.road.target_speed
+                };
+                let speed = curve_speed.min(ctx.road.target_speed).max(0.5);
+                let ds = (p[0] - prev1[0]).hypot(p[1] - prev1[1]);
+                elapsed += ds / speed;
+                let (_, lane_yaw) = path.pose_at(s);
+                let heading_err = wrap_angle((p[1] - prev1[1]).atan2(p[0] - prev1[0]) - lane_yaw);
                 let sample = Sample {
                     xy: p,
                     lateral: d,
-                    speed: v,
+                    heading_err,
+                    speed,
                     curvature,
-                    t: (s - s0) / v, // time when the ego gets there
+                    t: (sa - s0) / v + elapsed,
                     ..Default::default()
                 };
                 let point = ctx.time("cost", || constraints.point_cost(&sample));
@@ -123,7 +149,7 @@ impl Planner for LatticePlanner {
                 prev2 = Some(prev1);
                 prev1 = p;
             }
-            total
+            total + TIME_COST * elapsed
         };
 
         // Sampled Hermite connector between two grid nodes, for the
@@ -152,8 +178,9 @@ impl Planner for LatticePlanner {
             if node == 0 {
                 // map the ego's off-grid lateral to its nearest column so
                 // the first (short) segment is limited the same way
-                let c = (((d0 + LAT_BOUND_M) / (2.0 * LAT_BOUND_M) * (LATERALS - 1) as f64).round()
-                    as i64)
+                let c = (((d0 + lateral_bound) / (2.0 * lateral_bound.max(1e-9))
+                    * (LATERALS - 1) as f64)
+                    .round() as i64)
                     .clamp(0, LATERALS as i64 - 1) as usize;
                 (None, s0, d0, c)
             } else {
@@ -162,7 +189,7 @@ impl Planner for LatticePlanner {
                 (
                     Some(l),
                     s0 + stations_m[l],
-                    lateral(idx % LATERALS),
+                    lateral(idx % LATERALS, lateral_bound),
                     idx % LATERALS,
                 )
             }
@@ -183,7 +210,7 @@ impl Planner for LatticePlanner {
                     let hi = (col + NEIGHBOR_SPAN).min(LATERALS - 1);
                     let mut successors = Vec::with_capacity(hi - lo + 1);
                     for j in lo..=hi {
-                        let db = lateral(j);
+                        let db = lateral(j, lateral_bound);
                         if let Some(diag) = ctx.diagnostics {
                             diag.record_point(path.frenet_to_xy(sb, db));
                             diag.record_trajectory(segment_pts(sa, da, sb, db, m0));
@@ -199,7 +226,7 @@ impl Planner for LatticePlanner {
 
         let Some(result) = result else {
             // every path collides / leaves the road: brake straight ahead
-            return brake_controls(ego, ctx, -4.0);
+            return brake_controls(ego, ctx, MIN_LON_ACCEL);
         };
 
         // reconstruct the chosen lateral per layer from the parent chain
@@ -208,28 +235,101 @@ impl Planner for LatticePlanner {
             (result.parent[n] != usize::MAX).then_some(result.parent[n])
         }) {
             let idx = node - 1;
-            laterals[idx / LATERALS] = lateral(idx % LATERALS);
+            laterals[idx / LATERALS] = lateral(idx % LATERALS, lateral_bound);
         }
 
-        // sample the winning path over time; d is cubic in t on each segment
+        // Evaluate the winning Frenet curve at any relative station.
         let s_max = *stations_m.last().unwrap();
+        let winning_xy = |s_rel: f64| {
+            let s_rel = s_rel.clamp(0.0, s_max);
+            let seg = stations_m
+                .iter()
+                .position(|&m| s_rel <= m)
+                .unwrap_or(STATION_LAYERS - 1);
+            let (sa, da) = if seg == 0 {
+                (0.0, d0)
+            } else {
+                (stations_m[seg - 1], laterals[seg - 1])
+            };
+            let u = (s_rel - sa) / (stations_m[seg] - sa).max(1e-9);
+            let m0 = if seg == 0 { m0_first } else { 0.0 };
+            path.frenet_to_xy(s0 + s_rel, d_shape(da, laterals[seg], m0, u))
+        };
+
+        // Build the time-optimal speed envelope: brake backward from every
+        // bend, then accelerate forward with the thrust left after drag.
         ctx.time("extract", || {
-            let pts: Vec<[f64; 2]> = (1..=ctx.horizon.max((s_max / (v * ctx.road.dt)) as usize))
-                .map(|i| {
-                    let s_rel = (v * ctx.road.dt * i as f64).min(s_max);
-                    let seg = stations_m.iter().position(|&m| s_rel <= m).unwrap();
-                    let (sa, da) = if seg == 0 {
-                        (0.0, d0)
+            let n = (s_max / SPEED_PROFILE_STEP_M).ceil() as usize + 1;
+            let stations: Vec<f64> = (0..n)
+                .map(|i| (i as f64 * SPEED_PROFILE_STEP_M).min(s_max))
+                .collect();
+            let mut speeds: Vec<f64> = stations
+                .iter()
+                .map(|&s| {
+                    let curvature = cost::curvature_of(
+                        winning_xy((s - CURVATURE_WINDOW_M).max(0.0)),
+                        winning_xy(s),
+                        winning_xy((s + CURVATURE_WINDOW_M).min(s_max)),
+                    );
+                    if curvature > 1e-9 {
+                        ctx.road
+                            .target_speed
+                            .min((MAX_ABS_LAT_ACCEL / curvature).sqrt())
                     } else {
-                        (stations_m[seg - 1], laterals[seg - 1])
-                    };
-                    let u = (s_rel - sa) / (stations_m[seg] - sa);
-                    let m0 = if seg == 0 { m0_first } else { 0.0 };
-                    let d = d_shape(da, laterals[seg], m0, u);
-                    path.frenet_to_xy(s0 + s_rel, d)
+                        ctx.road.target_speed
+                    }
                 })
                 .collect();
+            for i in (0..n - 1).rev() {
+                let ds = stations[i + 1] - stations[i];
+                speeds[i] =
+                    speeds[i].min((speeds[i + 1].powi(2) - 2.0 * MIN_LON_ACCEL * ds).sqrt());
+            }
+            speeds[0] = ego.speed.max(0.0);
+            for i in 0..n - 1 {
+                let ds = stations[i + 1] - stations[i];
+                let net_accel = (MAX_LON_ACCEL - longitudinal_resistance_accel(speeds[i])).max(0.0);
+                speeds[i + 1] =
+                    speeds[i + 1].min((speeds[i].powi(2) + 2.0 * net_accel * ds).sqrt());
+            }
+
+            let mut times = vec![0.0; n];
+            for i in 0..n - 1 {
+                let ds = stations[i + 1] - stations[i];
+                times[i + 1] = times[i] + 2.0 * ds / (speeds[i] + speeds[i + 1]).max(0.1);
+            }
+            let samples: Vec<([f64; 2], f64)> = (1..=ctx.horizon)
+                .map(|tick| {
+                    let t = tick as f64 * ctx.road.dt;
+                    let i = times.partition_point(|&x| x < t).clamp(1, n - 1) - 1;
+                    let dt = (t - times[i]).clamp(0.0, times[i + 1] - times[i]);
+                    let ds = stations[i + 1] - stations[i];
+                    let accel = (speeds[i + 1].powi(2) - speeds[i].powi(2)) / (2.0 * ds.max(1e-9));
+                    (
+                        winning_xy(
+                            (stations[i] + speeds[i] * dt + 0.5 * accel * dt * dt).min(s_max),
+                        ),
+                        (speeds[i] + accel * dt).max(0.0),
+                    )
+                })
+                .collect();
+            let pts: Vec<_> = samples.iter().map(|&(p, _)| p).collect();
+            let mut expected_speed = ego.speed;
             xy_to_controls(ego, &pts, ctx.road.dt)
+                .into_iter()
+                .zip(samples)
+                .map(|(mut u, (_, target_speed))| {
+                    u.curvature = u.curvature.clamp(
+                        -curvature_limit(expected_speed),
+                        curvature_limit(expected_speed),
+                    );
+                    u.acceleration = ((target_speed - expected_speed) / ctx.road.dt
+                        + longitudinal_resistance_accel(expected_speed))
+                    .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+                    expected_speed = target_speed;
+                    u
+                })
+                .collect()
         })
     }
 }
@@ -250,6 +350,48 @@ mod tests {
         let trace = test_run(&mut LatticePlanner, ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 0.5, "offset {}", end.y);
+    }
+
+    #[test]
+    fn accelerates_on_an_open_straight() {
+        let mut road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        road.target_speed = 30.0;
+        let controls = LatticePlanner.plan(
+            State {
+                speed: 5.0,
+                ..Default::default()
+            },
+            &crate::planning::test_ctx(&road, &[]),
+        );
+        assert!(
+            controls[0].acceleration > 5.0,
+            "accel {}",
+            controls[0].acceleration
+        );
+    }
+
+    #[test]
+    fn brakes_for_road_curvature() {
+        let radius = 20.0;
+        let centerline: Vec<[f64; 2]> = (0..=24)
+            .map(|i| {
+                let a = i as f64 * 0.05;
+                [radius * a.sin(), radius * (1.0 - a.cos())]
+            })
+            .collect();
+        let road = Road::new(centerline, 60.0, 5.5, 0.1);
+        let controls = LatticePlanner.plan(
+            State {
+                speed: 30.0,
+                ..Default::default()
+            },
+            &crate::planning::test_ctx(&road, &[]),
+        );
+        assert!(
+            controls[0].acceleration < -1.0,
+            "accel {}",
+            controls[0].acceleration
+        );
     }
 
     #[test]

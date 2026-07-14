@@ -272,7 +272,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// rollout stable. A **pure-pursuit** steer toward the centerline plus a
     /// proportional speed hold, both computed from the *current* rollout
     /// state, i.e. genuine feedback (the same tracker PI²-DDP initializes
-    /// from and Bezier+IDM follows).
+    /// from and Bezier+TOPP-RA follows).
     ///
     /// The knots don't replace this policy, they *add* to it
     /// ([`SamplingPlanner::command`]). This is the crucial adaptation of judo's

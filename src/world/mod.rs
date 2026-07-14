@@ -6,7 +6,6 @@ use crate::barrier::collide_with_road_barriers;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT};
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
-    bezier_idm::idm_accel,
 };
 use crate::rng::Rng;
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
@@ -220,8 +219,12 @@ impl LiveWorld {
             let lead = snapshot
                 .get(i + 1)
                 .map(|next| (next.0 - actor.track_x - CAR_FOOTPRINT.length, next.1));
-            let accel = idm_accel(actor.state.speed, *MAX_TERMINAL_SPEED_MPS, lead);
-            let speed = (actor.state.speed + accel * self.dt).max(0.0);
+            let accel = lead.map_or(MAX_LON_ACCEL, |(gap, lead_speed)| {
+                ((lead_speed * lead_speed - actor.state.speed * actor.state.speed)
+                    / (2.0 * gap.max(1.0)))
+                .clamp(crate::vehicle::MIN_LON_ACCEL, MAX_LON_ACCEL)
+            });
+            let speed = (actor.state.speed + accel * self.dt).clamp(0.0, *MAX_TERMINAL_SPEED_MPS);
             actor.track_x += speed * self.dt;
             if actor.track_x >= actor.next_wander_x {
                 actor.lateral_target = lateral_target(
@@ -298,7 +301,7 @@ mod tests {
 
     #[test]
     fn world_keeps_driving_without_a_route_or_goal() {
-        let mut world = LiveWorld::new(1, PlannerKind::BezierIdm, 0, 0.1);
+        let mut world = LiveWorld::new(1, PlannerKind::BezierToppra, 0, 0.1);
         for _ in 0..100 {
             world.tick();
         }

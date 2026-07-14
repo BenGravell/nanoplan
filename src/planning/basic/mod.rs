@@ -7,7 +7,7 @@ use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State};
 use crate::track::Path;
-use crate::vehicle::MIN_LON_ACCEL;
+use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 pub struct BasicPlanner;
 
@@ -26,8 +26,8 @@ impl Planner for BasicPlanner {
             let preview_m = 0.5 * (lane_speed + ctx.road.target_speed) * duration;
             let remaining_m = (path.length() - s0).max(0.0);
             let stopping_m = lane_speed * lane_speed / (-2.0 * MIN_LON_ACCEL);
-            let plan_reach_m =
-                lane_speed.max(ctx.road.target_speed) * ctx.horizon as f64 * ctx.road.dt;
+            let plan_time = ctx.horizon as f64 * ctx.road.dt;
+            let plan_reach_m = lane_speed * plan_time + 0.5 * MAX_LON_ACCEL * plan_time * plan_time;
             let stop_at_goal = remaining_m <= plan_reach_m + preview_m + stopping_m
                 || s0 + preview_m >= path.length();
             let duration = if stop_at_goal {
@@ -63,6 +63,11 @@ impl Planner for BasicPlanner {
                 } else {
                     controls.extend(centerline_follow_controls(x, &path, ctx, rest));
                 }
+            }
+            if !stop_at_goal {
+                controls
+                    .iter_mut()
+                    .for_each(|u| u.acceleration = MAX_LON_ACCEL);
             }
             controls
         })
@@ -121,7 +126,9 @@ fn cruise_goal_state(path: &Path, s: f64, target_speed: f64) -> State {
 mod tests {
     use super::*;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
+    use crate::simulation::MAX_TERMINAL_SPEED_MPS;
     use crate::simulation::world_step;
+    use crate::track::Track;
 
     #[test]
     fn converges_to_centerline() {
@@ -136,19 +143,41 @@ mod tests {
     }
 
     #[test]
-    fn tracks_road_target_speed() {
+    fn rolling_road_window_still_returns_to_centerline() {
+        let track = Track::new(1);
+        let mut road = test_road(&track.centerline(-50.0, 250.0, 15.0));
+        road.target_speed = *MAX_TERMINAL_SPEED_MPS;
+        let path = Path::new(&road.centerline);
+        let (p, yaw) = path.pose_at(50.0);
         let ego = State {
-            speed: 10.0,
-            ..Default::default()
+            x: p[0] - 3.0 * yaw.sin(),
+            y: p[1] + 3.0 * yaw.cos(),
+            yaw,
+            speed: 8.0,
         };
-        let mut road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        road.target_speed = 6.0;
-        let trace = test_run_on(&mut BasicPlanner, &road, ego, &[], 200);
-        let end = trace.last().unwrap();
+
+        let ctx = Context {
+            road: &road,
+            actors: &[],
+            horizon: 30,
+            latency: None,
+            diagnostics: None,
+        };
+        let mut sim = crate::simulation::Simulator::new(ego, road.dt);
+        for _ in 0..20 {
+            sim.tick(&mut BasicPlanner, &ctx);
+        }
+        let (_, d) = path.project(sim.state.position());
+        assert!(d.abs() < 1.0, "offset {d}");
+    }
+
+    #[test]
+    fn cruises_at_maximum_longitudinal_acceleration() {
+        let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
+        let controls = BasicPlanner.plan(State::default(), &test_ctx(&road, &[]));
         assert!(
-            (end.speed - road.target_speed).abs() < 0.5,
-            "speed {}",
-            end.speed
+            controls.iter().all(|u| u.acceleration == MAX_LON_ACCEL),
+            "accelerations {controls:?}"
         );
     }
 

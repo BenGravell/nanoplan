@@ -135,7 +135,7 @@ impl Live {
 
 impl Default for Live {
     fn default() -> Self {
-        let world = LiveWorld::new(1, PlannerKind::BezierIdm, MAX_ACTORS, DT);
+        let world = LiveWorld::new(1, PlannerKind::BezierToppra, MAX_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {
@@ -148,7 +148,7 @@ impl Default for Live {
             latency: LatencyStats::default(),
             friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
             previous,
-            planner: PlannerKind::BezierIdm,
+            planner: PlannerKind::BezierToppra,
             recorder: Latency::default(),
             acc: 0.0,
         }
@@ -345,7 +345,7 @@ mod tests {
         let mut live = Live::default();
         live.acc = DT as f32 * 0.9;
 
-        live.regenerate(2, PlannerKind::BezierIdm);
+        live.regenerate(2, PlannerKind::BezierToppra);
 
         let (_, track_yaw) = live.world.track.pose(live.world.ego.x);
         assert!((live.world.ego.yaw - track_yaw).abs() < 1e-12);

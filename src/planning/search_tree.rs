@@ -10,7 +10,6 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::math::wrap_angle;
-use crate::planning::bezier_idm::{idm_accel, lead_vehicle};
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::simulation::{Control, State, world_step};
@@ -215,11 +214,22 @@ pub(crate) fn centerline_follow_controls(
     for _ in 0..horizon {
         let (s, _) = path.project(x.position());
         let base = centerline_feedback(path, &x, ctx.road.target_speed);
-        let accel = 0.0_f64.min(idm_accel(
-            x.speed,
-            ctx.road.target_speed,
-            lead_vehicle(path, s, ctx.actors),
-        ));
+        let traffic_brake = ctx
+            .actors
+            .iter()
+            .filter_map(|actor| {
+                let (actor_s, d) = path.project(actor.position());
+                (d.abs() < 2.0 && actor_s > s).then(|| {
+                    (actor.speed * actor.speed - x.speed * x.speed)
+                        / (2.0 * (actor_s - s - 5.0).max(1.0))
+                })
+            })
+            .min_by(f64::total_cmp)
+            .unwrap_or(0.0);
+        let accel = base
+            .acceleration
+            .min(traffic_brake)
+            .clamp(MIN_LON_ACCEL, 0.0);
         let u = Control {
             acceleration: accel,
             curvature: base.curvature,

@@ -12,7 +12,7 @@ planning/
 ├── cost.rs        shared soft trajectory-cost terms — see "The shared cost function" below
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── straight/      strawman: zero control, always
-├── bezier_idm/    cubic Bezier back to the centerline + IDM speed
+├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
 ├── rrt_star/      RRT*, cubic differential-flatness steering
@@ -78,7 +78,7 @@ Everything a planner needs besides its own state and the ego pose. Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { Straight, BezierIdm, Lattice, Pi2Ddp, RrtStar }
+pub enum PlannerKind { Straight, BezierToppra, Lattice, Pi2Ddp, RrtStar }
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
@@ -160,7 +160,7 @@ replan.
   PI²-DDP's sampled rollouts).
 
 Every search planner records something — `PlannerKind::has_diagnostics()`
-reports which — while the strawman and Bezier+IDM planners have no
+reports which — while the strawman and Bezier+TOPP-RA planners have no
 receding-horizon search to show and record nothing. See each planner's
 section below for exactly what it records.
 
@@ -188,7 +188,7 @@ The search-based planners — the Frenet lattice, PI²-DDP, RRT*, the three
 judo-derived sampling-MPC planners (predictive sampling, CEM, MPPI), and
 the three treetop-derived planners (RRT, iLQR, treetop) — all
 price candidates with the same scalar cost;
-`bezier_idm` and `straight` don't (see their own sections below for why
+`bezier_toppra` and `straight` don't (see their own sections below for why
 they're out of scope here). Before this module existed, each planner priced
 a candidate with its own inline formula, hand-tuned independently, with its
 own actor-prediction code, its own point-collision proxy, and its own idea of
@@ -224,11 +224,9 @@ than inventing new ones:
   independently. An actor travelling along the route is rolled forward along
   the lane's curve and eased back toward its center, so on a bend it is
   priced where it will actually be rather than off on the straight tangent;
-  oncoming and crossing traffic fall back to `prediction::project`, the
-  constant-velocity model `metrics::ttc` scores against. The planner
-  predicting more accurately than the deliberately-simple TTC metric is the
-  point — the ground-truth zero-time `metrics::ttc` result over the real traces
-  is the bar a better prediction has to clear.
+  oncoming and crossing traffic fall back to `prediction::project`. The
+  rollout's `metrics::safety` metric evaluates the resulting actual future ego
+  and actor traces, so it does not duplicate the planner's prediction model.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
   the hard point-collision proxy), road-edge proximity, and comfort (longitudinal
   and lateral accel) tracked against a planner-local soft envelope, plus a
@@ -442,33 +440,27 @@ in the lane, it collides, and the batch runner's mean score
 reliably shows this (~0.27 across a mixed synthetic batch, vs. 0.74-0.90 for
 the others).
 
-## Bezier + IDM
+## Bezier + TOPP-RA
 
-`bezier_idm/mod.rs` — `BezierIdmPlanner`
+`bezier_toppra/mod.rs` — `BezierToppraPlanner`
 
 Steers back to the lane by fitting a cubic Bezier curve from the ego's
-current pose to a lookahead point on the centerline (tangent to the ego's
-heading at the start, tangent to the lane heading at the end), then follows
-that curve's analytic curvature. Speed comes from the
-[Intelligent Driver Model](https://en.wikipedia.org/wiki/Intelligent_driver_model):
-free-road acceleration toward `target_speed`, or car-following against the
-nearest actor detected ahead in the same lane (`lead_vehicle`, ±2 m Frenet
-offset).
+current pose to a lookahead point on the centerline. Speed uses the scalar
+special case of [TOPP-RA](https://arxiv.org/abs/1707.07239): squared path
+speed is propagated over a station grid by a backward controllable-set pass
+and a maximum-acceleration forward pass. Commanded longitudinal acceleration,
+geometric curvature, lateral grip, target speed, and predicted actor clearance
+are hard bounds.
 
-**Seams**: `route` (build the `Path`, project the ego), `bezier_fit` (custom
-— compute the four Bezier control points), `lead_search` (custom — scan
-`ctx.actors` for the in-lane lead), `extract` (walk the Bezier + IDM forward
-`ctx.horizon` steps to produce controls; this also *is* the optimize step
-here, since there's no separate search).
+**Seams**: `route` (build the `Path`, project the ego), `bezier_fit` (compute
+the four Bezier control points), `optimize` (TOPP-RA backward/forward passes
+and collision-bound tightening), and `extract` (convert the path profile to
+controls).
 
-**Limitations worth knowing**: lead detection is a simple "within ±2 m
-laterally, ahead in station" filter — no lane-change or multi-lane
-awareness. There is no explicit obstacle-avoidance term for actors *not* in
-the ego's lane (e.g. crossing traffic); the planner's only defense there is
-IDM slowing for whatever it decides counts as a lead. It converges to the
-centerline and target speed within ~0.3 m / 0.5 m/s over ~20 s
-(`converges_to_centerline_and_target_speed`), and correctly stops short of a
-stationary lead (`stops_behind_stopped_lead`).
+Because path parameterization cannot steer around an obstacle, predicted
+collision occupancy imposes a zero-speed station and the backward pass builds
+the braking profile needed to stop before it. The collision bound uses the
+shared lane-aware actor prediction and therefore also covers crossing traffic.
 
 ## Frenet lattice
 
@@ -514,7 +506,7 @@ executed would lag behind the plan into the obstacle it was trying to avoid.
 This was found and fixed via the `swerves_around_stopped_obstacle` test.
 
 Speed is currently a constant profile clamped to
-`[2, target_speed]` — not IDM-coupled (see the `ponytail:` comment in the
+`[2, target_speed]` — not car-following-coupled (see the `ponytail:` comment in the
 source for the deferred upgrade path). If every sampled path collides, the
 planner gives up and brakes straight ahead (`accel: -4.0`) rather than
 returning a bad path.

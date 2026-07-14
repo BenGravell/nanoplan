@@ -1,7 +1,7 @@
 //! The planner interface and one module per planner.
 
 pub mod basic;
-pub mod bezier_idm;
+pub mod bezier_toppra;
 pub(crate) mod constraints;
 pub(crate) mod cost;
 pub mod diagnostics;
@@ -19,7 +19,7 @@ pub mod straight;
 pub mod treetop;
 
 pub use basic::BasicPlanner;
-pub use bezier_idm::BezierIdmPlanner;
+pub use bezier_toppra::BezierToppraPlanner;
 pub use diagnostics::{Diagnostics, DiagnosticsData};
 pub use latency::{Latency, LatencyStats, SeamStats};
 pub use lattice::LatticePlanner;
@@ -88,7 +88,7 @@ pub trait Planner {
 pub enum PlannerKind {
     Straight,
     Basic,
-    BezierIdm,
+    BezierToppra,
     Lattice,
     Pi2Ddp,
     RrtStar,
@@ -129,9 +129,9 @@ const SPECS: [PlannerSpec; 12] = [
         has_diagnostics: false,
     },
     PlannerSpec {
-        kind: PlannerKind::BezierIdm,
-        name: "bezier + IDM",
-        build: || Box::new(BezierIdmPlanner),
+        kind: PlannerKind::BezierToppra,
+        name: "bezier + TOPP-RA",
+        build: || Box::new(BezierToppraPlanner),
         has_diagnostics: false,
     },
     PlannerSpec {
@@ -194,7 +194,7 @@ impl PlannerKind {
     pub const ALL: [PlannerKind; 12] = [
         PlannerKind::Straight,
         PlannerKind::Basic,
-        PlannerKind::BezierIdm,
+        PlannerKind::BezierToppra,
         PlannerKind::Lattice,
         PlannerKind::Pi2Ddp,
         PlannerKind::RrtStar,

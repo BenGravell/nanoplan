@@ -20,7 +20,7 @@
 
 pub mod comfort;
 pub mod progress;
-pub mod ttc;
+pub mod safety;
 
 pub(crate) mod aggregation;
 
@@ -75,7 +75,7 @@ pub struct MetricSpec {
 pub const METRICS: [MetricSpec; 3] = [
     MetricSpec {
         label: "TTC within bound",
-        score: ttc::score,
+        score: safety::score,
         aggregate: agg::min,
         role: CompositeRole::Multiplier,
     },
