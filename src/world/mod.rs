@@ -2,6 +2,7 @@
 
 use web_time::Instant;
 
+use crate::barrier::collide_with_road_barriers;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT};
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
@@ -194,12 +195,18 @@ impl LiveWorld {
                 state
             })
             .collect();
-        let next = self.limiter.step(
-            self.ego,
-            controls.first().copied().unwrap_or_default(),
-            self.dt,
+        let prev = self.ego;
+        let next = collide_with_road_barriers(
+            prev,
+            self.limiter.step(
+                self.ego,
+                controls.first().copied().unwrap_or_default(),
+                self.dt,
+            ),
+            &self.road,
         );
-        self.ego = collide_with_actors(next, self.actors.iter().map(|a| (a.state, CAR_FOOTPRINT)));
+        let next = collide_with_actors(next, self.actors.iter().map(|a| (a.state, CAR_FOOTPRINT)));
+        self.ego = collide_with_road_barriers(prev, next, &self.road);
     }
 
     fn step_traffic(&mut self) {
@@ -305,6 +312,24 @@ mod tests {
         world.tick();
         assert!(world.last_planner_actors > 0);
         assert!(world.last_planner_actors < world.actors.len());
+    }
+
+    #[test]
+    fn ego_bounces_off_road_barriers() {
+        let mut world = LiveWorld::new(1, PlannerKind::Straight, 0, 0.1);
+        world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
+        world.ego = State {
+            x: 0.0,
+            y: 0.0,
+            yaw: std::f64::consts::FRAC_PI_2,
+            speed: 20.0,
+        };
+
+        world.tick();
+
+        let support = EGO_FOOTPRINT.support_radius(world.ego.yaw, [0.0, 1.0]);
+        assert!(world.ego.y <= world.road.half_width - support + 1e-9);
+        assert!(world.ego.yaw < 0.0);
     }
 
     #[test]

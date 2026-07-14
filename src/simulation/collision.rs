@@ -38,15 +38,7 @@ fn collide_with_actor(state: State, actor: State, actor_footprint: Footprint) ->
         v[1] -= (1.0 + ACTOR_RESTITUTION) * vn * hit.normal[1];
     }
     let speed = v[0].hypot(v[1]);
-    State {
-        yaw: if speed > 1e-6 {
-            v[1].atan2(v[0])
-        } else {
-            corrected.yaw
-        },
-        speed,
-        ..corrected
-    }
+    State { speed, ..corrected }
 }
 
 #[cfg(test)]
@@ -72,5 +64,26 @@ mod tests {
             CAR_FOOTPRINT
         ));
         assert!(hit.speed < ego.speed);
+    }
+
+    #[test]
+    fn actor_collision_does_not_instantly_rotate_the_ego() {
+        let actor = State::default();
+        let ego = State {
+            x: 4.0,
+            y: 1.0,
+            yaw: std::f64::consts::PI,
+            speed: 20.0,
+        };
+
+        let hit = collide_with_car_actors(ego, [actor]);
+
+        assert_eq!(hit.yaw, ego.yaw);
+        assert!(!crate::geometry::footprints_overlap(
+            hit.pose(),
+            EGO_FOOTPRINT,
+            actor.pose(),
+            CAR_FOOTPRINT
+        ));
     }
 }

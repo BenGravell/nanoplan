@@ -38,7 +38,7 @@ impl CameraState {
             rotation: 0.0,
             follow_position: true,
             follow_heading: false,
-            align_track: false,
+            align_track: true,
             smooth: true,
         };
     }
@@ -52,7 +52,7 @@ impl Default for CameraState {
             rotation: 0.0,
             follow_position: true,
             follow_heading: false,
-            align_track: false,
+            align_track: true,
             smooth: true,
         }
     }
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn camera_reset_restores_the_following_north_up_view() {
+    fn camera_reset_restores_the_smooth_centerline_follow_view() {
         let mut camera = CameraState {
             center: Vec2::splat(99.0),
             zoom: 2.0,
@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(camera.rotation, 0.0);
         assert!(camera.follow_position);
         assert!(!camera.follow_heading);
-        assert!(!camera.align_track);
+        assert!(camera.align_track);
         assert!(camera.smooth);
     }
 
