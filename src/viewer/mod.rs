@@ -30,6 +30,11 @@ pub fn run() {
             primary_window: Some(Window {
                 title: "nanoplan".into(),
                 fit_canvas_to_parent: true,
+                resize_constraints: WindowResizeConstraints {
+                    min_width: 640.0,
+                    min_height: 500.0,
+                    ..default()
+                },
                 ..default()
             }),
             ..default()

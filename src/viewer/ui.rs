@@ -17,11 +17,21 @@ const DIM: egui::Color32 = egui::Color32::from_rgb(105, 135, 153);
 const PANEL: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 15, 24, 242);
 const STEEL: egui::Color32 = egui::Color32::from_rgb(48, 70, 84);
 
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum ControlTab {
+    #[default]
+    Planner,
+    Camera,
+    Visibility,
+    Metrics,
+}
+
 pub(crate) fn ui(
     mut contexts: EguiContexts,
     mut state: ResMut<UiState>,
     mut live: NonSendMut<Live>,
     mut configured: Local<bool>,
+    mut active_tab: Local<ControlTab>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     if !*configured {
@@ -79,13 +89,25 @@ pub(crate) fn ui(
                 }
             });
 
-            let deck_height = ui.available_height();
-            egui::ScrollArea::vertical()
-                .max_height(deck_height)
-                .min_scrolled_height(deck_height)
-                .auto_shrink([true, false])
-                .show(ui, |ui| {
-                    section_heading(ui, "PLANNER");
+            ui.add_space(9.0);
+            ui.columns(4, |columns| {
+                for (column, tab, title) in [
+                    (0, ControlTab::Planner, "PLANNER"),
+                    (1, ControlTab::Camera, "CAMERA"),
+                    (2, ControlTab::Visibility, "VIZ"),
+                    (3, ControlTab::Metrics, "METRICS"),
+                ] {
+                    columns[column].selectable_value(
+                        &mut *active_tab,
+                        tab,
+                        egui::RichText::new(title).size(12.0),
+                    );
+                }
+            });
+            ui.add_space(9.0);
+
+            match *active_tab {
+                ControlTab::Planner => {
                     ui.label(egui::RichText::new("ACTIVE PLANNER").small().color(DIM));
                     egui::ComboBox::from_id_salt("planner")
                         .selected_text(state.planner.name())
@@ -101,11 +123,12 @@ pub(crate) fn ui(
                             &mut state.preview_s,
                             0.0..=PLANNING_HORIZON_S as f32,
                         )
+                        .step_by(0.5)
                         .text("future preview [s]")
                         .trailing_fill(true),
                     );
-
-                    section_heading(ui, "CAMERA");
+                }
+                ControlTab::Camera => {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut live.camera.follow_position, "Follow ego");
                         ui.checkbox(&mut live.camera.follow_heading, "Ego heading");
@@ -149,8 +172,8 @@ pub(crate) fn ui(
                         .size(10.0)
                         .color(DIM),
                     );
-
-                    section_heading(ui, "VIEWER VISIBILITY");
+                }
+                ControlTab::Visibility => {
                     ui.checkbox(&mut state.show_grid, "Grid");
                     ui.checkbox(&mut state.show_carpet, "Ego carpet");
                     ui.checkbox(&mut state.show_plan, "Planned path");
@@ -170,8 +193,8 @@ pub(crate) fn ui(
                             );
                         }
                     }
-
-                    section_heading(ui, "METRICS");
+                }
+                ControlTab::Metrics => {
                     let actuation = live.world.actuation();
                     egui::Grid::new("live_metrics")
                         .num_columns(2)
@@ -206,8 +229,8 @@ pub(crate) fn ui(
                                 }
                             });
                         });
-
-                });
+                }
+            }
         });
 }
 
@@ -291,17 +314,6 @@ fn configure(ctx: &egui::Context) {
 
 fn heading_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name("heading".into()))
-}
-
-fn section_heading(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(14.0);
-    ui.separator();
-    ui.add_space(3.0);
-    ui.label(
-        egui::RichText::new(title)
-            .font(heading_font(15.0))
-            .color(PINK),
-    );
 }
 
 fn metric(ui: &mut egui::Ui, label: &str, value: String) {
