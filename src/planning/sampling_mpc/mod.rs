@@ -43,8 +43,8 @@
 //!   finite by the shared constraint escape slope since MPPI's and CEM's reward
 //!   aggregation can't absorb an infinity — the same reason PI²-DDP makes
 //!   that swap. Three planner-specific terms sit on top, each mirroring one
-//!   PI²-DDP keeps: an undiscounted speed-tracking term (`SPEED_WEIGHT`), a
-//!   control-effort penalty on the deviation (`CONTROL_WEIGHT`, the
+//!   PI²-DDP keeps: a forward-progress reward, a control-effort
+//!   penalty on the deviation (`CONTROL_WEIGHT`, the
 //!   "linear-solvability" `½uᵀR⁻¹u`), and the centerline pull folded into
 //!   `state_cost`.
 //! - **The shared QMC sampler.** The knot noise comes from
@@ -98,16 +98,9 @@ const HORIZON: usize = PLANNING_TICKS;
 /// reward-weighted averages room to drift the speed off target for no gain.
 pub(crate) const SIGMA_SCALE: [f64; NU] = [4.0, 0.08];
 
-/// Weight on an explicit speed-tracking term, `Σ_t (speed_t − target)²`.
-/// The shared cost prices overspeed only lightly (it is one term of many),
-/// which leaves "slow but smoothly centering" scoring about as well as "at
-/// speed and centered" — fine for the single-best pick PS and CEM's elite
-/// mean make, but MPPI's reward-weighted *average* then leans toward the
-/// slow cluster and the ego cruises below target. A firm, explicit speed
-/// term breaks that tie toward the target speed for every optimizer, while
-/// staying far below the hard-collision penalty so the planner still slows
-/// or swerves for an obstacle.
-const SPEED_WEIGHT: f64 = 0.5;
+/// Reward per metre advanced along the track, capped at the physical speed
+/// envelope so impossible rollout speed earns no extra reward.
+const PROGRESS_REWARD_PER_M: f64 = 100.0;
 
 /// Weight on a control-effort penalty over the knot *deviation* from the
 /// base policy, `Σ_t Σ_c (dev_c / SIGMA_SCALE_c)²` — the deviation scaled by
@@ -122,7 +115,7 @@ const SPEED_WEIGHT: f64 = 0.5;
 /// it cancelled the base policy's speed hold, plateauing the ego below the
 /// target speed (PS, taking the single best, didn't suffer this).
 const CONTROL_WEIGHT: f64 = 0.3;
-const CENTERLINE_WEIGHT: f64 = 1.0;
+const CENTERLINE_WEIGHT: f64 = 5.0;
 
 /// One control knot: `[acceleration, curvature]`.
 pub type Knot = [f64; NU];
@@ -331,10 +324,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
         // road once every sampled rollout is briefly off it, so they can
         // settle off-road; the depth slope pulls them back in.
-        CENTERLINE_WEIGHT * d * d
-            + ctx.time("cost", || {
-                constraints.soft_point_cost(&sample, ctx.road.target_speed)
-            })
+        CENTERLINE_WEIGHT * d * d + ctx.time("cost", || constraints.soft_point_cost(&sample))
     }
 
     /// Roll a knot-set out from the ego over the full horizon, applying each
@@ -344,6 +334,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// weighted like PI²-DDP's, pricing position and speed once more at the
     /// end.
     fn rollout(&self, knots: &[Knot], path: &Path, ego: State, ctx: &Context) -> (Vec<State>, f64) {
+        let mut station = path.project(ego.position()).0;
         let mut x = ego;
         let mut xs = vec![ego];
         let mut total = 0.0;
@@ -351,14 +342,16 @@ impl<O: Optimizer> SamplingPlanner<O> {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = step(x, u, ctx.road.dt);
+            let next_station = path.project(x.position()).0;
             total += Self::state_cost(path, &x, u, t + 1, ctx);
             // control-effort penalty on the deviation from the base policy
             // (see CONTROL_WEIGHT)
             total += CONTROL_WEIGHT
                 * ((dev[0] / SIGMA_SCALE[0]).powi(2) + (dev[1] / SIGMA_SCALE[1]).powi(2));
-            // firm speed tracking (see SPEED_WEIGHT)
-            let sv = x.speed - ctx.road.target_speed;
-            total += SPEED_WEIGHT * sv * sv;
+            let max_progress = ctx.road.target_speed * ctx.road.dt;
+            total -=
+                PROGRESS_REWARD_PER_M * (next_station - station).clamp(-max_progress, max_progress);
+            station = next_station;
             xs.push(x);
         }
         total += 5.0 * Self::state_cost(path, &x, Control::default(), HORIZON, ctx);
@@ -465,7 +458,8 @@ mod tests {
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(&road.centerline);
         // from y = +2 (left of the lane), the base policy steers right
-        // (negative curvature) and accelerates toward the target speed
+        // (negative curvature). The nominal throttle keeps weighted-average
+        // optimizers stable; progress, not a speed-tracking cost, pays for it.
         let x = State {
             y: 2.0,
             speed: 8.0,
@@ -482,9 +476,9 @@ mod tests {
     // section of the README): a single `plan()` call proves little, so each
     // optimizer is driven closed-loop and its realized trajectory checked.
 
-    /// From an initial lateral offset, converge to the lane and hold the
-    /// target speed — the basic "can it track the road" bar.
-    fn tracks_centerline_and_speed<O: Optimizer>() {
+    /// From an initial lateral offset, converge to the lane and accelerate
+    /// without exceeding the vehicle's physical terminal envelope.
+    fn tracks_centerline_and_accelerates<O: Optimizer>() {
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -493,8 +487,9 @@ mod tests {
         let trace = run_planner::<O>(ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.y.abs() < 1.3, "{} offset {}", O::NAME, end.y);
+        assert!(end.speed > ego.speed, "{} speed {}", O::NAME, end.speed);
         assert!(
-            (end.speed - 10.0).abs() < 2.5,
+            end.speed <= *crate::simulation::physics::MAX_TERMINAL_SPEED_MPS + 1e-9,
             "{} speed {}",
             O::NAME,
             end.speed
@@ -549,8 +544,8 @@ mod tests {
     }
 
     #[test]
-    fn ps_tracks_centerline_and_speed() {
-        tracks_centerline_and_speed::<PredictiveSampling>();
+    fn ps_tracks_centerline_and_accelerates() {
+        tracks_centerline_and_accelerates::<PredictiveSampling>();
     }
     #[test]
     fn ps_avoids_stopped_obstacle() {
@@ -562,8 +557,8 @@ mod tests {
     }
 
     #[test]
-    fn cem_tracks_centerline_and_speed() {
-        tracks_centerline_and_speed::<Cem>();
+    fn cem_tracks_centerline_and_accelerates() {
+        tracks_centerline_and_accelerates::<Cem>();
     }
     #[test]
     fn cem_avoids_stopped_obstacle() {
@@ -575,8 +570,8 @@ mod tests {
     }
 
     #[test]
-    fn mppi_tracks_centerline_and_speed() {
-        tracks_centerline_and_speed::<Mppi>();
+    fn mppi_tracks_centerline_and_accelerates() {
+        tracks_centerline_and_accelerates::<Mppi>();
     }
     #[test]
     fn mppi_avoids_stopped_obstacle() {

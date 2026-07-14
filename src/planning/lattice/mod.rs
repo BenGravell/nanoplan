@@ -115,9 +115,7 @@ impl Planner for LatticePlanner {
                     t: (s - s0) / v, // time when the ego gets there
                     ..Default::default()
                 };
-                let point = ctx.time("cost", || {
-                    constraints.point_cost(&sample, ctx.road.target_speed)
-                });
+                let point = ctx.time("cost", || constraints.point_cost(&sample));
                 if point.is_infinite() {
                     return f64::INFINITY;
                 }

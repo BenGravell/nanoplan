@@ -10,8 +10,7 @@
 //! generation is discarded entirely).
 //!
 //! The sampling distribution is road-model informed: the initial nominal
-//! control sequence tracks the lane centerline (shared PD lane keeper +
-//! speed hold)
+//! control sequence tracks the lane centerline and brakes for traffic
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
@@ -35,7 +34,7 @@ const SIGMA_ACCEL: f64 = 4.0; // [m/s²] exploration std
 const LANE_HALF_M: f64 = 1.75;
 const STATE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
     center: 0.5,
-    speed: 0.0,
+    progress: 2.0,
     acceleration: 0.0,
     curvature: 0.0,
     scale: 1.0,
@@ -118,8 +117,8 @@ impl Default for Pi2DdpPlanner {
 }
 
 impl Pi2DdpPlanner {
-    /// Road-informed nominal: shared centerline tracking plus a
-    /// proportional speed hold, rolled out over the horizon.
+    /// Road-informed nominal: shared centerline tracking and traffic braking,
+    /// rolled out over the horizon. The progress reward supplies throttle.
     fn init_policy(path: &Path, ego: State, ctx: &Context, sigma_init: M2) -> Policy {
         let u = centerline_follow_controls(ego, path, ctx, HORIZON)
             .into_iter()

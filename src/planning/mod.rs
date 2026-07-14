@@ -252,7 +252,7 @@ pub(crate) fn test_run(
     actors: &[State],
     ticks: usize,
 ) -> Vec<State> {
-    let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+    let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
     test_run_on(planner, &road, ego, actors, ticks)
 }
 

@@ -5,7 +5,7 @@ use crate::track::Path;
 #[derive(Clone, Copy)]
 pub(crate) struct TrajectoryCostWeights {
     pub center: f64,
-    pub speed: f64,
+    pub progress: f64,
     pub acceleration: f64,
     pub curvature: f64,
     pub scale: f64,
@@ -28,8 +28,8 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
     }
 
     pub(crate) fn stage(&self, x: &State, u: Control, t: usize, s_hint: Option<f64>) -> f64 {
-        let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, u, self.ctx.actors, Some(self.path))
+        let (s, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        self.stage_sample(s, sample, u, self.ctx.actors, Some(self.path))
     }
 
     pub(crate) fn stage_with_predicted_actors(
@@ -40,14 +40,15 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        let (_, mut sample) =
+        let (s, mut sample) =
             super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
         sample.t = 0.0;
-        self.stage_sample(sample, u, predicted_actors, None)
+        self.stage_sample(s, sample, u, predicted_actors, None)
     }
 
     fn stage_sample(
         &self,
+        progress: f64,
         sample: cost::Sample,
         u: Control,
         actors: &[State],
@@ -56,17 +57,15 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         let mut sample = sample;
         sample.accel = u.acceleration;
         sample.curvature = u.curvature;
-        let target = self.ctx.road.target_speed;
         let constraints = cost::HardConstraints::new(self.ctx.road.half_width, actors, lane);
         let shared = if self.weights.timed_shared_cost {
             self.ctx
-                .time("cost", || constraints.soft_point_cost(&sample, target))
+                .time("cost", || constraints.soft_point_cost(&sample))
         } else {
-            constraints.soft_point_cost(&sample, target)
+            constraints.soft_point_cost(&sample)
         };
-        let dv = sample.speed - target;
         let structural = self.weights.center * sample.lateral * sample.lateral
-            + self.weights.speed * dv * dv
+            - self.weights.progress * progress
             + self.weights.acceleration * u.acceleration * u.acceleration
             + self.weights.curvature * u.curvature * u.curvature;
         (shared + structural) * self.weights.scale

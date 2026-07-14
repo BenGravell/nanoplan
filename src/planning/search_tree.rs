@@ -216,7 +216,7 @@ pub(crate) fn centerline_follow_controls(
     for _ in 0..horizon {
         let (s, _) = path.project(x.position());
         let base = centerline_feedback(path, &x, ctx.road.target_speed);
-        let accel = base.acceleration.min(idm_accel(
+        let accel = 0.0_f64.min(idm_accel(
             x.speed,
             ctx.road.target_speed,
             lead_vehicle(path, s, ctx.actors),

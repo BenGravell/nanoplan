@@ -4,11 +4,10 @@
 //! Every metric is a per-tick score in [0, 1]. Rollout values aggregate the
 //! per-tick scores with a per-metric rule: event-driven metrics (collisions,
 //! drivable area, driving direction, TTC) take the worst case (min) — one bad
-//! tick is a violation — while smooth quantities (progress, speed limit,
-//! comfort) take the average; making-progress thresholds the aggregated
-//! progress ratio, as in nuPlan. The composite score applies the nuPlan
-//! structure (multipliers times the 5/5/4/2 weighted average) to the
-//! aggregates. Everything here is a pure
+//! tick is a violation — while smooth quantities (progress and comfort)
+//! take the average; making-progress thresholds the aggregated
+//! progress ratio, as in nuPlan. The composite score multiplies hard gates
+//! by a weighted average of the remaining race-quality signals. Everything here is a pure
 //! function of simulation outputs (ego trace, actor traces, and the
 //! [`Road`] geometry) — planner internals are off limits.
 //!
@@ -27,7 +26,6 @@ pub mod driving_direction;
 pub mod lane_keeping;
 pub mod making_progress;
 pub mod progress;
-pub mod speed_limit;
 pub mod ttc;
 
 pub(crate) mod aggregation;
@@ -55,7 +53,8 @@ pub struct TickCtx<'a> {
     pub lateral: &'a [f64],
     /// Tickwise ego kinematics (accels and yaw rates).
     pub kinematics: &'a comfort::Kinematics,
-    pub speed_limit: f64,
+    /// Physical racing-speed envelope used to normalize progress.
+    pub max_speed: f64,
     /// Whether the ego footprint is inside the road geometry at each tick.
     pub drivable_area: &'a [bool],
     pub dt: f64,
@@ -84,7 +83,7 @@ pub struct MetricSpec {
 }
 
 /// The metric registry: row order defines score-array order everywhere.
-pub const METRICS: [MetricSpec; 9] = [
+pub const METRICS: [MetricSpec; 8] = [
     MetricSpec {
         label: "no at-fault collisions",
         score: collisions::score,
@@ -120,12 +119,6 @@ pub const METRICS: [MetricSpec; 9] = [
         score: progress::score,
         aggregate: agg::avg,
         role: CompositeRole::Weighted(5.0),
-    },
-    MetricSpec {
-        label: "speed limit",
-        score: speed_limit::score,
-        aggregate: agg::avg,
-        role: CompositeRole::Weighted(4.0),
     },
     MetricSpec {
         label: "comfort",
@@ -186,7 +179,7 @@ pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
         station: &station,
         lateral: &lateral,
         kinematics: &kinematics,
-        speed_limit: road.target_speed,
+        max_speed: road.target_speed,
         drivable_area: &drivable_area,
         dt: road.dt,
     };
@@ -268,24 +261,16 @@ mod tests {
     }
 
     #[test]
-    fn overspeed_reduces_compliance_each_tick() {
-        let m = evaluate(&cruise(11.0, 200), &[], &road());
-        let expected = 1.0 - 1.0 / speed_limit::MAX_OVERSPEED_MS;
-        assert!(m.per_tick.iter().all(|t| (t[6] - expected).abs() < 1e-9));
-        assert!((m.aggregate[6] - expected).abs() < 1e-9);
-    }
-
-    #[test]
     fn harsh_braking_is_uncomfortable_only_while_braking() {
         let mut ego = cruise(10.0, 200);
         for (i, s) in ego.iter_mut().enumerate().skip(100) {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
         }
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[7], 1.0);
-        assert_eq!(m.at(110).0[7], 0.0);
+        assert_eq!(m.at(50).0[6], 1.0);
+        assert_eq!(m.at(110).0[6], 0.0);
         // comfort is a smooth quantity: averaged, not zeroed by the event
-        assert!(m.aggregate[7] > 0.0 && m.aggregate[7] < 1.0);
+        assert!(m.aggregate[6] > 0.0 && m.aggregate[6] < 1.0);
     }
 
     #[test]
@@ -323,7 +308,7 @@ mod tests {
                 })
                 .collect()
         };
-        let lk = |ego: &[State]| evaluate(ego, &[], &road()).aggregate[8];
+        let lk = |ego: &[State]| evaluate(ego, &[], &road()).aggregate[7];
         // a centered cruise keeps its lane perfectly
         assert_eq!(lk(&cruise(10.0, 200)), 1.0);
         // sustained one-sided bias scores below a full 1 …

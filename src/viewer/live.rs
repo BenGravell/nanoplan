@@ -77,7 +77,6 @@ pub(crate) fn update(
         live.zoom = (live.zoom * 0.9f32.powf(steps)).clamp(0.4, 8.0);
     }
     live.set_planner(state.planner);
-    live.world.target_speed = state.target_speed as f64;
     live.world.preview_ticks = (state.preview_s as f64 / DT).round() as usize;
     live.world.diagnostics_enabled = state.preview_s > 0.0
         && state.planner.has_diagnostics()

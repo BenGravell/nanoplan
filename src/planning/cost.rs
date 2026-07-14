@@ -2,8 +2,8 @@
 //! (Frenet lattice, PI²-DDP, RRT*), so "cost" means the same thing across
 //! all three instead of each inventing its own weights. Grounded in the
 //! same quantities [`crate::metrics`] scores rollout quality by — the
-//! hard-collision threshold, the drivable-area bound, the overspeed
-//! tolerance, and the comfort accel bounds — plus a prediction of actors
+//! hard-collision threshold, the drivable-area bound, and the comfort accel
+//! bounds — plus a prediction of actors
 //! via [`crate::prediction::predict`]. That is the lane-aware kinematic model:
 //! an actor travelling along the route is rolled forward following the
 //! lane's curve and eased back toward its center, so on a bend the planner
@@ -38,7 +38,7 @@
 //! finite differences, so this function stays the single definition of
 //! "good" with no analytically-differentiated twin to drift away from it.
 
-use crate::metrics::{comfort, lane_keeping, speed_limit};
+use crate::metrics::{comfort, lane_keeping};
 pub(crate) use crate::planning::constraints::{HardConstraints, Sample};
 
 /// Unsigned curvature through three points, via the Menger curvature
@@ -63,7 +63,7 @@ pub(crate) fn curvature_of(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2]) -> f64 {
 
 /// Number of soft cost features; the length of [`WEIGHTS`] and the array
 /// [`HardConstraints::features`] returns.
-pub(crate) const N_FEATURES: usize = 7;
+pub(crate) const N_FEATURES: usize = 6;
 
 /// Weights of the soft features: `point_cost = WEIGHTS · features`. The hard collision/off-road rejection is *not*
 /// in here — it is a fixed rule of [`HardConstraints`], never a learned weight.
@@ -72,11 +72,10 @@ pub(crate) const N_FEATURES: usize = 7;
 /// pulls the car to its lane center on an open road without ever fighting an
 /// obstacle swerve that has to leave the lane (which is priced against the
 /// far larger `actor_proximity`/off-road terms).
-pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 1.0, 2.0, 1.0, 1.0, 3.0];
+pub(crate) const WEIGHTS: [f64; N_FEATURES] = [200.0, 200.0, 2.0, 1.0, 1.0, 3.0];
 
 pub(super) fn soft_features(
     sample: &Sample,
-    target_speed: f64,
     road_half_width: f64,
     proximity: f64,
 ) -> [f64; N_FEATURES] {
@@ -89,13 +88,8 @@ pub(super) fn soft_features(
     // on the road, so it needs to bite hard, not softly.
     let edge = (sample.lateral.abs() - 0.7 * road_half_width).max(0.0);
 
-    // speed tracking, scaled by the same overspeed tolerance speed_limit
-    // scores against
-    let overspeed = (sample.speed - target_speed) / speed_limit::MAX_OVERSPEED_MS;
-
     // comfort: penalize exceeding nuPlan's empirical accel bounds, each
-    // scaled by its own bound so "just over the line" costs about the same
-    // as `overspeed` above — a large weight on a raw, unscaled accel
+    // scaled by its own bound — a large weight on a raw, unscaled accel
     // overshoot would swamp collision avoidance, since curvature sharp
     // enough to dodge an actor can be an order of magnitude past a comfort
     // bound. Lateral accel is speed² · curvature — algebraically the same
@@ -124,7 +118,6 @@ pub(super) fn soft_features(
     [
         proximity,
         edge * edge,
-        overspeed * overspeed,
         sample.heading_err * sample.heading_err,
         lon_over * lon_over,
         lat_over * lat_over,
@@ -143,32 +136,29 @@ mod tests {
 
     fn features(
         sample: &Sample,
-        target_speed: f64,
         road_half_width: f64,
         actors: &[State],
         lane: Option<&Path>,
     ) -> Option<[f64; N_FEATURES]> {
-        HardConstraints::new(road_half_width, actors, lane).features(sample, target_speed)
+        HardConstraints::new(road_half_width, actors, lane).features(sample)
     }
 
     fn point_cost(
         sample: &Sample,
-        target_speed: f64,
         road_half_width: f64,
         actors: &[State],
         lane: Option<&Path>,
     ) -> f64 {
-        HardConstraints::new(road_half_width, actors, lane).point_cost(sample, target_speed)
+        HardConstraints::new(road_half_width, actors, lane).point_cost(sample)
     }
 
     fn soft_point_cost(
         sample: &Sample,
-        target_speed: f64,
         road_half_width: f64,
         actors: &[State],
         lane: Option<&Path>,
     ) -> f64 {
-        HardConstraints::new(road_half_width, actors, lane).soft_point_cost(sample, target_speed)
+        HardConstraints::new(road_half_width, actors, lane).soft_point_cost(sample)
     }
 
     #[test]
@@ -181,7 +171,7 @@ mod tests {
             x: 1.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, HW, &[actor], None).is_infinite());
+        assert!(point_cost(&s, HW, &[actor], None).is_infinite());
     }
 
     #[test]
@@ -190,7 +180,7 @@ mod tests {
             lateral: 10.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, HW, &[], None).is_infinite());
+        assert!(point_cost(&s, HW, &[], None).is_infinite());
     }
 
     #[test]
@@ -202,8 +192,8 @@ mod tests {
             speed: 10.0,
             ..Default::default()
         };
-        assert!(point_cost(&s, 10.0, 5.5, &[], None).is_finite());
-        assert!(point_cost(&s, 10.0, 3.5, &[], None).is_infinite());
+        assert!(point_cost(&s, 5.5, &[], None).is_finite());
+        assert!(point_cost(&s, 3.5, &[], None).is_infinite());
     }
 
     #[test]
@@ -215,12 +205,11 @@ mod tests {
                     speed: 10.0,
                     ..Default::default()
                 },
-                10.0,
                 HW,
                 &[],
                 None,
             )
-            .unwrap()[6]
+            .unwrap()[5]
         };
         // centered and anywhere inside the ego's own lane: no lane-keeping cost
         assert_eq!(feat(0.0), 0.0);
@@ -236,9 +225,9 @@ mod tests {
             speed: 10.0,
             ..Default::default()
         };
-        let hard = point_cost(&s, 10.0, HW, &[], None);
+        let hard = point_cost(&s, HW, &[], None);
         assert!(hard.is_finite());
-        assert_eq!(soft_point_cost(&s, 10.0, HW, &[], None), hard);
+        assert_eq!(soft_point_cost(&s, HW, &[], None), hard);
     }
 
     #[test]
@@ -255,10 +244,10 @@ mod tests {
             lateral: HW + 3.0,
             ..Default::default()
         };
-        assert!(point_cost(&near, 10.0, HW, &[], None).is_infinite());
-        assert!(point_cost(&far, 10.0, HW, &[], None).is_infinite());
-        let c_near = soft_point_cost(&near, 10.0, HW, &[], None);
-        let c_far = soft_point_cost(&far, 10.0, HW, &[], None);
+        assert!(point_cost(&near, HW, &[], None).is_infinite());
+        assert!(point_cost(&far, HW, &[], None).is_infinite());
+        let c_near = soft_point_cost(&near, HW, &[], None);
+        let c_far = soft_point_cost(&far, HW, &[], None);
         assert!(c_near.is_finite() && c_far.is_finite());
         assert!(
             c_far > c_near,
@@ -271,19 +260,17 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            (soft_point_cost(&edge, 10.0, HW, &[], None) - point_cost(&edge, 10.0, HW, &[], None))
-                .abs()
-                < 1e-9
+            (soft_point_cost(&edge, HW, &[], None) - point_cost(&edge, HW, &[], None)).abs() < 1e-9
         );
     }
 
     #[test]
-    fn clear_road_at_target_speed_is_cheap_and_finite() {
+    fn clear_road_is_cheap_and_finite() {
         let s = Sample {
             speed: 10.0,
             ..Default::default()
         };
-        let c = point_cost(&s, 10.0, HW, &[], None);
+        let c = point_cost(&s, HW, &[], None);
         assert!(c.is_finite());
         assert!(c < 1.0, "cost {c}");
     }
@@ -296,7 +283,7 @@ mod tests {
             xy: [0.0, 0.0],
             lateral: 4.5, // inside the road, past the edge hinge
             heading_err: 0.3,
-            speed: 14.0,    // over a 10 m/s target
+            speed: 14.0,
             curvature: 0.1, // lat accel 19.6, past the comfort bound
             accel: 4.0,     // past MAX_LON_ACCEL
             t: 1.0,
@@ -305,10 +292,10 @@ mod tests {
             x: 5.0,
             ..Default::default()
         };
-        let f = features(&s, 10.0, HW, &[actor], None).unwrap();
+        let f = features(&s, HW, &[actor], None).unwrap();
         assert!(f.iter().all(|&x| x > 0.0), "features {f:?}");
         let dot: f64 = WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum();
-        assert_eq!(point_cost(&s, 10.0, HW, &[actor], None), dot);
+        assert_eq!(point_cost(&s, HW, &[actor], None), dot);
     }
 
     #[test]
@@ -333,10 +320,10 @@ mod tests {
         };
         // straight-line prediction sends the actor to (60, 0), nowhere near
         // the sample: no collision.
-        assert!(point_cost(&s, 10.0, HW, &[actor], None).is_finite());
+        assert!(point_cost(&s, HW, &[actor], None).is_finite());
         // lane-aware prediction follows the bend to (50, 10), right on top of
         // the sample: a collision the straight-line model misses.
-        assert!(point_cost(&s, 10.0, HW, &[actor], Some(&lane)).is_infinite());
+        assert!(point_cost(&s, HW, &[actor], Some(&lane)).is_infinite());
     }
 
     #[test]

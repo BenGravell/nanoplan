@@ -270,9 +270,7 @@ fn steer_cost(
             t,
             ..Default::default()
         };
-        let point = ctx.time("cost", || {
-            constraints.point_cost(&sample, ctx.road.target_speed)
-        });
+        let point = ctx.time("cost", || constraints.point_cost(&sample));
         if point.is_infinite() {
             return None;
         }

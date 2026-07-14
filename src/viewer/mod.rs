@@ -13,7 +13,6 @@ pub(crate) const DT: f64 = 0.1;
 #[derive(Resource)]
 pub(crate) struct UiState {
     pub planner: PlannerKind,
-    pub target_speed: f32,
     pub preview_s: f32,
     pub show_diag_points: bool,
     pub show_diag_trajectories: bool,
@@ -32,7 +31,6 @@ pub fn run() {
         .add_plugins(EguiPlugin::default())
         .insert_resource(UiState {
             planner: PlannerKind::BezierIdm,
-            target_speed: 8.0,
             preview_s: 3.0,
             show_diag_points: false,
             show_diag_trajectories: false,

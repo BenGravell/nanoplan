@@ -20,7 +20,6 @@ pub(crate) fn ui(
                     ui.selectable_value(&mut state.planner, kind, kind.name());
                 }
             });
-        ui.add(egui::Slider::new(&mut state.target_speed, 3.0..=13.0).text("target speed [m/s]"));
         ui.add(
             egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
                 .text("future preview [s]"),

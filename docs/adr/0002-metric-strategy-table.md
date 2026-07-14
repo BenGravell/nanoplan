@@ -15,8 +15,7 @@ position had to be kept in sync by hand across six places:
 1. `N_METRICS: usize = 8` — the arity.
 2. `Metrics::LABELS` — the display strings, in order.
 3. The ordered `scores = [...]` literal in `evaluate()`'s tick loop.
-4. `composite()`'s hardcoded indices and weights:
-   `(5.0*m[4] + 5.0*m[5] + 4.0*m[6] + 2.0*m[7]) / 16.0` and `m[0]*m[1]*m[2]*m[3]`.
+4. `composite()`'s hardcoded indices and weights.
 5. The aggregation block, readable only with index comments: `min_of(0), // collisions`.
 6. Every consumer that zipped `LABELS` against a score array (viewer table,
    batch CSV header).
@@ -47,12 +46,12 @@ pub const N_METRICS: usize = METRICS.len();
 
 - `TickCtx` holds the per-rollout series `evaluate()` precomputes once (ego
   trace, per-tick actor states, Frenet station/lateral series, comfort
-  `Kinematics`, speed limit, dt). A metric reads the tick it's given and
-  nothing else, preserving the "pure function of simulation output" boundary.
+  `Kinematics`, physical speed envelope, dt). A metric reads the tick it's
+  given and nothing else, preserving the "pure function of simulation output" boundary.
 - `evaluate()` fills `per_tick[i][m] = (METRICS[m].score)(&ctx, i)`, then
   aggregates each column with `METRICS[m].aggregate`.
 - `composite()` folds over the table: product of the `Multiplier` metrics
-  times the weighted average of the `Weighted` ones. The 5/5/4/2 weights now
+  times the weighted average of the `Weighted` ones. The weights now
   live on the metrics they describe.
 - The viewer table and batch CSV header iterate `METRICS` for labels.
 

@@ -8,8 +8,10 @@ use crate::planning::{
     bezier_idm::idm_accel,
 };
 use crate::rng::Rng;
+use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{CommandLimiter, State, collide_with_actors};
 use crate::track::{Road, Track};
+use crate::vehicle::MAX_LON_ACCEL;
 
 const DEFAULT_PREVIEW_TICKS: usize = 30;
 const ROAD_BEHIND_M: f64 = 50.0;
@@ -21,7 +23,6 @@ const ACTOR_MARGIN_M: f64 = 25.0;
 pub struct SmartActor {
     pub state: State,
     pub personality: Personality,
-    target_speed: f64,
     track_x: f64,
     lateral: f64,
     lateral_target: f64,
@@ -45,7 +46,6 @@ pub struct LiveWorld {
     pub diagnostics: DiagnosticsData,
     pub last_plan_ms: f64,
     pub last_planner_actors: usize,
-    pub target_speed: f64,
     pub dt: f64,
     pub preview_ticks: usize,
     pub diagnostics_enabled: bool,
@@ -65,7 +65,7 @@ impl LiveWorld {
             yaw,
             ..Default::default()
         };
-        let road = road_window(track, 0.0, 8.0, dt);
+        let road = road_window(track, 0.0, dt);
         let actor_count = max_actors.min(16);
         let behind = if actor_count > 1 {
             (actor_count / 3).max(1)
@@ -95,7 +95,6 @@ impl LiveWorld {
                         speed: 5.0 + 4.0 * rng.uniform(),
                     },
                     personality,
-                    target_speed: 5.5 + 4.5 * personality.aggressiveness,
                     track_x: x,
                     lateral,
                     lateral_target: lateral,
@@ -113,7 +112,6 @@ impl LiveWorld {
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
             last_planner_actors: 0,
-            target_speed: 8.0,
             dt,
             preview_ticks: DEFAULT_PREVIEW_TICKS,
             diagnostics_enabled: false,
@@ -143,14 +141,13 @@ impl LiveWorld {
         if (self.ego.x - self.road_anchor_x).abs() >= 20.0 {
             self.road_anchor_x = (self.ego.x / 20.0).floor() * 20.0;
             self.road = timed(latency, "world_track", || {
-                road_window(self.track, self.road_anchor_x, self.target_speed, self.dt)
+                road_window(self.track, self.road_anchor_x, self.dt)
             });
-        } else {
-            self.road.target_speed = self.target_speed;
         }
 
         timed(latency, "world_traffic", || self.step_traffic());
-        let ego_reach = self.ego.speed.max(self.target_speed) * PLANNING_HORIZON_S;
+        let ego_reach = self.ego.speed.max(0.0) * PLANNING_HORIZON_S
+            + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2);
         let actor_states: Vec<State> = self
             .actors
             .iter()
@@ -210,7 +207,7 @@ impl LiveWorld {
             let lead = snapshot
                 .get(i + 1)
                 .map(|next| (next.0 - actor.track_x - CAR_FOOTPRINT.length, next.1));
-            let accel = idm_accel(actor.state.speed, actor.target_speed, lead);
+            let accel = idm_accel(actor.state.speed, *MAX_TERMINAL_SPEED_MPS, lead);
             let speed = (actor.state.speed + accel * self.dt).max(0.0);
             actor.track_x += speed * self.dt;
             if actor.track_x >= actor.next_wander_x {
@@ -254,7 +251,7 @@ impl LiveWorld {
                     x: p[0] - actor.lateral * yaw.sin(),
                     y: p[1] + actor.lateral * yaw.cos(),
                     yaw,
-                    speed: actor.target_speed,
+                    speed: actor.state.speed,
                 };
             }
         }
@@ -267,12 +264,12 @@ fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64
     (timid_bias + (2.0 * random - 1.0) * 0.55 * personality.sloppiness * room).clamp(-room, room)
 }
 
-fn road_window(track: Track, x: f64, target_speed: f64, dt: f64) -> Road {
+fn road_window(track: Track, x: f64, dt: f64) -> Road {
     let centerline = track.centerline(x - ROAD_BEHIND_M, x + ROAD_AHEAD_M, ROAD_SAMPLE_M);
     // The planners currently accept one width per horizon; curvature and the
     // rendered track remain continuously varying.
     let half_width = track.half_width(x).max(EGO_FOOTPRINT.width / 2.0 + 0.5);
-    Road::new(centerline, target_speed, half_width, dt)
+    Road::new(centerline, *MAX_TERMINAL_SPEED_MPS, half_width, dt)
 }
 
 fn timed<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T) -> T {
@@ -327,6 +324,14 @@ mod tests {
                 .zip(before)
                 .any(|(actor, start)| (actor.lateral - start).abs() > 0.1)
         );
+    }
+
+    #[test]
+    fn unblocked_traffic_accelerates() {
+        let mut world = LiveWorld::new(1, PlannerKind::Straight, 1, 0.1);
+        let before = world.actors[0].state.speed;
+        world.step_traffic();
+        assert!(world.actors[0].state.speed > before);
     }
 
     #[test]

@@ -5,15 +5,17 @@ An interactive motion-planning demo on one endless procedural track.
 The track is a deterministic function of distance and seed. Its curvature and
 width vary continuously, so the viewer can sample only the region around the
 ego without loading maps, building road topology, choosing lanes, or planning
-a route. Traffic cars follow the same track and the selected planner replans
-the ego every tick.
+a route. Traffic cars race along the same track and the selected planner
+replans the ego every tick. Unblocked cars accelerate toward the vehicle's
+physical limit; planners trade forward progress against safety and control
+cost.
 
 ```bash
 cargo run --release
 ```
 
-The UI selects a planner and target speed, pauses the simulation, or generates
-a new track seed. Scroll to zoom.
+The UI selects a planner, pauses the simulation, or generates a new track seed.
+Scroll to zoom.
 
 ## Layout
 

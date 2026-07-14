@@ -230,9 +230,8 @@ than inventing new ones:
   point — the ground-truth `metrics::collisions` score over the real traces
   is the bar a better prediction has to clear.
 - **Soft terms** scaled to match: actor-proximity (inverse-square, inside
-  the hard point-collision proxy), road-edge proximity, speed tracked against
-  `speed_limit::MAX_OVERSPEED_MS`, comfort (longitudinal and lateral
-  accel) tracked against `comfort`'s own empirical bounds, and lane keeping —
+  the hard point-collision proxy), road-edge proximity, comfort (longitudinal
+  and lateral accel) tracked against `comfort`'s own empirical bounds, and lane keeping —
   a hinge on straddling the lane line into the next lane, aligned with the
   `lane_keeping` metric and weighted well below the collision/off-road terms
   so it never fights an obstacle swerve. Lateral accel is
@@ -400,10 +399,8 @@ supplies them the nanoplan way, so each optimizer stays a pure strategy:
   `HardConstraints::point_cost`, with a hard violation made
   finite (`constraints::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward
   aggregation can't divide by an infinity — exactly PI²-DDP's reasoning. On
-  top sit three planner-specific terms, each echoing one PI²-DDP keeps: an
-  undiscounted speed-tracking term (the shared cost prices overspeed only
-  lightly, which lets MPPI's reward-weighted *average* drift the speed below
-  target), a control-effort penalty on the deviation (PI²-DDP's
+  top sit three planner-specific terms, each echoing one PI²-DDP keeps: a
+  forward-progress reward, a control-effort penalty on the deviation (PI²-DDP's
   "linear-solvability" `½uᵀR⁻¹u`, pulling the deviation back toward the base
   policy unless the cost pays for departing), and a centerline pull.
 - **The shared QMC sampler.** The knot noise is drawn from
@@ -927,7 +924,7 @@ differentiates it rather than compares it:
 - **The terminal cost is a quadratic pull to the goal state** (position,
   heading, speed), treetop's terminal loss with its parking-grade
   tolerances swapped for lane-driving quadratics. The structural running
-  terms (centerline pull, speed tracking, small control-effort quadratics
+  terms (centerline pull, small control-effort quadratics
   that also keep `l_uu` strictly positive) sit on top of the shared cost,
   scaled by `1/TICKS` as treetop scales by `inverse_traj_length`.
 

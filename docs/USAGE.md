@@ -6,10 +6,11 @@ Run the desktop demo:
 cargo run --release
 ```
 
-The ego continuously drives a procedurally generated, unbounded single track.
+The ego and traffic race around a procedurally generated, unbounded single
+track. Forward progress makes the ego accelerate; there is no cruise-speed
+control.
 
 - **planner** changes the active motion planner.
-- **target speed** changes the desired speed immediately.
 - **future preview** sets how many seconds of the current plan are drawn;
   zero hides the preview without stopping the ego.
 - **diagnostic points/trajectories** show the selected planner's sampled

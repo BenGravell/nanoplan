@@ -109,24 +109,19 @@ impl<'a> HardConstraints<'a> {
     /// Soft feature vector of one sample, or `None` for a hard violation.
     /// Each feature is already squared/hinged so the cost is linear in
     /// [`WEIGHTS`] — the form the IRL tuner learns.
-    pub(crate) fn features(&self, sample: &Sample, target_speed: f64) -> Option<[f64; N_FEATURES]> {
+    pub(crate) fn features(&self, sample: &Sample) -> Option<[f64; N_FEATURES]> {
         if self.drivable.is_violated(sample) {
             return None;
         }
 
         let proximity = actor_proximity(sample, self.collision.actors, self.collision.lane)?;
-        Some(soft_features(
-            sample,
-            target_speed,
-            self.drivable.half_width,
-            proximity,
-        ))
+        Some(soft_features(sample, self.drivable.half_width, proximity))
     }
 
     /// [`WEIGHTS`] dotted with [`HardConstraints::features`], or
     /// `f64::INFINITY` for a hard violation a planner should reject.
-    pub(crate) fn point_cost(&self, sample: &Sample, target_speed: f64) -> f64 {
-        match self.features(sample, target_speed) {
+    pub(crate) fn point_cost(&self, sample: &Sample) -> f64 {
+        match self.features(sample) {
             None => f64::INFINITY,
             Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
         }
@@ -140,8 +135,8 @@ impl<'a> HardConstraints<'a> {
     /// [`HardConstraints::point_cost`] with hard violations made finite by
     /// [`HardConstraints::violation_penalty`], for optimizers whose reward
     /// statistics or finite differences cannot absorb an infinity.
-    pub(crate) fn soft_point_cost(&self, sample: &Sample, target_speed: f64) -> f64 {
-        let c = self.point_cost(sample, target_speed);
+    pub(crate) fn soft_point_cost(&self, sample: &Sample) -> f64 {
+        let c = self.point_cost(sample);
         if c.is_finite() {
             c
         } else {

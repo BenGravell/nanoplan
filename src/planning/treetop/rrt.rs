@@ -251,9 +251,7 @@ impl Tree {
                 let t_s = layer as f64 * steer_dur;
                 let (_, sample) = planner_math::state_sample(path, &target, t_s, None);
                 if !ctx
-                    .time("cost", || {
-                        constraints.point_cost(&sample, ctx.road.target_speed)
-                    })
+                    .time("cost", || constraints.point_cost(&sample))
                     .is_finite()
                 {
                     continue;
@@ -461,9 +459,7 @@ impl Grower<'_, '_> {
                 planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
             sample.accel = us[i].acceleration;
             sample.curvature = us[i].curvature;
-            let shared = self.ctx.time("cost", || {
-                constraints.point_cost(&sample, self.ctx.road.target_speed)
-            });
+            let shared = self.ctx.time("cost", || constraints.point_cost(&sample));
             // treetop softLoss: magnitude of (lon, lat) acceleration
             let effort = us[i]
                 .acceleration

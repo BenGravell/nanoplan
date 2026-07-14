@@ -37,7 +37,7 @@
 //!
 //! The running cost goes through [`cost::HardConstraints`] — the same cost
 //! interface every search planner prices candidates with — plus the usual
-//! planner-specific structural terms (centerline pull, speed tracking, and
+//! planner-specific structural terms (centerline pull and
 //! a small control-effort quadratic that also keeps `l_uu` strictly
 //! positive), scaled by `1/TICKS` as treetop scales by
 //! `inverse_traj_length`. Two adaptations make the shared cost usable
@@ -100,17 +100,16 @@ const FFGS_DECREASE: f64 = 0.2;
 // ---- The optimal control problem ------------------------------------------
 
 /// Weights of the structural running-cost terms on top of the shared cost
-/// (see the module doc): centerline pull, speed tracking, and the
+/// (see the module doc): centerline pull and the
 /// control-effort quadratics that also keep `l_uu` strictly positive
 /// (curvature's weight is larger because curvature is numerically ~50×
 /// smaller than acceleration).
 const CENTER_W: f64 = 0.5;
-const SPEED_W: f64 = 0.3;
 const EFFORT_ACCEL_W: f64 = 0.1;
 const EFFORT_CURV_W: f64 = 10.0;
 const STAGE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
     center: CENTER_W,
-    speed: SPEED_W,
+    progress: 0.0,
     acceleration: EFFORT_ACCEL_W,
     curvature: EFFORT_CURV_W,
     scale: 1.0 / TICKS as f64,
