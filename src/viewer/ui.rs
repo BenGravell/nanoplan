@@ -6,6 +6,7 @@ use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 use super::UiState;
+use super::friction_box;
 use super::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
 const PINK: egui::Color32 = egui::Color32::from_rgb(255, 58, 190);
@@ -29,22 +30,24 @@ pub(crate) fn ui(
         ctx.request_repaint();
         return;
     }
+    let mut root = egui::Ui::new(
+        ctx.clone(),
+        "viewer_ui".into(),
+        egui::UiBuilder::new().max_rect(ctx.content_rect()),
+    );
     if state.show_hud {
-        hud(ctx, &live);
+        hud(&mut root, &live);
     }
-    egui::Window::new("control_deck")
-        .anchor(egui::Align2::LEFT_TOP, egui::vec2(18.0, 18.0))
-        .title_bar(false)
+    egui::Panel::left("control_deck")
+        .exact_size(372.0)
         .resizable(false)
-        .collapsible(false)
         .frame(
-            egui::Frame::window(&ctx.style_of(egui::Theme::Dark))
+            egui::Frame::new()
                 .fill(PANEL)
                 .stroke(egui::Stroke::new(1.0, STEEL))
-                .corner_radius(3.0)
                 .inner_margin(egui::Margin::same(16)),
         )
-        .show(ctx, |ui| {
+        .show(&mut root, |ui| {
             ui.set_min_width(340.0);
             ui.horizontal(|ui| {
                 ui.label(
@@ -76,7 +79,7 @@ pub(crate) fn ui(
                 }
             });
 
-            let deck_height = (ctx.content_rect().height() - 130.0).max(300.0);
+            let deck_height = ui.available_height();
             egui::ScrollArea::vertical()
                 .max_height(deck_height)
                 .min_scrolled_height(deck_height)
@@ -148,12 +151,25 @@ pub(crate) fn ui(
                     );
 
                     section_heading(ui, "VIEWER VISIBILITY");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.checkbox(&mut state.show_grid, "Grid");
-                        ui.checkbox(&mut state.show_carpet, "Ego carpet");
-                        ui.checkbox(&mut state.show_plan, "Planned path");
-                        ui.checkbox(&mut state.show_hud, "Driving HUD");
-                    });
+                    ui.checkbox(&mut state.show_grid, "Grid");
+                    ui.checkbox(&mut state.show_carpet, "Ego carpet");
+                    ui.checkbox(&mut state.show_plan, "Planned path");
+                    ui.checkbox(&mut state.show_hud, "Driving HUD");
+                    if state.planner.has_diagnostics() {
+                        ui.checkbox(&mut state.show_diag_points, "Search points");
+                        ui.checkbox(
+                            &mut state.show_diag_trajectories,
+                            "Candidate trajectories",
+                        );
+                        if state.preview_s == 0.0
+                            && (state.show_diag_points || state.show_diag_trajectories)
+                        {
+                            ui.colored_label(
+                                RED,
+                                "Set future preview above zero to record diagnostics.",
+                            );
+                        }
+                    }
 
                     section_heading(ui, "METRICS");
                     let actuation = live.world.actuation();
@@ -191,27 +207,6 @@ pub(crate) fn ui(
                             });
                         });
 
-                    section_heading(ui, "DIAGNOSTICS");
-                    if state.planner.has_diagnostics() {
-                        ui.checkbox(&mut state.show_diag_points, "Search points");
-                        ui.checkbox(
-                            &mut state.show_diag_trajectories,
-                            "Candidate trajectories",
-                        );
-                        if state.preview_s == 0.0
-                            && (state.show_diag_points || state.show_diag_trajectories)
-                        {
-                            ui.colored_label(
-                                RED,
-                                "Set future preview above zero to record diagnostics.",
-                            );
-                        }
-                    } else {
-                        ui.label(
-                            egui::RichText::new("No visual diagnostics for this planner.")
-                                .color(DIM),
-                        );
-                    }
                 });
         });
 }
@@ -315,32 +310,30 @@ fn metric(ui: &mut egui::Ui, label: &str, value: String) {
     ui.end_row();
 }
 
-fn hud(ctx: &egui::Context, live: &Live) {
-    const SIZE: egui::Vec2 = egui::vec2(184.0, 224.0);
+fn hud(ui: &mut egui::Ui, live: &Live) {
+    const WIDTH: f32 = 184.0;
+    const CONTENT_HEIGHT: f32 = 472.0;
 
     let speed = live.world.ego.speed;
     let actuation = live.world.actuation();
-    egui::Area::new("driving_hud".into())
-        .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(SIZE, egui::Sense::hover());
+    egui::Panel::right("driving_hud")
+        .exact_size(WIDTH)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(PANEL)
+                .stroke(egui::Stroke::new(1.0, STEEL)),
+        )
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
             let painter = ui.painter_at(rect);
             let center_x = rect.center().x;
-            let top = rect.top();
+            let top = (rect.center().y - CONTENT_HEIGHT / 2.0).max(rect.top());
 
-            painter.rect_filled(rect, 3.0, PANEL);
-            painter.rect_stroke(
-                rect,
-                3.0,
-                egui::Stroke::new(1.0, STEEL),
-                egui::StrokeKind::Inside,
-            );
             painter.line_segment(
                 [
-                    egui::pos2(rect.left() + 1.0, rect.top() + 1.0),
-                    egui::pos2(rect.right() - 1.0, rect.top() + 1.0),
+                    egui::pos2(rect.left() + 1.0, rect.top()),
+                    egui::pos2(rect.left() + 1.0, rect.bottom()),
                 ],
                 egui::Stroke::new(2.0, PINK),
             );
@@ -367,8 +360,8 @@ fn hud(ctx: &egui::Context, live: &Live) {
             );
 
             let accel_track = egui::Rect::from_min_max(
-                egui::pos2(center_x - 6.0, top + 78.0),
-                egui::pos2(center_x + 6.0, top + 158.0),
+                egui::pos2(center_x - 6.0, top + 98.0),
+                egui::pos2(center_x + 6.0, top + 178.0),
             );
             let accel_zero = accel_track.center().y;
             painter.rect_filled(accel_track, 2.0, egui::Color32::from_white_alpha(20));
@@ -403,8 +396,8 @@ fn hud(ctx: &egui::Context, live: &Live) {
             );
 
             let curve_track = egui::Rect::from_min_max(
-                egui::pos2(center_x - 68.0, top + 184.0),
-                egui::pos2(center_x + 68.0, top + 196.0),
+                egui::pos2(center_x - 68.0, top + 224.0),
+                egui::pos2(center_x + 68.0, top + 236.0),
             );
             painter.rect_filled(curve_track, 2.0, egui::Color32::from_white_alpha(20));
             painter.line_segment(
@@ -426,11 +419,20 @@ fn hud(ctx: &egui::Context, live: &Live) {
             );
             painter.rect_filled(curve_fill, 2.0, BLUE);
             painter.text(
-                egui::pos2(center_x, top + 205.0),
+                egui::pos2(center_x, top + 245.0),
                 egui::Align2::CENTER_TOP,
                 format!("CURV {:+.3}", actuation.curvature),
                 egui::FontId::monospace(10.0),
                 TEXT,
+            );
+
+            friction_box::draw(
+                &painter,
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.left(), top + 288.0),
+                    egui::vec2(rect.width(), 184.0),
+                ),
+                &live.friction_box,
             );
         });
 }

@@ -9,7 +9,8 @@ use nanoplan::world::LiveWorld;
 use nanoplan::{CAR_FOOTPRINT, Path, PlannerKind, State};
 
 use super::carpet::{self, EgoCarpetGizmos};
-use super::draw::{ACCENT, draw_agent, draw_car, ppx, px};
+use super::draw::{ACCENT, PX_PER_M, draw_agent, draw_car, ppx, px};
+use super::friction_box::FrictionBox;
 use super::{DT, UiState};
 
 const MAX_ACTORS: usize = 12;
@@ -18,7 +19,9 @@ const DEFAULT_ZOOM: f32 = 0.5;
 pub(crate) const MIN_ZOOM: f32 = 0.125;
 pub(crate) const MAX_ZOOM: f32 = 4.0;
 const CAMERA_SMOOTH_RATE: f32 = 8.0;
+const CAMERA_BOTTOM_PADDING_PX: f32 = 48.0;
 const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
+const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
@@ -79,6 +82,7 @@ pub(crate) struct Live {
     pub paused: bool,
     pub camera: CameraState,
     pub latency: LatencyStats,
+    pub friction_box: FrictionBox,
     previous: RenderSnapshot,
     planner: PlannerKind,
     recorder: Latency,
@@ -93,6 +97,7 @@ impl Live {
         self.latency = LatencyStats::default();
         self.recorder.take();
         self.acc = 0.0;
+        self.friction_box.clear();
         self.reset_render_history();
         self.reset_camera();
     }
@@ -122,6 +127,8 @@ impl Live {
     fn tick(&mut self) {
         self.previous = RenderSnapshot::capture(&self.world);
         self.world.tick_recording_latency(&self.recorder);
+        self.friction_box
+            .record(self.previous.ego, self.world.ego, self.world.dt);
         self.latency.absorb(self.recorder.take());
     }
 }
@@ -139,6 +146,7 @@ impl Default for Live {
             seed: 1,
             paused: false,
             latency: LatencyStats::default(),
+            friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
             previous,
             planner: PlannerKind::BezierIdm,
             recorder: Latency::default(),
@@ -281,6 +289,35 @@ mod tests {
     }
 
     #[test]
+    fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
+        let viewport_height = 720.0;
+        for (zoom, ego_yaw) in [(MIN_ZOOM, -0.4), (DEFAULT_ZOOM, 0.7), (MAX_ZOOM, 1.2)] {
+            let camera = CameraState {
+                center: Vec2::splat(50.0),
+                zoom,
+                rotation: 0.7,
+                ..Default::default()
+            };
+            let ego = State {
+                x: 3.0,
+                y: 4.0,
+                yaw: ego_yaw,
+                ..Default::default()
+            };
+            let center = followed_camera_center(camera, ego, viewport_height);
+            let up = Rot2::radians(camera.rotation) * Vec2::Y;
+            let ego_in_view = (px(&ego) - center).dot(up);
+            let rear_extent =
+                CAR_FOOTPRINT.support_radius(ego.yaw, [up.x as f64, up.y as f64]) as f32 * PX_PER_M;
+            let rear_screen_y = (ego_in_view - rear_extent) * zoom;
+
+            assert!(
+                (rear_screen_y + viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX).abs() < 1e-3
+            );
+        }
+    }
+
+    #[test]
     fn render_interpolation_blends_pose_and_wraps_yaw() {
         let previous = State {
             x: 2.0,
@@ -361,7 +398,12 @@ pub(crate) fn draw(
     if let Some(target) = target_rotation {
         live.camera.rotation = smooth_angle(live.camera.rotation, target, blend);
     }
-    camera.translation = live.camera.center.extend(camera.translation.z);
+    let camera_center = if target_center.is_some() {
+        followed_camera_center(live.camera, ego, window.height())
+    } else {
+        live.camera.center
+    };
+    camera.translation = camera_center.extend(camera.translation.z);
     camera.rotation = Quat::from_rotation_z(live.camera.rotation);
     camera.scale = Vec3::splat(1.0 / live.camera.zoom);
 
@@ -471,6 +513,14 @@ fn smooth_angle(current: f32, target: f32, blend: f32) -> f32 {
     let delta = (target - current + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
         - std::f32::consts::PI;
     current + delta * blend
+}
+
+fn followed_camera_center(camera: CameraState, ego: State, viewport_height: f32) -> Vec2 {
+    let up = Rot2::radians(camera.rotation) * Vec2::Y;
+    let rear_extent =
+        CAR_FOOTPRINT.support_radius(ego.yaw, [up.x as f64, up.y as f64]) as f32 * PX_PER_M;
+    let ego_y = -(viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX) / camera.zoom + rear_extent;
+    camera.center + up * ((px(&ego) - camera.center).dot(up) - ego_y)
 }
 
 fn draw_grid(gizmos: &mut Gizmos, camera: CameraState, window: &Window) {

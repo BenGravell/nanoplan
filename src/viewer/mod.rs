@@ -6,6 +6,7 @@ use nanoplan::PlannerKind;
 
 mod carpet;
 mod draw;
+mod friction_box;
 mod live;
 mod ui;
 

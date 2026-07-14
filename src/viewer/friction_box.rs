@@ -1,0 +1,238 @@
+//! HUD friction-box widget and its receding acceleration history.
+
+use std::collections::VecDeque;
+
+use bevy_egui::egui;
+use nanoplan::State;
+use nanoplan::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+
+const COMFORT_QUANTILES: [(f32, egui::Color32); 4] = [
+    (0.50, egui::Color32::from_rgb(64, 210, 145)),
+    (0.75, egui::Color32::from_rgb(235, 210, 70)),
+    (0.90, egui::Color32::from_rgb(255, 145, 45)),
+    (1.00, egui::Color32::from_rgb(255, 65, 80)),
+];
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Sample {
+    lon: f32,
+    lat: f32,
+    time: f64,
+}
+
+pub(crate) struct FrictionBox {
+    trail_horizon_s: f64,
+    time: f64,
+    samples: VecDeque<Sample>,
+}
+
+impl FrictionBox {
+    pub(crate) fn new(trail_horizon_s: f64) -> Self {
+        Self {
+            trail_horizon_s: trail_horizon_s.max(f64::EPSILON),
+            time: 0.0,
+            samples: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.time = 0.0;
+        self.samples.clear();
+    }
+
+    pub(crate) fn record(&mut self, previous: State, current: State, dt: f64) {
+        self.time += dt;
+        let [lon, lat] = ego_acceleration(previous, current, dt);
+        self.samples.push_back(Sample {
+            lon: lon as f32,
+            lat: lat as f32,
+            time: self.time,
+        });
+        while self
+            .samples
+            .front()
+            .is_some_and(|sample| self.time - sample.time > self.trail_horizon_s)
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    fn current(&self) -> Sample {
+        self.samples.back().copied().unwrap_or_default()
+    }
+}
+
+pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &FrictionBox) {
+    let plot = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 94.0),
+        egui::vec2(144.0, 144.0),
+    );
+    let center = plot.center();
+
+    painter.text(
+        egui::pos2(rect.center().x, rect.top()),
+        egui::Align2::CENTER_TOP,
+        "FRICTION BOX",
+        egui::FontId::monospace(10.0),
+        egui::Color32::from_rgb(105, 135, 153),
+    );
+    painter.rect_filled(plot, 2.0, egui::Color32::from_rgb(7, 11, 18));
+    painter.rect_stroke(
+        plot,
+        2.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 70, 84)),
+        egui::StrokeKind::Inside,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(plot.left(), center.y),
+            egui::pos2(plot.right(), center.y),
+        ],
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(center.x, plot.top()),
+            egui::pos2(center.x, plot.bottom()),
+        ],
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)),
+    );
+    painter.text(
+        plot.left_top() + egui::vec2(4.0, 4.0),
+        egui::Align2::LEFT_TOP,
+        "+LON",
+        egui::FontId::monospace(9.0),
+        egui::Color32::from_rgb(105, 135, 153),
+    );
+    painter.text(
+        plot.right_center() - egui::vec2(4.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        "+LAT",
+        egui::FontId::monospace(9.0),
+        egui::Color32::from_rgb(105, 135, 153),
+    );
+
+    for (older, newer) in friction.samples.iter().zip(friction.samples.iter().skip(1)) {
+        let age = ((friction.time - newer.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
+        let alpha = ((1.0 - age).powi(2) * 180.0) as u8;
+        let color = comfort_color(utilization(*newer));
+        painter.line_segment(
+            [plot_position(plot, *older), plot_position(plot, *newer)],
+            egui::Stroke::new(
+                2.0,
+                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
+            ),
+        );
+    }
+
+    let current = friction.current();
+    let ball = plot_position(plot, current);
+    let color = comfort_color(utilization(current));
+    painter.line_segment([center, ball], egui::Stroke::new(1.0, color));
+    painter.circle_filled(ball, 6.0, color);
+    painter.circle_stroke(ball, 6.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+    painter.text(
+        egui::pos2(rect.center().x, plot.bottom() + 7.0),
+        egui::Align2::CENTER_TOP,
+        format!("LON {:+.1}  LAT {:+.1}", current.lon, current.lat),
+        egui::FontId::monospace(9.0),
+        egui::Color32::from_rgb(226, 241, 250),
+    );
+}
+
+fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
+    let v0 = [
+        previous.speed * previous.yaw.cos(),
+        previous.speed * previous.yaw.sin(),
+    ];
+    let v1 = [
+        current.speed * current.yaw.cos(),
+        current.speed * current.yaw.sin(),
+    ];
+    let dv = [(v1[0] - v0[0]) / dt, (v1[1] - v0[1]) / dt];
+    [
+        previous.yaw.cos() * dv[0] + previous.yaw.sin() * dv[1],
+        -previous.yaw.sin() * dv[0] + previous.yaw.cos() * dv[1],
+    ]
+}
+
+fn normalized(sample: Sample) -> [f32; 2] {
+    let lon_limit = if sample.lon >= 0.0 {
+        MAX_LON_ACCEL as f32
+    } else {
+        -MIN_LON_ACCEL as f32
+    };
+    [
+        (sample.lon / lon_limit).clamp(-1.0, 1.0),
+        (sample.lat / MAX_ABS_LAT_ACCEL as f32).clamp(-1.0, 1.0),
+    ]
+}
+
+fn utilization(sample: Sample) -> f32 {
+    let [lon, lat] = normalized(sample);
+    lon.abs().max(lat.abs())
+}
+
+fn plot_position(plot: egui::Rect, sample: Sample) -> egui::Pos2 {
+    let [lon, lat] = normalized(sample);
+    plot.center() + egui::vec2(lat * plot.width() / 2.0, -lon * plot.height() / 2.0)
+}
+
+fn comfort_color(utilization: f32) -> egui::Color32 {
+    COMFORT_QUANTILES
+        .iter()
+        .find(|(quantile, _)| utilization <= *quantile)
+        .map_or(COMFORT_QUANTILES.last().unwrap().1, |(_, color)| *color)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acceleration_is_resolved_in_the_previous_ego_frame() {
+        let previous = State {
+            yaw: std::f64::consts::FRAC_PI_2,
+            speed: 10.0,
+            ..Default::default()
+        };
+        let current = State {
+            yaw: std::f64::consts::FRAC_PI_2 + 0.1,
+            speed: 10.2,
+            ..Default::default()
+        };
+
+        let [lon, lat] = ego_acceleration(previous, current, 0.1);
+
+        assert!((lon - 1.490_424).abs() < 1e-5);
+        assert!((lat - 10.183_008).abs() < 1e-5);
+    }
+
+    #[test]
+    fn history_drops_samples_outside_its_horizon() {
+        let mut friction = FrictionBox::new(0.2);
+        for _ in 0..4 {
+            friction.record(State::default(), State::default(), 0.1);
+        }
+
+        assert_eq!(friction.samples.len(), 3);
+    }
+
+    #[test]
+    fn braking_and_acceleration_use_their_own_limits() {
+        assert_eq!(
+            normalized(Sample {
+                lon: MIN_LON_ACCEL as f32,
+                ..Default::default()
+            })[0],
+            -1.0
+        );
+        assert_eq!(
+            normalized(Sample {
+                lon: MAX_LON_ACCEL as f32,
+                ..Default::default()
+            })[0],
+            1.0
+        );
+    }
+}
