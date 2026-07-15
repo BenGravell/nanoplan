@@ -1,10 +1,12 @@
 # Viewer
 
-The viewer contains only the endless-track mode:
+The viewer contains only the endless-track mode, split by responsibility:
 
-- `live.rs` advances and draws `LiveWorld`;
-- `ui.rs` exposes planner, speed, preview, diagnostics, pause, and seed controls;
-- `draw.rs` contains the small vehicle drawing helpers.
+- `live/` owns simulation updates, camera input, world rendering, the ego
+  carpet, and drawing primitives;
+- `ui/` owns layout, controls, the driving HUD, visual style, and reusable
+  widgets;
+- `mod.rs` wires those features into the Bevy app.
 
 Planner diagnostics are captured by the realtime world only while an overlay
 is enabled. The latency table accumulates per-seam mean/max timings for the

@@ -9,8 +9,8 @@ use colorgrad::{BlendMode, Gradient};
 use nanoplan::simulation::MAX_TERMINAL_SPEED_MPS;
 use nanoplan::{EGO_FOOTPRINT, State};
 
-use super::draw::{PX_PER_M, px};
-use super::live::Live;
+use super::Live;
+use super::screen::{PX_PER_M, px};
 
 const BAND_M: f64 = 0.35;
 const ALPHA: f32 = 0.72;

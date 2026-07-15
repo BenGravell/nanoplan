@@ -7,14 +7,10 @@ use nanoplan::State;
 use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-use super::ui::{DIM, FAINT, STEEL, SURFACE, TEXT, caps_font};
+use super::super::super::colors::{BAD, DIM, FAINT, GOOD, GREY, OK, SURFACE, TEXT};
+use super::super::style::caps_font;
 
-const COMFORT_QUANTILES: [(f32, egui::Color32); 4] = [
-    (0.50, egui::Color32::from_rgb(64, 210, 145)),
-    (0.75, egui::Color32::from_rgb(235, 210, 70)),
-    (0.90, egui::Color32::from_rgb(255, 145, 45)),
-    (1.00, egui::Color32::from_rgb(255, 65, 80)),
-];
+const COMFORT_QUANTILES: [(f32, egui::Color32); 3] = [(0.50, GOOD), (0.75, OK), (1.00, BAD)];
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
@@ -95,14 +91,14 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
             egui::pos2(plot.left(), center.y),
             egui::pos2(plot.right(), center.y),
         ],
-        egui::Stroke::new(1.0, STEEL),
+        egui::Stroke::new(1.0, GREY),
     );
     painter.line_segment(
         [
             egui::pos2(center.x, plot.top()),
             egui::pos2(center.x, plot.bottom()),
         ],
-        egui::Stroke::new(1.0, STEEL),
+        egui::Stroke::new(1.0, GREY),
     );
     painter.text(
         plot.left_top() + egui::vec2(4.0, 4.0),
@@ -255,6 +251,13 @@ mod tests {
             })[0],
             1.0
         );
+    }
+
+    #[test]
+    fn comfort_uses_theme_status_colors() {
+        assert_eq!(comfort_color(0.5), GOOD);
+        assert_eq!(comfort_color(0.6), OK);
+        assert_eq!(comfort_color(0.8), BAD);
     }
 
     #[test]

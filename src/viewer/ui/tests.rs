@@ -1,0 +1,196 @@
+use std::path::Path;
+
+use bevy_egui::egui;
+use egui_kittest::{Harness, kittest::Queryable};
+
+use super::controls::metrics::preview_metric_scores;
+use super::{
+    ControlTab, UiState, compact_layout, compact_rail_widths, configure, portrait_prompt,
+    viewer_layout,
+};
+use crate::viewer::{CANVAS_RGB, live::Live};
+
+const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
+    ("phone-iphone-se-3", egui::vec2(667.0, 375.0)),
+    ("phone-galaxy-s24", egui::vec2(780.0, 360.0)),
+    ("phone-iphone-14-15-pro", egui::vec2(852.0, 393.0)),
+    ("phone-galaxy-a55-wide", egui::vec2(1040.0, 480.0)),
+];
+
+struct ViewerHarnessState {
+    ui: UiState,
+    live: Live,
+    tab: ControlTab,
+    configured: bool,
+}
+
+impl Default for ViewerHarnessState {
+    fn default() -> Self {
+        Self {
+            ui: UiState::default(),
+            live: Live::default(),
+            tab: ControlTab::Planner,
+            configured: false,
+        }
+    }
+}
+
+#[test]
+fn portrait_prompt_is_the_only_interactive_view() {
+    let size = egui::vec2(390.0, 844.0);
+    let mut harness = Harness::builder().with_size(size).build_ui_state(
+        |ui, configured: &mut bool| {
+            let ctx = ui.ctx().clone();
+            if !*configured {
+                configure(&ctx);
+                *configured = true;
+                ctx.request_repaint();
+                return;
+            }
+            let mut root = egui::Ui::new(
+                ctx.clone(),
+                "portrait_render_test".into(),
+                egui::UiBuilder::new().max_rect(ctx.content_rect()),
+            );
+            portrait_prompt::show(&mut root);
+        },
+        false,
+    );
+    harness.run();
+
+    assert!(harness.query_by_label("NANOPLAN").is_some());
+    assert!(
+        harness
+            .query_by_label("TURN YOUR DEVICE SIDEWAYS")
+            .is_some()
+    );
+    assert!(harness.query_by_label("PAUSE").is_none());
+}
+
+#[test]
+fn layout_only_compacts_for_phone_sized_viewports() {
+    for (_, phone) in PHONE_LANDSCAPE_SIZES {
+        assert!(compact_layout(phone));
+        let (left, right) = compact_rail_widths(phone);
+        assert!(phone.x - left - right >= phone.x * 0.4);
+    }
+    assert!(compact_layout(egui::vec2(960.0, 540.0)));
+    assert!(!compact_layout(egui::vec2(1920.0, 1080.0)));
+    assert!(!compact_layout(egui::vec2(3440.0, 1440.0)));
+    assert!(!compact_layout(egui::vec2(3840.0, 2160.0)));
+}
+
+#[test]
+fn viewer_elements_fit_and_render_at_target_sizes() {
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("viewer-renders");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let target_sizes = [
+        ("desktop-1080p", egui::vec2(1920.0, 1080.0), 1.0),
+        ("desktop-ultrawide", egui::vec2(3440.0, 1440.0), 1.0),
+        ("desktop-2160p", egui::vec2(1920.0, 1080.0), 2.0),
+        (PHONE_LANDSCAPE_SIZES[0].0, PHONE_LANDSCAPE_SIZES[0].1, 1.0),
+        (PHONE_LANDSCAPE_SIZES[1].0, PHONE_LANDSCAPE_SIZES[1].1, 1.0),
+        (PHONE_LANDSCAPE_SIZES[2].0, PHONE_LANDSCAPE_SIZES[2].1, 1.0),
+        (PHONE_LANDSCAPE_SIZES[3].0, PHONE_LANDSCAPE_SIZES[3].1, 1.0),
+    ];
+    for (name, size, pixels_per_point) in target_sizes {
+        let mut harness = Harness::builder()
+            .with_size(size)
+            .with_pixels_per_point(pixels_per_point)
+            .build_ui_state(
+                |ui, state: &mut ViewerHarnessState| {
+                    let ctx = ui.ctx().clone();
+                    if !state.configured {
+                        configure(&ctx);
+                        state.configured = true;
+                        ctx.request_repaint();
+                        return;
+                    }
+                    let mut root = egui::Ui::new(
+                        ctx.clone(),
+                        "viewer_render_test".into(),
+                        egui::UiBuilder::new().max_rect(ctx.content_rect()),
+                    );
+                    root.painter().rect_filled(
+                        root.max_rect(),
+                        0.0,
+                        egui::Color32::from_rgb(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2),
+                    );
+                    viewer_layout(&mut root, &mut state.ui, &mut state.live, &mut state.tab);
+                },
+                ViewerHarnessState::default(),
+            );
+        harness.run();
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size * pixels_per_point);
+        let compact = compact_layout(size);
+        let (control_width, hud_width) = if compact {
+            compact_rail_widths(size)
+        } else {
+            (
+                (size.x * 0.2).clamp(372.0, 440.0),
+                (size.x * 0.1).clamp(184.0, 220.0),
+            )
+        };
+        for label in [
+            "NANOPLAN",
+            "PAUSE",
+            "↻ NEW TRACK",
+            "PLANNER",
+            "CAMERA",
+            "VIZ",
+            "METRICS",
+            "ACTIVE PLANNER",
+            if compact {
+                "preview"
+            } else {
+                "future preview [s]"
+            },
+        ] {
+            for node in harness.get_all_by_label(label) {
+                let rect = node.rect();
+                assert!(
+                    screen.contains_rect(rect)
+                        && rect.max.x <= control_width * pixels_per_point
+                        && rect.is_positive(),
+                    "{label:?} is clipped at {name}: {rect:?} outside the control rail"
+                );
+            }
+        }
+        let hud = harness.get_by_label("Driving HUD").rect();
+        assert!(
+            screen.contains_rect(hud) && hud.min.x >= (size.x - hud_width) * pixels_per_point,
+            "HUD is clipped at {name}: {hud:?} outside the HUD rail"
+        );
+
+        let pause = harness.get_by_label("PAUSE").rect();
+        let new_track = harness.get_by_label("↻ NEW TRACK").rect();
+        let planner = harness.get_by_label("PLANNER").rect();
+        assert!((pause.width() - new_track.width()).abs() <= 1.0);
+        assert!((pause.left() - planner.left()).abs() <= 1.0);
+        let last_tab = harness
+            .get_by_label(if compact { "CAMERA" } else { "METRICS" })
+            .rect();
+        assert!((new_track.right() - last_tab.right()).abs() <= 1.0);
+        for label in ["CAMERA", "VIZ", "METRICS"] {
+            let tab = harness.get_by_label(label).rect();
+            assert!(
+                (tab.width() - planner.width()).abs() <= 1.0,
+                "tab widths differ at {name}: PLANNER {planner:?}, {label} {tab:?}"
+            );
+        }
+
+        harness
+            .render()
+            .unwrap_or_else(|error| panic!("failed to render {name}: {error}"))
+            .save(output_dir.join(format!("{name}.png")))
+            .unwrap();
+    }
+}
+
+#[test]
+fn preview_metrics_are_valid_scores() {
+    let scores = preview_metric_scores(&Live::default());
+    assert!(scores.into_iter().all(|score| (0.0..=1.0).contains(&score)));
+}

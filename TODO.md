@@ -46,6 +46,11 @@ This works for static obstacles.
 ## UX
 
 --
+mobile controls
+pinch to zoom
+
+
+--
 Show the predicted future poses of actors in the viewer.
 Re-use the ego carpet element.
 Must stay lightweight on compute and rendering side.

@@ -4,9 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use nanoplan::PlannerKind;
 
-mod carpet;
-mod draw;
-mod friction_box;
+mod colors;
 mod live;
 mod ui;
 
@@ -58,7 +56,7 @@ pub fn run() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
-        .init_gizmo_group::<carpet::EgoCarpetGizmos>()
+        .init_gizmo_group::<live::EgoCarpetGizmos>()
         .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticPointGizmos>()
         .insert_resource(ClearColor(Color::srgb_u8(
@@ -77,7 +75,7 @@ pub fn run() {
             (
                 live::camera_input,
                 live::update,
-                carpet::configure,
+                live::configure_carpet,
                 live::configure_diagnostics,
                 live::draw,
             )

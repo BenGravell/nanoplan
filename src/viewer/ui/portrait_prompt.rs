@@ -1,7 +1,8 @@
 use bevy_egui::egui;
 use nanoplan::math::smoothstep;
 
-use super::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT, brand_header, caps_font};
+use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
+use super::style::{brand_header, caps_font};
 
 const LOOP_DURATION_S: f32 = 3.0;
 const ROTATION_DURATION_S: f32 = 2.2;
