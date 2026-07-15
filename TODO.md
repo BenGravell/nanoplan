@@ -40,6 +40,11 @@ This works for static obstacles.
 ## UX
 
 --
+camera
+smooth motion should be even smoother, use a longer duration for the filtering on the pose of the camera.
+this is needed to overcome coarse discretization of the tracks.
+
+--
 mobile controls
 pinch to zoom
 
