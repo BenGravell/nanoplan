@@ -70,7 +70,7 @@
 //! points.
 
 use super::{TICKS, goal_state, take_warm};
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::planning::planner_math::{
     M4, M22, M24, M42, TrajectoryCost, TrajectoryCostWeights, V2, V4, dot, mat_add, mat_mul,
     mat_vec, state, state_from_v4, transpose, vec_add,

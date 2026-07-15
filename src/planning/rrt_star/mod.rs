@@ -26,7 +26,7 @@
 use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{

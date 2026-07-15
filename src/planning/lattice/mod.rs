@@ -20,8 +20,8 @@
 //! edge costs are non-negative, so the first final-layer node A\* settles is
 //! the global optimum); only the work to find it is smaller.
 
-use crate::EGO_FOOTPRINT;
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
+use crate::geometry::EGO_FOOTPRINT;
 use crate::planning::cost::{self, Sample};
 use crate::planning::search_tree::{
     RoadFrame, best_first, brake_controls, parent_chain, xy_to_controls,
@@ -57,7 +57,7 @@ const SAMPLES_PER_SEGMENT: usize = 4;
 /// budget together with A*'s lazy expansion.
 const NEIGHBOR_SPAN: usize = 2;
 /// Curvature is measured across this much road, rather than at the corners
-/// of the piecewise-linear centerline supplied by the procedural track.
+/// of the piecewise-linear centerline supplied by the active track.
 const CURVATURE_WINDOW_M: f64 = 7.5;
 /// Station resolution of the forward/backward velocity pass.
 const SPEED_PROFILE_STEP_M: f64 = 2.0;
@@ -432,7 +432,7 @@ mod tests {
         // lattice passes it while never crossing the road edge.
         let narrow = Road {
             half_width: 3.5,
-            barriers: crate::simulation::road_side_barriers(&base.centerline, 3.5),
+            barriers: crate::geometry::barrier::road_side_barriers(&base.centerline, 3.5),
             ..base.clone()
         };
         let trace = test_run_on(&mut LatticePlanner, &narrow, ego, &[obstacle], 150);
@@ -447,7 +447,7 @@ mod tests {
         // (and brakes short of the obstacle).
         let too_tight = Road {
             half_width: 2.0,
-            barriers: crate::simulation::road_side_barriers(&base.centerline, 2.0),
+            barriers: crate::geometry::barrier::road_side_barriers(&base.centerline, 2.0),
             ..base
         };
         let trace = test_run_on(&mut LatticePlanner, &too_tight, ego, &[obstacle], 150);

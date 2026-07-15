@@ -1,6 +1,7 @@
+use crate::geometry::{CAR_FOOTPRINT, Footprint};
+use crate::simulation::State;
+use crate::world::SmartActor;
 use bevy::prelude::*;
-use nanoplan::world::SmartActor;
-use nanoplan::{CAR_FOOTPRINT, Footprint, State};
 
 use super::super::rendering::interpolate_state;
 use super::super::screen::{PX_PER_M, px};

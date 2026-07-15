@@ -1,7 +1,7 @@
 //! Cubic Bezier lane return with a TOPP-RA speed parameterization.
 
+use crate::common::math::wrap_angle;
 use crate::geometry::{CAR_COLLISION_RADIUS_M, EGO_COLLISION_RADIUS_M};
-use crate::math::wrap_angle;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
 use crate::simulation::curvature_limit;

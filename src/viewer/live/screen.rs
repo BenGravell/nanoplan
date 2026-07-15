@@ -1,5 +1,5 @@
+use crate::simulation::State;
 use bevy::prelude::*;
-use nanoplan::State;
 
 pub(crate) const PX_PER_M: f32 = 6.0;
 

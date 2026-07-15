@@ -1,6 +1,5 @@
+use crate::planning::{PLANNING_HORIZON_S, PlannerKind};
 use bevy_egui::egui;
-use nanoplan::PlannerKind;
-use nanoplan::planning::PLANNING_HORIZON_S;
 
 use super::super::super::colors::DIM;
 use super::super::style::caps_font;

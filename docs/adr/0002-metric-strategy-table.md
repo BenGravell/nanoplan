@@ -7,7 +7,7 @@
 
 ## Context
 
-There are eight nuPlan-derived quality metrics. Each was already its own
+There are eight quality metrics. Each was already its own
 module with a `score()` function — a strategy in spirit. But a metric's
 *identity* was its **position in a set of parallel arrays**, and that
 position had to be kept in sync by hand across six places:

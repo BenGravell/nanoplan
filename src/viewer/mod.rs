@@ -1,8 +1,8 @@
-//! Interactive endless-track viewer.
+//! Interactive driving viewer.
 
+use crate::planning::PlannerKind;
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use nanoplan::PlannerKind;
 
 mod colors;
 mod live;
@@ -13,6 +13,7 @@ const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
 
 #[derive(Resource)]
 pub(crate) struct UiState {
+    pub track: usize,
     pub planner: PlannerKind,
     pub preview_s: f32,
     pub show_grid: bool,
@@ -27,6 +28,7 @@ pub(crate) struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            track: 0,
             planner: PlannerKind::BezierToppra,
             preview_s: 3.0,
             show_grid: true,

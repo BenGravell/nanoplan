@@ -1,4 +1,4 @@
-//! nuPlan closed-loop planner quality metrics, built up strictly tickwise,
+//! Closed-loop planner quality metrics, built up strictly tickwise,
 //! one module per metric.
 //!
 //! Every metric is a per-tick score in [0, 1]. Rollout values aggregate the
@@ -50,7 +50,7 @@ pub struct TickCtx<'a> {
     pub dt: f64,
 }
 
-/// A metric's role in the nuPlan composite score: hard gate or weighted term.
+/// A metric's role in the composite score: hard gate or weighted term.
 pub enum CompositeRole {
     /// Multiplies the composite directly — a 0 zeroes the whole score.
     Multiplier,
@@ -58,10 +58,8 @@ pub enum CompositeRole {
     Weighted(f64),
 }
 
-/// One metric, whole: everything [`evaluate`] and the score consumers (the
-/// viewer's metrics table, the batch CSV) need to know about it.
+/// One metric's scoring and aggregation behavior.
 pub struct MetricSpec {
-    pub label: &'static str,
     /// Score of one tick, in [0, 1].
     pub score: fn(&TickCtx, usize) -> f64,
     /// Rollout value from this metric's per-tick score column
@@ -74,19 +72,16 @@ pub struct MetricSpec {
 /// The metric registry: row order defines score-array order everywhere.
 pub const METRICS: [MetricSpec; 3] = [
     MetricSpec {
-        label: "TTC within bound",
         score: safety::score,
         aggregate: agg::min,
         role: CompositeRole::Multiplier,
     },
     MetricSpec {
-        label: "progress",
         score: progress::score,
         aggregate: agg::avg,
         role: CompositeRole::Weighted(5.0),
     },
     MetricSpec {
-        label: "comfort",
         score: comfort::score,
         aggregate: agg::avg,
         role: CompositeRole::Weighted(0.001),
@@ -104,7 +99,7 @@ pub struct Metrics {
     pub score_per_tick: Vec<f64>,
     /// Rollout value of each metric, aggregated per its rule (min or avg).
     pub aggregate: [f64; N_METRICS],
-    /// Rollout score: the nuPlan composite applied to the aggregates.
+    /// Rollout score: the composite applied to the aggregates.
     pub score: f64,
 }
 
@@ -272,12 +267,12 @@ mod tests {
         ego[50].y = 4.0;
         let wide = Road {
             half_width: 5.5,
-            barriers: crate::simulation::road_side_barriers(&road().centerline, 5.5),
+            barriers: crate::geometry::barrier::road_side_barriers(&road().centerline, 5.5),
             ..road()
         };
         let narrow = Road {
             half_width: 3.5,
-            barriers: crate::simulation::road_side_barriers(&road().centerline, 3.5),
+            barriers: crate::geometry::barrier::road_side_barriers(&road().centerline, 3.5),
             ..road()
         };
         assert_eq!(evaluate(&ego, &[], &wide).aggregate[0], 1.0);

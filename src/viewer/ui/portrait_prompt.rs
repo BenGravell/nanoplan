@@ -1,5 +1,5 @@
+use crate::common::math::smoothstep;
 use bevy_egui::egui;
-use nanoplan::math::smoothstep;
 
 use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
 use super::style::{brand_header, caps_font};

@@ -1,7 +1,8 @@
+use crate::metrics::evaluate;
+use crate::prediction::predict;
+use crate::simulation::State;
+use crate::track::Path;
 use bevy_egui::egui;
-use nanoplan::metrics::evaluate;
-use nanoplan::prediction::predict;
-use nanoplan::{Path, State};
 
 use super::super::super::colors::{DIM, TEXT};
 use super::super::style::caps_font;

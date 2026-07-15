@@ -7,11 +7,6 @@ mod integration;
 pub(crate) mod physics;
 mod state_control;
 
-pub use crate::barrier::{BARRIER_RESTITUTION, Barrier, collide_with_barriers, road_side_barriers};
-pub use crate::vehicle::{
-    AIR_DENSITY_KG_M3, DRAG_AREA_M2, EGO_MASS_KG, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL,
-    MAX_LON_ACCEL, MIN_LON_ACCEL, ROLLING_RESISTANCE_COEFF,
-};
 pub(crate) use collision::{collide_with_actors, collide_with_car_actors};
 pub(crate) use integration::CommandLimiter;
 pub use integration::world_step;
@@ -41,13 +36,13 @@ impl Simulator {
             .copied()
             .unwrap_or_default();
         let prev = self.state;
-        let next = crate::barrier::collide_with_road_barriers(
+        let next = crate::geometry::barrier::collide_with_road_barriers(
             prev,
             self.limiter.step(self.state, u, self.dt),
             ctx.road,
         );
         let next = collide_with_car_actors(next, ctx.actors.iter().copied());
-        self.state = crate::barrier::collide_with_road_barriers(prev, next, ctx.road);
+        self.state = crate::geometry::barrier::collide_with_road_barriers(prev, next, ctx.road);
         self.state
     }
 }

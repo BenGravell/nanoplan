@@ -1,7 +1,8 @@
+use crate::geometry::CAR_FOOTPRINT;
+use crate::simulation::State;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_egui::input::EguiWantsInput;
-use nanoplan::{CAR_FOOTPRINT, State};
 
 use super::Live;
 use super::screen::{PX_PER_M, px};

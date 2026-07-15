@@ -1,9 +1,8 @@
-//! Bevy plumbing for the endless-track demo.
+//! Bevy plumbing for the live driving demo.
 
+use crate::planning::{Latency, LatencyStats, PlannerKind};
+use crate::world::LiveWorld;
 use bevy::prelude::*;
-use nanoplan::PlannerKind;
-use nanoplan::planning::{Latency, LatencyStats};
-use nanoplan::world::LiveWorld;
 
 use super::{DT, UiState};
 use crate::viewer::ui::FrictionBox;
@@ -40,9 +39,9 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub fn regenerate(&mut self, seed: u64, planner: PlannerKind) {
+    pub fn regenerate(&mut self, seed: u64, planner: PlannerKind, track: usize) {
         self.seed = seed;
-        self.world = LiveWorld::new(seed, planner, MAX_ACTORS, DT);
+        self.world = LiveWorld::with_track(track, seed, planner, MAX_ACTORS, DT);
         self.planner = planner;
         self.latency = LatencyStats::default();
         self.recorder.take();
@@ -85,7 +84,9 @@ impl Live {
 
 impl Default for Live {
     fn default() -> Self {
-        let world = LiveWorld::new(1, PlannerKind::BezierToppra, MAX_ACTORS, DT);
+        #[cfg(test)]
+        crate::track::loader::install_test_catalog();
+        let world = LiveWorld::with_track(0, 1, PlannerKind::BezierToppra, MAX_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {

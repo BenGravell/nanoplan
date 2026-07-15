@@ -1,14 +1,7 @@
 # nanoplan
 
-An interactive motion-planning demo on one endless procedural track.
-
-The track is a deterministic function of distance and seed. Its curvature and
-width vary continuously, so the viewer can sample only the region around the
-ego without loading maps, building road topology, choosing lanes, or planning
-a route. Traffic cars race along the same track and the selected planner
-replans the ego every tick. Unblocked cars accelerate toward the vehicle's
-physical limit; planners trade forward progress against safety and control
-cost.
+An interactive motion-planning demo for car-like vehicles. Traffic cars share
+the road and the selected planner replans the ego every tick.
 
 ```bash
 cargo run --release
@@ -21,7 +14,7 @@ Scroll to zoom.
 
 ```text
 src/
-├── track.rs       endless centerline/width functions and Path/Road geometry
+├── track/         track geometry, loading, and generation
 ├── world/         realtime ego, traffic, and planning loop
 ├── planning/      motion planners
 ├── simulation/    vehicle dynamics and collision handling
@@ -29,6 +22,7 @@ src/
 └── viewer/        Bevy rendering and controls
 ```
 
-See [setup](docs/SETUP.md) and [usage](docs/USAGE.md).
+See [setup](docs/SETUP.md), [usage](docs/USAGE.md), and the
+[track documentation](src/track/README.md).
 
-Licensed under the [MIT License](LICENSE).
+Nanoplan's source code is licensed under the [MIT License](LICENSE).

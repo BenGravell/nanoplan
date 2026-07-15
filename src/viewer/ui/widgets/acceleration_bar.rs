@@ -1,6 +1,6 @@
+use crate::common::math::signed_fraction;
+use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
-use nanoplan::math::signed_fraction;
-use nanoplan::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 use super::super::super::colors::{BLUE, FAINT, RED, TEXT};
 

@@ -2,6 +2,7 @@
 //!
 //! The 2017 Ford GT is the primary calibration point, softened into a generic
 //! track-focused road car.
+//! c.f. https://fastestlaps.com/models/ford-gt-2017
 
 /// Strongest requested forward acceleration before rolling/aero losses, m/s2.
 pub const MAX_LON_ACCEL: f64 = 6.5;

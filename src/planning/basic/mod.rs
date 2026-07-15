@@ -1,7 +1,6 @@
 //! Basic centerline-return planner using the shared cubic steering curve.
 
-use crate::math::smoothstep;
-use crate::math::wrap_angle;
+use crate::common::math::{smoothstep, wrap_angle};
 use crate::planning::search_tree::{centerline_follow_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};

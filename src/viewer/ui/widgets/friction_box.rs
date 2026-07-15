@@ -2,10 +2,9 @@
 
 use std::collections::VecDeque;
 
+use crate::simulation::{State, curvature_limit};
+use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
-use nanoplan::State;
-use nanoplan::simulation::curvature_limit;
-use nanoplan::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 use super::super::super::colors::{BAD, DIM, FAINT, GOOD, GREY, OK, SURFACE, TEXT};
 use super::super::style::caps_font;

@@ -1,6 +1,6 @@
 //! Physical road-side barrier segments and ego collision response.
 
-use crate::geometry::EGO_FOOTPRINT;
+use super::EGO_FOOTPRINT;
 use crate::simulation::{Position, State};
 use crate::track::Road;
 

@@ -55,6 +55,15 @@ web-time = "1" # std::time::Instant shim that works on wasm
 # spatial index R*-tree (wasm-compatible) for near(est)-neighbour queries, with incremental insertion
 rstar = "0.12"
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+ureq = "3.3"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+gloo-net = { version = "0.7", default-features = false, features = ["http"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Storage", "Window"] }
+
 [dev-dependencies]
 egui_kittest = { version = "0.35", features = ["wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }

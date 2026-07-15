@@ -1,6 +1,6 @@
 //! Actor state prediction shared by metrics, planners, and tuning.
 
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::simulation::State;
 use crate::track::Path;
 

@@ -5,7 +5,7 @@ mod matrix;
 mod trajectory_cost;
 mod vector;
 
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::planning::cost;
 use crate::simulation::{Control, State};
 use crate::track::Path;

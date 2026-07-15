@@ -214,8 +214,8 @@ than inventing new ones:
   feature vector (`features()`, each term already squared/hinged) dotted
   with one `pub(crate) const WEIGHTS`, so the finite cost is *linear* in the
   weights. That form is what makes the weights *learnable*: the
-  [`tuning`](../tuning/README.md) module re-fits them to expert nuPlan
-  trajectories with maximum-entropy IRL (`cargo run --release --bin tune`),
+  [`tuning`](../tuning/README.md) module re-fits them to expert trajectories
+  with maximum-entropy IRL (`cargo run --release --bin tune`),
   printing a replacement `WEIGHTS` line to paste back here. The hard
   rejection above is a fixed rule of `features()` (it returns `None`), never
   a learned weight.

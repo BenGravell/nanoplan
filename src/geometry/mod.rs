@@ -1,39 +1,16 @@
 //! Shared physical/rendered footprints.
 
+pub mod barrier;
+mod footprint;
+
+use crate::common::measure::dot;
 use crate::simulation::{Pose, State};
 
-/// Rectangular footprint dimensions in meters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Footprint {
-    pub length: f64,
-    pub width: f64,
-}
-
-impl Footprint {
-    pub const fn new(length: f64, width: f64) -> Self {
-        Self { length, width }
-    }
-
-    pub const fn size_m(self) -> [f64; 2] {
-        [self.length, self.width]
-    }
-
-    /// Half-extent of this rectangle along a world-space axis.
-    pub fn support_radius(self, yaw: f64, axis: [f64; 2]) -> f64 {
-        let n = axis[0].hypot(axis[1]).max(1e-9);
-        let axis = [axis[0] / n, axis[1] / n];
-        let forward = [yaw.cos(), yaw.sin()];
-        let left = [-forward[1], forward[0]];
-        0.5 * self.length * dot(axis, forward).abs() + 0.5 * self.width * dot(axis, left).abs()
-    }
-}
+pub use footprint::Footprint;
 
 /// Representative passenger-car footprint.
 pub const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);
 pub const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
-pub const TRUCK_FOOTPRINT: Footprint = Footprint::new(9.5, 2.5);
-pub const BIKE_FOOTPRINT: Footprint = Footprint::new(1.8, 0.6);
-pub const PEDESTRIAN_FOOTPRINT: Footprint = Footprint::new(0.6, 0.6);
 
 /// Circumscribed ego radius for callers that need a scalar bound.
 pub const EGO_COLLISION_RADIUS_M: f64 = 2.8313947534739836;
@@ -99,10 +76,6 @@ pub fn footprints_overlap(
 fn axes(yaw: f64) -> [[f64; 2]; 2] {
     let forward = [yaw.cos(), yaw.sin()];
     [forward, [-forward[1], forward[0]]]
-}
-
-fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
-    a[0] * b[0] + a[1] * b[1]
 }
 
 #[cfg(test)]

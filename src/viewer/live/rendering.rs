@@ -1,6 +1,7 @@
+use crate::simulation::State;
+use crate::track::Path;
+use crate::world::LiveWorld;
 use bevy::prelude::*;
-use nanoplan::world::LiveWorld;
-use nanoplan::{Path, State};
 
 use super::Live;
 use super::camera::{CameraTarget, followed_camera_center, smooth_angle};
@@ -96,7 +97,7 @@ pub(crate) fn draw(
     track::draw(
         &mut gizmos,
         &world.track,
-        world.ego.x,
+        world.track_progress,
         state.show_centerline,
     );
     diagnostics::draw(

@@ -21,7 +21,7 @@ pub mod treetop;
 pub use basic::BasicPlanner;
 pub use bezier_toppra::BezierToppraPlanner;
 pub use diagnostics::{Diagnostics, DiagnosticsData};
-pub use latency::{Latency, LatencyStats, SeamStats};
+pub use latency::{Latency, LatencyStats};
 pub use lattice::LatticePlanner;
 pub use pi2ddp::Pi2DdpPlanner;
 pub use rrt_star::RrtStarPlanner;

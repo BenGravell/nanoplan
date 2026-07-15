@@ -2,7 +2,7 @@
 //! trajectories stay on-road and apart for at least `LEAST_MIN_TTC_S`.
 //! Event-driven — aggregates by worst case (min).
 
-use crate::barrier::collides_with_road_barrier;
+use crate::geometry::barrier::collides_with_road_barrier;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, footprints_overlap};
 use crate::metrics::TickCtx;
 use crate::simulation::State;

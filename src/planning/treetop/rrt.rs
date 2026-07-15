@@ -52,7 +52,7 @@ use super::{
     GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, state_distance, take_warm,
     zero_action_point,
 };
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{

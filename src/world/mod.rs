@@ -1,13 +1,13 @@
-//! Realtime driving on one endless procedural track.
+//! Realtime driving on a generated or downloaded closed race track.
 
 use web_time::Instant;
 
-use crate::barrier::collide_with_road_barriers;
+use crate::common::rng::Rng;
+use crate::geometry::barrier::collide_with_road_barriers;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT};
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
-use crate::rng::Rng;
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{CommandLimiter, Control, State, collide_with_actors};
 use crate::track::{Road, Track};
@@ -37,9 +37,10 @@ pub struct Personality {
     pub sloppiness: f64,
 }
 
-/// The complete demo world: one procedural track, traffic, ego, and planner.
+/// The complete demo world: one track, traffic, ego, and planner.
 pub struct LiveWorld {
     pub track: Track,
+    pub track_progress: f64,
     pub road: Road,
     pub ego: State,
     pub actors: Vec<SmartActor>,
@@ -58,7 +59,17 @@ pub struct LiveWorld {
 
 impl LiveWorld {
     pub fn new(seed: u64, planner: PlannerKind, max_actors: usize, dt: f64) -> Self {
-        let track = Track::new(seed);
+        Self::with_track(0, seed, planner, max_actors, dt)
+    }
+
+    pub fn with_track(
+        track_index: usize,
+        seed: u64,
+        planner: PlannerKind,
+        max_actors: usize,
+        dt: f64,
+    ) -> Self {
+        let track = Track::from_catalog(track_index, seed);
         let (p, yaw) = track.pose(0.0);
         let ego = State {
             x: p[0],
@@ -66,7 +77,7 @@ impl LiveWorld {
             yaw,
             ..Default::default()
         };
-        let road = road_window(track, 0.0, dt);
+        let road = road_window(&track, 0.0, dt);
         let actor_count = max_actors.min(16);
         let behind = if actor_count > 1 {
             (actor_count / 3).max(1)
@@ -107,6 +118,7 @@ impl LiveWorld {
             .collect();
         Self {
             track,
+            track_progress: 0.0,
             road,
             ego,
             actors,
@@ -144,10 +156,13 @@ impl LiveWorld {
     }
 
     fn tick_with_latency(&mut self, latency: Option<&Latency>) {
-        if (self.ego.x - self.road_anchor_x).abs() >= 20.0 {
-            self.road_anchor_x = (self.ego.x / 20.0).floor() * 20.0;
+        self.track_progress = self
+            .track
+            .project_progress([self.ego.x, self.ego.y], self.track_progress);
+        if (self.track_progress - self.road_anchor_x).abs() >= 20.0 {
+            self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
             self.road = timed(latency, "world_track", || {
-                road_window(self.track, self.road_anchor_x, self.dt)
+                road_window(&self.track, self.road_anchor_x, self.dt)
             });
         }
 
@@ -158,8 +173,9 @@ impl LiveWorld {
             .actors
             .iter()
             .filter(|a| {
-                a.state.x <= self.ego.x + ego_reach + ACTOR_MARGIN_M
-                    && a.state.x + a.state.speed * PLANNING_HORIZON_S >= self.ego.x - ACTOR_MARGIN_M
+                a.track_x <= self.track_progress + ego_reach + ACTOR_MARGIN_M
+                    && a.track_x + a.state.speed * PLANNING_HORIZON_S
+                        >= self.track_progress - ACTOR_MARGIN_M
             })
             .map(|a| a.state)
             .collect();
@@ -250,9 +266,9 @@ impl LiveWorld {
             .actors
             .iter()
             .map(|a| a.track_x)
-            .fold(self.ego.x, f64::max);
+            .fold(self.track_progress, f64::max);
         for actor in &mut self.actors {
-            if actor.track_x < self.ego.x - 120.0 {
+            if actor.track_x < self.track_progress - 120.0 {
                 front += 80.0;
                 actor.track_x = front;
                 actor.lateral_target = lateral_target(
@@ -280,7 +296,7 @@ fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64
     (timid_bias + (2.0 * random - 1.0) * 0.55 * personality.sloppiness * room).clamp(-room, room)
 }
 
-fn road_window(track: Track, x: f64, dt: f64) -> Road {
+fn road_window(track: &Track, x: f64, dt: f64) -> Road {
     let centerline = track.centerline(x - ROAD_BEHIND_M, x + ROAD_AHEAD_M, ROAD_SAMPLE_M);
     // The planners currently accept one width per horizon; curvature and the
     // rendered track remain continuously varying.
@@ -305,8 +321,8 @@ mod tests {
         for _ in 0..100 {
             world.tick();
         }
-        assert!(world.ego.x > 5.0);
-        assert!(world.road.centerline.last().unwrap()[0] > world.ego.x + 200.0);
+        assert!(world.track_progress > 5.0);
+        assert!(world.road.centerline.len() > 10);
     }
 
     #[test]
@@ -327,6 +343,8 @@ mod tests {
             yaw: std::f64::consts::FRAC_PI_2,
             speed: 20.0,
         };
+        world.track_progress = world.track.project_progress([0.0, 0.0], 0.0);
+        world.road_anchor_x = world.track_progress;
 
         world.tick();
 
@@ -338,8 +356,18 @@ mod tests {
     #[test]
     fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
         let mut world = LiveWorld::new(1, PlannerKind::Straight, 12, 0.1);
-        assert!(world.actors.iter().any(|a| a.track_x < world.ego.x));
-        assert!(world.actors.iter().any(|a| a.track_x > world.ego.x));
+        assert!(
+            world
+                .actors
+                .iter()
+                .any(|a| a.track_x < world.track_progress)
+        );
+        assert!(
+            world
+                .actors
+                .iter()
+                .any(|a| a.track_x > world.track_progress)
+        );
 
         let timid = Personality {
             aggressiveness: 0.0,

@@ -1,3 +1,4 @@
+use crate::track::{GENERATED_TRACK_NAME, TRACK_CATALOG};
 use bevy_egui::egui;
 
 use super::super::colors::TEXT;
@@ -71,6 +72,25 @@ pub(super) fn control_deck(
 }
 
 fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
+    let previous_track = state.track;
+    egui::ComboBox::from_label("TRACK")
+        .selected_text(if state.track == 0 {
+            GENERATED_TRACK_NAME
+        } else {
+            TRACK_CATALOG[state.track - 1].name
+        })
+        .width(ui.available_width() - 64.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut state.track, 0, GENERATED_TRACK_NAME);
+            for (index, track) in TRACK_CATALOG.iter().enumerate() {
+                ui.selectable_value(&mut state.track, index + 1, track.name);
+            }
+        });
+    if state.track != previous_track {
+        live.regenerate(live.seed, state.planner, state.track);
+    }
+    ui.add_space(6.0);
+
     let width = equal_button_width(ui, 2);
     ui.horizontal(|ui| {
         let pause_label = if live.paused { "RESUME" } else { "PAUSE" };
@@ -90,7 +110,7 @@ fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
             )
             .clicked()
         {
-            live.regenerate(live.seed + 1, state.planner);
+            live.regenerate(live.seed + 1, state.planner, state.track);
         }
     });
 }

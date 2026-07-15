@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use crate::math::wrap_angle;
+use crate::common::math::wrap_angle;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::simulation::{Control, State, world_step};

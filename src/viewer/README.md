@@ -1,6 +1,7 @@
 # Viewer
 
-The viewer contains only the endless-track mode, split by responsibility:
+The viewer contains one live driving mode with generated and downloaded
+closed-circuit tracks, split by responsibility:
 
 - `live/` owns simulation updates, camera input, and world rendering, with
   atomic scene drawing in `live/drawing/`;

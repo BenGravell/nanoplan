@@ -1,6 +1,6 @@
+use crate::common::math::signed_fraction;
+use crate::simulation::curvature_limit;
 use bevy_egui::egui;
-use nanoplan::math::signed_fraction;
-use nanoplan::simulation::curvature_limit;
 
 use super::super::super::colors::{BLUE, FAINT, TEXT};
 

@@ -1,5 +1,7 @@
+use crate::geometry::CAR_FOOTPRINT;
+use crate::planning::PlannerKind;
+use crate::simulation::State;
 use bevy::prelude::*;
-use nanoplan::{CAR_FOOTPRINT, PlannerKind, State};
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, CameraTarget, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
@@ -102,9 +104,9 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     let mut live = Live::default();
     live.acc = DT as f32 * 0.9;
 
-    live.regenerate(2, PlannerKind::BezierToppra);
+    live.regenerate(2, PlannerKind::BezierToppra, 0);
 
-    let (_, track_yaw) = live.world.track.pose(live.world.ego.x);
+    let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
     assert!((live.world.ego.yaw - track_yaw).abs() < 1e-12);
     assert_eq!(live.previous.ego.yaw, track_yaw);
     assert_eq!(live.acc, 0.0);

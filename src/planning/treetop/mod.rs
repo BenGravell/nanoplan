@@ -122,7 +122,7 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
 /// is not very principled)".
 pub(crate) fn state_distance(a: &State, b: &State) -> f64 {
     (a.x - b.x).hypot(a.y - b.y)
-        + crate::math::wrap_angle(a.yaw - b.yaw).abs()
+        + crate::common::math::wrap_angle(a.yaw - b.yaw).abs()
         + (a.speed - b.speed).abs()
 }
 

@@ -1,6 +1,6 @@
+use crate::planning::DiagnosticsData;
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
-use nanoplan::planning::DiagnosticsData;
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, ppx};

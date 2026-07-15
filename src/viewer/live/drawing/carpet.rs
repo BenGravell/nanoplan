@@ -6,8 +6,8 @@ use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use colorgrad::{BlendMode, Gradient};
 
-use nanoplan::simulation::MAX_TERMINAL_SPEED_MPS;
-use nanoplan::{EGO_FOOTPRINT, State};
+use crate::geometry::EGO_FOOTPRINT;
+use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, px};
