@@ -12,32 +12,32 @@
 
 /// Recorded introspection geometry from one `plan()` call.
 #[derive(Debug, Clone, Default)]
-pub struct DiagnosticsData {
+pub(crate) struct DiagnosticsData {
     /// Standalone sample points, e.g. lattice grid nodes or PI²-DDP rollout
     /// states.
-    pub points: Vec<[f64; 2]>,
+    pub(crate) points: Vec<[f64; 2]>,
     /// Polylines, e.g. lattice DP edges or PI²-DDP sampled rollouts.
-    pub trajectories: Vec<Vec<[f64; 2]>>,
+    pub(crate) trajectories: Vec<Vec<[f64; 2]>>,
 }
 
 /// Per-call recorder. Interior mutability so it can sit behind the shared
 /// [`Context`](super::Context) reference planners already receive.
 #[derive(Default)]
-pub struct Diagnostics {
+pub(crate) struct Diagnostics {
     data: std::cell::RefCell<DiagnosticsData>,
 }
 
 impl Diagnostics {
-    pub fn record_point(&self, p: [f64; 2]) {
+    pub(crate) fn record_point(&self, p: [f64; 2]) {
         self.data.borrow_mut().points.push(p);
     }
 
-    pub fn record_trajectory(&self, traj: Vec<[f64; 2]>) {
+    pub(crate) fn record_trajectory(&self, traj: Vec<[f64; 2]>) {
         self.data.borrow_mut().trajectories.push(traj);
     }
 
     /// Drain the data recorded since the last take.
-    pub fn take(&self) -> DiagnosticsData {
+    pub(crate) fn take(&self) -> DiagnosticsData {
         self.data.take()
     }
 }

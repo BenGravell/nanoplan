@@ -1,7 +1,7 @@
 //! EM/lattice-style planner. Samples a deterministic grid of (station,
 //! lateral) points in the road Frenet frame, connects successive layers into
-//! a layered DAG with cubic lateral segments, assigns edge costs (travel
-//! time, smoothness, predicted-obstacle proximity), and finds the cheapest
+//! a layered DAG with cubic lateral segments, prices them with the production
+//! composite metric, and finds the cheapest
 //! path with **A\*** (best-first) search. The winning geometry then gets the
 //! fastest speed profile allowed by steering, lateral grip, engine thrust,
 //! drag, and braking.
@@ -31,7 +31,7 @@ use crate::simulation::physics::longitudinal_resistance_accel;
 use crate::simulation::{Control, State, curvature_limit};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-pub struct LatticePlanner;
+pub(crate) struct LatticePlanner;
 
 /// Number of lateral samples per station layer (lateral grid resolution),
 /// evenly spaced over the usable road width. Odd, so one sample lands
@@ -48,7 +48,7 @@ const SAMPLES_PER_SEGMENT: usize = 4;
 /// How many lateral columns an edge may span between adjacent station
 /// layers. A layer is only ~`horizon/STATION_LAYERS` of travel, so a jump of
 /// more than a few columns there is a curvature no real car has — the edge
-/// feasibility check rejects it, or the shared cost prices it out of any
+/// feasibility check rejects it, or the metric objective prices it out of any
 /// optimal path, so never generating those edges costs nothing and keeps
 /// the search branching factor (and cost-function evaluations) bounded. Full
 /// lateral range is still reachable: over `STATION_LAYERS` layers the path
@@ -61,9 +61,6 @@ const NEIGHBOR_SPAN: usize = 2;
 const CURVATURE_WINDOW_M: f64 = 7.5;
 /// Station resolution of the forward/backward velocity pass.
 const SPEED_PROFILE_STEP_M: f64 = 2.0;
-/// Makes elapsed time comparable to the accumulated shared point costs.
-const TIME_COST: f64 = 20.0;
-
 /// Total grid nodes — the resolution knob. `STATION_LAYERS × LATERALS`.
 const GRID_NODES: usize = STATION_LAYERS * LATERALS;
 
@@ -99,16 +96,14 @@ impl Planner for LatticePlanner {
             (2.0 * u3 - 3.0 * u2 + 1.0) * da + (u3 - 2.0 * u2 + u) * m0 + (3.0 * u2 - 2.0 * u3) * db
         };
 
-        // cost of one lattice edge: planner-specific lateral-smoothness and
-        // centerline-pull terms (structural to the search itself) plus the
-        // shared cost of each sampled point, timed under the "cost" seam so
-        // it's comparable across planners. Curvature at each point is a
+        // Cost of one lattice edge: the metric objective at each sampled
+        // point, timed under the "cost" seam. Curvature at each point is a
         // numerical estimate off the last three sampled points
         // (`cost::curvature_of`) — the lattice has no closed-form curve to
         // evaluate directly, unlike RRT*'s steering function. Returns
         // `f64::INFINITY` for a colliding or off-road edge (A* skips it).
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
-            let mut total = 0.5 * (db - da).powi(2); // lateral smoothness
+            let mut total = 0.0;
             let mut prev2: Option<[f64; 2]> = None;
             let mut prev1 = path.frenet_to_xy(sa, da);
             let mut elapsed = 0.0;
@@ -116,7 +111,6 @@ impl Planner for LatticePlanner {
                 let u = i as f64 / SAMPLES_PER_SEGMENT as f64;
                 let s = sa + (sb - sa) * u;
                 let d = d_shape(da, db, m0, u);
-                total += 0.5 * d * d / SAMPLES_PER_SEGMENT as f64;
                 let p = path.frenet_to_xy(s, d);
                 let curvature = prev2.map_or(0.0, |p0| cost::curvature_of(p0, prev1, p));
                 if curvature > MAX_ABS_CURVATURE {
@@ -149,7 +143,7 @@ impl Planner for LatticePlanner {
                 prev2 = Some(prev1);
                 prev1 = p;
             }
-            total + TIME_COST * elapsed
+            total
         };
 
         // Sampled Hermite connector between two grid nodes, for the
@@ -341,7 +335,7 @@ mod tests {
     use crate::track::Road;
 
     #[test]
-    fn stays_on_empty_centerline() {
+    fn stays_on_road_without_a_lane_center_metric() {
         let ego = State {
             y: 1.5,
             speed: 8.0,
@@ -349,7 +343,8 @@ mod tests {
         };
         let trace = test_run(&mut LatticePlanner, ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 0.5, "offset {}", end.y);
+        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
     #[test]

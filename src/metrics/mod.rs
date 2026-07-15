@@ -18,9 +18,9 @@
 //! module and adding one row here, and no consumer indexes scores by magic
 //! number.
 
-pub mod comfort;
-pub mod progress;
-pub mod safety;
+pub(crate) mod comfort;
+pub(crate) mod progress;
+pub(crate) mod safety;
 
 pub(crate) mod aggregation;
 
@@ -36,22 +36,22 @@ pub(crate) const COLLISION_CLEARANCE_M: f64 = CAR_FOOTPRINT.width;
 /// Precomputed, per-rollout series every metric scores from. Built once by
 /// [`evaluate`]; a metric's score function reads the tick it's given and
 /// nothing else, so metrics stay pure functions of simulation outputs.
-pub struct TickCtx<'a> {
+pub(crate) struct TickCtx<'a> {
     /// Ego state at every tick.
-    pub ego: &'a [State],
+    pub(crate) ego: &'a [State],
     /// Every actor's state at every tick: `actors_at[tick][actor]`.
-    pub actors_at: &'a [Vec<State>],
+    pub(crate) actors_at: &'a [Vec<State>],
     /// Ego arc length along the route at every tick.
-    pub station: &'a [f64],
+    pub(crate) station: &'a [f64],
     /// Tickwise ego kinematics (accels and yaw rates).
-    pub kinematics: &'a comfort::Kinematics,
+    pub(crate) kinematics: &'a comfort::Kinematics,
     /// Road geometry, including its static side barriers.
-    pub road: &'a Road,
-    pub dt: f64,
+    pub(crate) road: &'a Road,
+    pub(crate) dt: f64,
 }
 
 /// A metric's role in the composite score: hard gate or weighted term.
-pub enum CompositeRole {
+pub(crate) enum CompositeRole {
     /// Multiplies the composite directly — a 0 zeroes the whole score.
     Multiplier,
     /// Contributes to the weighted average with this weight.
@@ -59,18 +59,18 @@ pub enum CompositeRole {
 }
 
 /// One metric's scoring and aggregation behavior.
-pub struct MetricSpec {
+pub(crate) struct MetricSpec {
     /// Score of one tick, in [0, 1].
-    pub score: fn(&TickCtx, usize) -> f64,
+    pub(crate) score: fn(&TickCtx, usize) -> f64,
     /// Rollout value from this metric's per-tick score column
     /// ([`aggregation::min`] for event-driven metrics, [`aggregation::avg`]
     /// for smooth quantities).
-    pub aggregate: fn(&TickCtx, &[f64]) -> f64,
-    pub role: CompositeRole,
+    pub(crate) aggregate: fn(&TickCtx, &[f64]) -> f64,
+    pub(crate) role: CompositeRole,
 }
 
 /// The metric registry: row order defines score-array order everywhere.
-pub const METRICS: [MetricSpec; 3] = [
+pub(crate) const METRICS: [MetricSpec; 3] = [
     MetricSpec {
         score: safety::score,
         aggregate: agg::min,
@@ -88,32 +88,24 @@ pub const METRICS: [MetricSpec; 3] = [
     },
 ];
 
-pub const N_METRICS: usize = METRICS.len();
+pub(crate) const N_METRICS: usize = METRICS.len();
 
 /// Per-tick metric scores for a rollout, plus their aggregates.
 #[derive(Debug, Clone, Default)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     /// Per-tick score of each metric, `per_tick[tick][metric]`.
-    pub per_tick: Vec<[f64; N_METRICS]>,
+    pub(crate) per_tick: Vec<[f64; N_METRICS]>,
     /// Per-tick composite score.
-    pub score_per_tick: Vec<f64>,
+    pub(crate) score_per_tick: Vec<f64>,
     /// Rollout value of each metric, aggregated per its rule (min or avg).
-    pub aggregate: [f64; N_METRICS],
+    pub(crate) aggregate: [f64; N_METRICS],
     /// Rollout score: the composite applied to the aggregates.
-    pub score: f64,
-}
-
-impl Metrics {
-    /// Metric scores and composite score at a tick (clamped to the rollout).
-    pub fn at(&self, tick: usize) -> ([f64; N_METRICS], f64) {
-        let i = tick.min(self.per_tick.len().saturating_sub(1));
-        (self.per_tick[i], self.score_per_tick[i])
-    }
+    pub(crate) score: f64,
 }
 
 /// Evaluate all metrics over a finished rollout. `actors[i]` must be sampled
 /// at the same ticks as `ego`.
-pub fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
+pub(crate) fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
     let n = ego.len();
     if n == 0 {
         return Metrics::default();
@@ -207,11 +199,10 @@ mod tests {
         ];
         let m = evaluate(&ego, &[parked], &road());
         // tick 100 is exactly at the parked car
-        let (scores, score) = m.at(100);
-        assert_eq!(scores[0], 0.0);
-        assert_eq!(score, 0.0);
+        assert_eq!(m.per_tick[100][0], 0.0);
+        assert_eq!(m.score_per_tick[100], 0.0);
         // far away the tick is untouched, but the event zeroes the rollout
-        assert_eq!(m.at(0).0[0], 1.0);
+        assert_eq!(m.per_tick[0][0], 1.0);
         assert_eq!(m.aggregate[0], 0.0);
         assert_eq!(m.score, 0.0);
     }
@@ -223,8 +214,8 @@ mod tests {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
         }
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[2], 1.0);
-        assert_eq!(m.at(110).0[2], 1.0);
+        assert_eq!(m.per_tick[50][2], 1.0);
+        assert_eq!(m.per_tick[110][2], 1.0);
         assert_eq!(m.aggregate[2], 1.0);
     }
 
@@ -243,7 +234,7 @@ mod tests {
         let mut ego = cruise(10.0, 200);
         ego.reverse();
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[1], 0.0);
+        assert_eq!(m.per_tick[50][1], 0.0);
         assert_eq!(m.aggregate[1], 0.0);
     }
 
@@ -252,8 +243,8 @@ mod tests {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
         let m = evaluate(&ego, &[], &road());
-        assert_eq!(m.at(50).0[0], 0.0);
-        assert_eq!(m.at(51).0[0], 1.0);
+        assert_eq!(m.per_tick[50][0], 0.0);
+        assert_eq!(m.per_tick[51][0], 1.0);
         assert_eq!(m.aggregate[0], 0.0); // min aggregation: one bad tick
         assert_eq!(m.score, 0.0);
     }

@@ -2,31 +2,31 @@
 //!
 //! The 2017 Ford GT is the primary calibration point, softened into a generic
 //! track-focused road car.
-//! c.f. https://fastestlaps.com/models/ford-gt-2017
+//! c.f. <https://fastestlaps.com/models/ford-gt-2017>
 
 /// Strongest requested forward acceleration before rolling/aero losses, m/s2.
-pub const MAX_LON_ACCEL: f64 = 6.5;
+pub(crate) const MAX_LON_ACCEL: f64 = 6.5;
 /// Hardest braking deceleration, m/s2.
-pub const MIN_LON_ACCEL: f64 = -9.0;
+pub(crate) const MIN_LON_ACCEL: f64 = -9.0;
 /// Simulator-internal longitudinal jerk capability, m/s3.
 /// Deliberately permissive: this is a plant guard rail, not a planner model.
 pub(crate) const MAX_ABS_LON_JERK: f64 = 80.0;
 /// Tightest steer the plant will execute, a 5 m turning radius.
-pub const MAX_ABS_CURVATURE: f64 = 0.2;
+pub(crate) const MAX_ABS_CURVATURE: f64 = 0.2;
 /// Lateral-acceleration limit, m/s2.
-pub const MAX_ABS_LAT_ACCEL: f64 = 11.0;
+pub(crate) const MAX_ABS_LAT_ACCEL: f64 = 11.0;
 /// Simulator-internal curvature-rate capability, in 1/(m*s).
 /// Deliberately permissive: this is a plant guard rail, not a planner model.
 pub(crate) const MAX_ABS_CURVATURE_RATE: f64 = 2.0;
 
 /// Rolling-resistance coefficient for warm performance tires or racing slicks.
-pub const ROLLING_RESISTANCE_COEFF: f64 = 0.012;
+pub(crate) const ROLLING_RESISTANCE_COEFF: f64 = 0.012;
 /// Effective mass matching a tested 2017 Ford GT with fluids and driver.
-pub const EGO_MASS_KG: f64 = 1_480.0;
+pub(crate) const EGO_MASS_KG: f64 = 1_480.0;
 /// Sea-level air density.
-pub const AIR_DENSITY_KG_M3: f64 = 1.225;
+pub(crate) const AIR_DENSITY_KG_M3: f64 = 1.225;
 /// Effective high-speed resistance area. This is larger than is physically accurate
 /// because the constant-thrust model has no gears or power falloff; it yields
 /// the Ford GT's 347 km/h claimed top speed.
-pub const DRAG_AREA_M2: f64 = 1.66;
+pub(crate) const DRAG_AREA_M2: f64 = 1.66;
 pub(crate) const GRAVITY_MS2: f64 = 9.81;

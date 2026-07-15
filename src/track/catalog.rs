@@ -6,13 +6,13 @@ use super::circuit::Circuit;
 use super::model::{TrackModel, is_simple};
 
 #[derive(Debug, Clone, Copy)]
-pub struct TrackInfo {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub file: &'static str,
+pub(crate) struct TrackInfo {
+    pub(crate) id: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) file: &'static str,
 }
 
-pub const TRACK_CATALOG: [TrackInfo; 24] = [
+pub(crate) const TRACK_CATALOG: [TrackInfo; 24] = [
     TrackInfo {
         id: "austin",
         name: "Austin",
@@ -148,18 +148,6 @@ pub(super) fn loaded_catalog() -> Option<&'static LoadedCatalog> {
 
 pub(super) fn track_catalog_loaded() -> bool {
     loaded_catalog().is_some()
-}
-
-pub(super) fn install_test_catalog() {
-    LOADED_CATALOG.get_or_init(|| {
-        let circuit =
-            Arc::new(Circuit::parse("0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n").unwrap());
-        let model = TrackModel::train(&[circuit.training_track()]).unwrap();
-        LoadedCatalog {
-            circuits: vec![circuit; TRACK_CATALOG.len()],
-            model,
-        }
-    });
 }
 
 pub(super) fn install_track_data(data: &[String]) -> Result<(), String> {

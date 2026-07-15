@@ -1,23 +1,23 @@
 //! Shared physical/rendered footprints.
 
-pub mod barrier;
+pub(crate) mod barrier;
 mod footprint;
 
 use crate::common::measure::dot;
 use crate::simulation::{Pose, State};
 
-pub use footprint::Footprint;
+pub(crate) use footprint::Footprint;
 
 /// Representative passenger-car footprint.
-pub const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);
-pub const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
+pub(crate) const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);
+pub(crate) const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
 
 /// Circumscribed ego radius for callers that need a scalar bound.
-pub const EGO_COLLISION_RADIUS_M: f64 = 2.8313947534739836;
-pub const CAR_COLLISION_RADIUS_M: f64 = EGO_COLLISION_RADIUS_M;
+pub(crate) const EGO_COLLISION_RADIUS_M: f64 = 2.8313947534739836;
+pub(crate) const CAR_COLLISION_RADIUS_M: f64 = EGO_COLLISION_RADIUS_M;
 
 /// Constant-speed, constant-heading projection.
-pub fn project(s: &State, t: f64) -> State {
+pub(crate) fn project(s: &State, t: f64) -> State {
     State {
         x: s.x + s.speed * s.yaw.cos() * t,
         y: s.y + s.speed * s.yaw.sin() * t,
@@ -26,14 +26,14 @@ pub fn project(s: &State, t: f64) -> State {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Overlap {
+pub(crate) struct Overlap {
     /// Unit vector pointing from the second footprint toward the first.
-    pub normal: [f64; 2],
-    pub depth: f64,
+    pub(crate) normal: [f64; 2],
+    pub(crate) depth: f64,
 }
 
 /// Minimum translation vector for two rendered footprints, if they overlap.
-pub fn overlap_mtv(
+pub(crate) fn overlap_mtv(
     a: Pose,
     a_footprint: Footprint,
     b: Pose,
@@ -64,7 +64,7 @@ pub fn overlap_mtv(
     Some(best)
 }
 
-pub fn footprints_overlap(
+pub(crate) fn footprints_overlap(
     a: Pose,
     a_footprint: Footprint,
     b: Pose,

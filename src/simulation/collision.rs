@@ -1,5 +1,5 @@
 use super::State;
-use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint, overlap_mtv};
+use crate::geometry::{EGO_FOOTPRINT, Footprint, overlap_mtv};
 
 const ACTOR_RESTITUTION: f64 = 0.1;
 
@@ -10,13 +10,6 @@ pub(crate) fn collide_with_actors(
     actors.into_iter().fold(state, |s, (actor, footprint)| {
         collide_with_actor(s, actor, footprint)
     })
-}
-
-pub(crate) fn collide_with_car_actors(
-    state: State,
-    actors: impl IntoIterator<Item = State>,
-) -> State {
-    collide_with_actors(state, actors.into_iter().map(|s| (s, CAR_FOOTPRINT)))
 }
 
 fn collide_with_actor(state: State, actor: State, actor_footprint: Footprint) -> State {
@@ -44,6 +37,7 @@ fn collide_with_actor(state: State, actor: State, actor_footprint: Footprint) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::CAR_FOOTPRINT;
 
     #[test]
     fn actor_collision_separates_rendered_footprints() {
@@ -55,7 +49,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hit = collide_with_car_actors(ego, [actor]);
+        let hit = collide_with_actors(ego, [(actor, CAR_FOOTPRINT)]);
 
         assert!(!crate::geometry::footprints_overlap(
             hit.pose(),
@@ -76,7 +70,7 @@ mod tests {
             speed: 20.0,
         };
 
-        let hit = collide_with_car_actors(ego, [actor]);
+        let hit = collide_with_actors(ego, [(actor, CAR_FOOTPRINT)]);
 
         assert_eq!(hit.yaw, ego.yaw);
         assert!(!crate::geometry::footprints_overlap(

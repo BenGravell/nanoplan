@@ -5,10 +5,10 @@ use std::sync::Arc;
 use super::catalog::loaded_catalog;
 use super::circuit::Circuit;
 
-pub const GENERATED_TRACK_NAME: &str = "Generated Circuit";
+pub(crate) const GENERATED_TRACK_NAME: &str = "Generated Circuit";
 
 #[derive(Debug, Clone)]
-pub struct Track {
+pub(crate) struct Track {
     pub(super) geometry: TrackGeometry,
 }
 
@@ -18,9 +18,9 @@ pub(super) enum TrackGeometry {
 }
 
 impl Track {
-    pub fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         #[cfg(test)]
-        super::catalog::install_test_catalog();
+        super::loader::install_test_catalog();
         let circuit = Circuit::generated(
             loaded_catalog()
                 .expect("track catalog not loaded at startup")
@@ -33,7 +33,7 @@ impl Track {
         }
     }
 
-    pub fn from_catalog(index: usize, seed: u64) -> Self {
+    pub(crate) fn from_catalog(index: usize, seed: u64) -> Self {
         if index == 0 {
             return Self::new(seed);
         }
@@ -49,28 +49,28 @@ impl Track {
         }
     }
 
-    pub fn point(&self, progress: f64) -> [f64; 2] {
+    pub(crate) fn point(&self, progress: f64) -> [f64; 2] {
         self.pose(progress).0
     }
 
-    pub fn pose(&self, progress: f64) -> ([f64; 2], f64) {
+    pub(crate) fn pose(&self, progress: f64) -> ([f64; 2], f64) {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => circuit.pose(progress),
         }
     }
 
-    pub fn widths(&self, progress: f64) -> (f64, f64) {
+    pub(crate) fn widths(&self, progress: f64) -> (f64, f64) {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => circuit.widths(progress),
         }
     }
 
-    pub fn half_width(&self, progress: f64) -> f64 {
+    pub(crate) fn half_width(&self, progress: f64) -> f64 {
         let (right, left) = self.widths(progress);
         right.min(left)
     }
 
-    pub fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<[f64; 2]> {
+    pub(crate) fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<[f64; 2]> {
         let first = (from / step).floor() as i64;
         let last = (to / step).ceil() as i64;
         (first..=last)
@@ -78,13 +78,13 @@ impl Track {
             .collect()
     }
 
-    pub fn lap_length(&self) -> Option<f64> {
+    pub(crate) fn lap_length(&self) -> Option<f64> {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => Some(circuit.length),
         }
     }
 
-    pub fn project_progress(&self, point: [f64; 2], hint: f64) -> f64 {
+    pub(crate) fn project_progress(&self, point: [f64; 2], hint: f64) -> f64 {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => circuit.project(point, hint),
         }

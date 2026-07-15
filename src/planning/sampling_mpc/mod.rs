@@ -37,16 +37,12 @@
 //! - **The planner-internal forward model.** Every rollout advances through
 //!   [`crate::simulation::world_step`] — shared memoryless simulation physics
 //!   with vehicle limits and drag, but without actuator memory or collisions.
-//! - **The shared cost function.** Each rolled-out state is priced through
+//! - **The shared metric objective.** Each rolled-out state is priced through
 //!   [`crate::planning::cost::HardConstraints`], the same cost interface the
 //!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
 //!   finite by the shared constraint escape slope since MPPI's and CEM's reward
 //!   aggregation can't absorb an infinity — the same reason PI²-DDP makes
-//!   that swap. Three planner-specific terms sit on top, each mirroring one
-//!   PI²-DDP keeps: a forward-progress reward, a control-effort
-//!   penalty on the deviation (`CONTROL_WEIGHT`, the
-//!   "linear-solvability" `½uᵀR⁻¹u`), and the centerline pull folded into
-//!   `state_cost`.
+//!   that swap. No planner-local outcome terms are added.
 //! - **The shared QMC sampler.** The knot noise comes from
 //!   [`crate::planning::sampling::qmc_normals`], the *same* low-discrepancy
 //!   sequence RRT* draws its targets from (see that module's parity note),
@@ -61,9 +57,9 @@ mod cem;
 mod mppi;
 mod ps;
 
-pub use cem::Cem;
-pub use mppi::Mppi;
-pub use ps::PredictiveSampling;
+pub(crate) use cem::Cem;
+pub(crate) use mppi::Mppi;
+pub(crate) use ps::PredictiveSampling;
 
 use crate::common::math::wrap_angle;
 use crate::planning::cost::{self, Sample};
@@ -78,7 +74,7 @@ pub(crate) const NU: usize = 2;
 
 /// Planning horizon in ticks: 10 s at the simulator's 0.1 s tick rate, the
 /// same look-ahead the lattice, PI²-DDP, and RRT* use
-/// ([`PLANNING_HORIZON_S`]). The knots span this whole horizon; the
+/// ([`crate::planning::PLANNING_HORIZON_S`]). The knots span this whole horizon; the
 /// returned control trajectory is sampled from it.
 const HORIZON: usize = PLANNING_TICKS;
 
@@ -97,49 +93,30 @@ const HORIZON: usize = PLANNING_TICKS;
 /// reward-weighted averages room to drift the speed off target for no gain.
 pub(crate) const SIGMA_SCALE: [f64; NU] = [4.0, 0.08];
 
-/// Reward per metre advanced along the track, capped at the physical speed
-/// envelope so impossible rollout speed earns no extra reward.
-const PROGRESS_REWARD_PER_M: f64 = 100.0;
-
-/// Weight on a control-effort penalty over the knot *deviation* from the
-/// base policy, `Σ_t Σ_c (dev_c / SIGMA_SCALE_c)²` — the deviation scaled by
-/// its own sampling std, i.e. PI²-DDP's "linear-solvability" control cost
-/// (`½ uᵀR⁻¹u` with `R⁻¹` the inverse exploration covariance), kept for the
-/// same reason. It pulls a deviation back toward zero — the bare,
-/// lane-tracking, speed-holding base policy — unless the rollout cost pays
-/// for departing: an obstacle swerve easily earns its curvature deviation
-/// against the collision penalty, but on an open road there's nothing to buy,
-/// so the deviation decays and the base policy tracks. Without it, MPPI's and
-/// CEM's reward-weighted averages let the acceleration deviation drift until
-/// it cancelled the base policy's speed hold, plateauing the ego below the
-/// target speed (PS, taking the single best, didn't suffer this).
-const CONTROL_WEIGHT: f64 = 0.3;
-const CENTERLINE_WEIGHT: f64 = 5.0;
-
 /// One control knot: `[acceleration, curvature]`.
-pub type Knot = [f64; NU];
+pub(crate) type Knot = [f64; NU];
 
 /// Base configuration shared by every optimizer — judo's `OptimizerConfig`.
 /// Each optimizer wraps this with its own sampling/aggregation parameters
 /// (sigma, temperature, elite count).
 #[derive(Debug, Clone, Copy)]
-pub struct OptimizerConfig {
+pub(crate) struct OptimizerConfig {
     /// Number of sampled rollouts per iteration (judo's `num_rollouts`).
     /// The first is always the un-noised nominal.
-    pub num_rollouts: usize,
+    pub(crate) num_rollouts: usize,
     /// Number of control knots per trajectory (judo's `num_nodes`).
-    pub num_nodes: usize,
+    pub(crate) num_nodes: usize,
     /// Whether to ramp the sampling std up along the horizon (judo's
     /// `use_noise_ramp`): near knots are perturbed less than far ones.
-    pub use_noise_ramp: bool,
+    pub(crate) use_noise_ramp: bool,
     /// Ramp magnitude when `use_noise_ramp` is set (judo's `noise_ramp`).
-    pub noise_ramp: f64,
+    pub(crate) noise_ramp: f64,
     /// How many sample→rollout→update iterations to run per `plan()` call.
     /// judo runs one optimizer step per control cycle and relies on the
     /// controller's replan rate; nanoplan replans every tick but affords a
     /// few refinement iterations, mirroring PI²-DDP's `GENERATIONS`. Not a
     /// judo field — a nanoplan adaptation of judo's controller loop.
-    pub iterations: usize,
+    pub(crate) iterations: usize,
 }
 
 impl Default for OptimizerConfig {
@@ -158,7 +135,7 @@ impl Default for OptimizerConfig {
 /// everything else (rollout, cost, warm start) supplied by
 /// [`SamplingPlanner`]. Mirrors judo's abstract `Optimizer` base — the
 /// three concrete optimizers are `impl`s of this and nothing more.
-pub trait Optimizer: Default {
+pub(crate) trait Optimizer: Default {
     /// Display name for the planner registry.
     const NAME: &'static str;
 
@@ -245,7 +222,7 @@ fn control_at(knots: &[Knot], t: usize, span: usize) -> Knot {
 /// generic holds all the machinery judo keeps outside the optimizer —
 /// rollout, cost, the road-informed nominal, warm start — so each optimizer
 /// stays a two-method strategy.
-pub struct SamplingPlanner<O: Optimizer> {
+pub(crate) struct SamplingPlanner<O: Optimizer> {
     opt: O,
     /// Last tick's winning nominal knots, carried forward as this tick's
     /// starting nominal when the ego followed the plan (warm start).
@@ -265,7 +242,7 @@ impl<O: Optimizer> Default for SamplingPlanner<O> {
 }
 
 impl<O: Optimizer> SamplingPlanner<O> {
-    pub const NAME: &'static str = O::NAME;
+    pub(crate) const NAME: &'static str = O::NAME;
 
     /// The road-model base policy the knots deviate from — the "hybrid road
     /// model" half of the sampling, and what makes the open-loop knot
@@ -302,9 +279,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     }
 
     /// Cost of being at `x` at tick `t` having just applied `u` — the
-    /// shared cost function plus a centerline-pull term, with hard
-    /// violations made finite (see the module doc). Timed under the `cost`
-    /// seam, like every other search planner.
+    /// production composite metric with hard violations made finite.
     fn state_cost(path: &Path, x: &State, u: Control, t: usize, ctx: &Context) -> f64 {
         let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
@@ -318,22 +293,21 @@ impl<O: Optimizer> SamplingPlanner<O> {
             t: t as f64 * ctx.road.dt,
         };
         let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
-        // The shared cost with hard violations made finite by a depth-scaled
+        // The metric objective with hard violations made finite by a depth-scaled
         // escape slope (`soft_point_cost`): a flat penalty plateau leaves
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
         // road once every sampled rollout is briefly off it, so they can
         // settle off-road; the depth slope pulls them back in.
-        CENTERLINE_WEIGHT * d * d + ctx.time("cost", || constraints.soft_point_cost(&sample))
+        ctx.time("cost", || constraints.soft_point_cost(&sample))
     }
 
     /// Roll a knot-set out from the ego over the full horizon, applying each
-    /// interpolated knot as a *deviation* from the base policy ([`command`]),
+    /// interpolated knot as a *deviation* from the base policy (`command`),
     /// and return the visited states (for diagnostics) and the reward
     /// (negated total cost; judo maximizes reward). The terminal state is
     /// weighted like PI²-DDP's, pricing position and speed once more at the
     /// end.
     fn rollout(&self, knots: &[Knot], path: &Path, ego: State, ctx: &Context) -> (Vec<State>, f64) {
-        let mut station = path.project(ego.position()).0;
         let mut x = ego;
         let mut xs = vec![ego];
         let mut total = 0.0;
@@ -341,19 +315,9 @@ impl<O: Optimizer> SamplingPlanner<O> {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = world_step(x, u, ctx.road.dt);
-            let next_station = path.project(x.position()).0;
             total += Self::state_cost(path, &x, u, t + 1, ctx);
-            // control-effort penalty on the deviation from the base policy
-            // (see CONTROL_WEIGHT)
-            total += CONTROL_WEIGHT
-                * ((dev[0] / SIGMA_SCALE[0]).powi(2) + (dev[1] / SIGMA_SCALE[1]).powi(2));
-            let max_progress = ctx.road.target_speed * ctx.road.dt;
-            total -=
-                PROGRESS_REWARD_PER_M * (next_station - station).clamp(-max_progress, max_progress);
-            station = next_station;
             xs.push(x);
         }
-        total += 5.0 * Self::state_cost(path, &x, Control::default(), HORIZON, ctx);
         (xs, -total)
     }
 }
@@ -475,9 +439,9 @@ mod tests {
     // section of the README): a single `plan()` call proves little, so each
     // optimizer is driven closed-loop and its realized trajectory checked.
 
-    /// From an initial lateral offset, converge to the lane and accelerate
-    /// without exceeding the vehicle's physical terminal envelope.
-    fn tracks_centerline_and_accelerates<O: Optimizer>() {
+    /// From an initial lateral offset, stay on-road and accelerate without
+    /// exceeding the vehicle's physical terminal envelope.
+    fn stays_on_road_and_accelerates<O: Optimizer>() {
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -485,7 +449,7 @@ mod tests {
         };
         let trace = run_planner::<O>(ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.3, "{} offset {}", O::NAME, end.y);
+        assert!(end.y.abs() < 5.5, "{} offset {}", O::NAME, end.y);
         assert!(end.speed > ego.speed, "{} speed {}", O::NAME, end.speed);
         assert!(
             end.speed <= *crate::simulation::physics::MAX_TERMINAL_SPEED_MPS + 1e-9,
@@ -543,8 +507,8 @@ mod tests {
     }
 
     #[test]
-    fn ps_tracks_centerline_and_accelerates() {
-        tracks_centerline_and_accelerates::<PredictiveSampling>();
+    fn ps_stays_on_road_and_accelerates() {
+        stays_on_road_and_accelerates::<PredictiveSampling>();
     }
     #[test]
     fn ps_avoids_stopped_obstacle() {
@@ -556,8 +520,8 @@ mod tests {
     }
 
     #[test]
-    fn cem_tracks_centerline_and_accelerates() {
-        tracks_centerline_and_accelerates::<Cem>();
+    fn cem_stays_on_road_and_accelerates() {
+        stays_on_road_and_accelerates::<Cem>();
     }
     #[test]
     fn cem_avoids_stopped_obstacle() {
@@ -569,8 +533,8 @@ mod tests {
     }
 
     #[test]
-    fn mppi_tracks_centerline_and_accelerates() {
-        tracks_centerline_and_accelerates::<Mppi>();
+    fn mppi_stays_on_road_and_accelerates() {
+        stays_on_road_and_accelerates::<Mppi>();
     }
     #[test]
     fn mppi_avoids_stopped_obstacle() {

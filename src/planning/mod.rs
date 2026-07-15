@@ -1,33 +1,33 @@
 //! The planner interface and one module per planner.
 
-pub mod basic;
-pub mod bezier_toppra;
+pub(crate) mod basic;
+pub(crate) mod bezier_toppra;
 pub(crate) mod constraints;
 pub(crate) mod cost;
-pub mod diagnostics;
-pub mod latency;
-pub mod lattice;
-pub mod pi2ddp;
+pub(crate) mod diagnostics;
+pub(crate) mod latency;
+pub(crate) mod lattice;
+pub(crate) mod pi2ddp;
 pub(crate) mod planner_math;
 pub(crate) mod policy;
-pub mod rrt_star;
+pub(crate) mod rrt_star;
 pub(crate) mod sampling;
-pub mod sampling_mpc;
+pub(crate) mod sampling_mpc;
 pub(crate) mod search_tree;
 pub(crate) mod steering;
-pub mod straight;
-pub mod treetop;
+pub(crate) mod straight;
+pub(crate) mod treetop;
 
-pub use basic::BasicPlanner;
-pub use bezier_toppra::BezierToppraPlanner;
-pub use diagnostics::{Diagnostics, DiagnosticsData};
-pub use latency::{Latency, LatencyStats};
-pub use lattice::LatticePlanner;
-pub use pi2ddp::Pi2DdpPlanner;
-pub use rrt_star::RrtStarPlanner;
-pub use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
-pub use straight::StraightPlanner;
-pub use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
+pub(crate) use basic::BasicPlanner;
+pub(crate) use bezier_toppra::BezierToppraPlanner;
+pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
+pub(crate) use latency::{Latency, LatencyStats};
+pub(crate) use lattice::LatticePlanner;
+pub(crate) use pi2ddp::Pi2DdpPlanner;
+pub(crate) use rrt_star::RrtStarPlanner;
+pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
+pub(crate) use straight::StraightPlanner;
+pub(crate) use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
 
 use crate::simulation::{Control, State};
 use crate::track::Road;
@@ -36,9 +36,9 @@ use crate::track::Road;
 /// (lattice, PI²-DDP, RRT*) look when predicting collisions and optimizing a
 /// trajectory. Not `Context::horizon`, which is just the requested length
 /// of the *returned* control trajectory — see its doc comment.
-pub const PLANNING_HORIZON_S: f64 = 10.0;
-pub const PLANNING_DT_S: f64 = 0.1;
-pub const PLANNING_TICKS: usize = (PLANNING_HORIZON_S / PLANNING_DT_S) as usize;
+pub(crate) const PLANNING_HORIZON_S: f64 = 10.0;
+pub(crate) const PLANNING_DT_S: f64 = 0.1;
+pub(crate) const PLANNING_TICKS: usize = (PLANNING_HORIZON_S / PLANNING_DT_S) as usize;
 
 pub(crate) const WARM_START_MAX_POSITION_ERROR_M: f64 = 1.0;
 
@@ -47,25 +47,25 @@ pub(crate) fn warm_start_matches(expected_next: State, ego: State) -> bool {
 }
 
 /// Everything a planner sees besides the ego state.
-pub struct Context<'a> {
+pub(crate) struct Context<'a> {
     /// The fixed setting of the run: centerline, target speed, tick length.
-    pub road: &'a Road,
+    pub(crate) road: &'a Road,
     /// Current states of the other actors.
-    pub actors: &'a [State],
+    pub(crate) actors: &'a [State],
     /// Requested number of controls (planners may return fewer or more).
-    pub horizon: usize,
+    pub(crate) horizon: usize,
     /// Latency recorder for this plan call, when diagnostics are collected.
-    pub latency: Option<&'a Latency>,
+    pub(crate) latency: Option<&'a Latency>,
     /// Introspection recorder for this plan call, when a caller (the
     /// viewer's diagnostic overlay) wants to see the planner's search
     /// geometry. See [`diagnostics`] for what each planner records.
-    pub diagnostics: Option<&'a Diagnostics>,
+    pub(crate) diagnostics: Option<&'a Diagnostics>,
 }
 
 impl Context<'_> {
     /// Time `f` under the seam `name` when diagnostics are on; otherwise
     /// just run it. See [`latency`] for the standardized seam names.
-    pub fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
+    pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         match self.latency {
             Some(l) => l.time(name, f),
             None => f(),
@@ -76,7 +76,7 @@ impl Context<'_> {
 /// A planner turns the current 4D state into a direct acceleration/curvature
 /// command trajectory. It does not receive actuator state; the simulator may
 /// slew-rate limit the first command before applying it.
-pub trait Planner {
+pub(crate) trait Planner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
 }
 
@@ -85,7 +85,7 @@ pub trait Planner {
 /// row, so adding a planner means one enum variant plus one complete row
 /// in [`SPECS`], not edits to scattered `match`es.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PlannerKind {
+pub(crate) enum PlannerKind {
     Straight,
     Basic,
     BezierToppra,
@@ -102,16 +102,16 @@ pub enum PlannerKind {
 
 /// One planner, whole: the registry metadata behind a [`PlannerKind`]
 /// (Factory Method as a table: the `build` slot constructs the strategy).
-pub struct PlannerSpec {
+pub(crate) struct PlannerSpec {
     /// Which kind this row describes — must match its position in [`SPECS`]
     /// (enforced by the `specs_align_with_kinds` test).
-    pub kind: PlannerKind,
-    pub name: &'static str,
-    pub build: fn() -> Box<dyn Planner>,
+    pub(crate) kind: PlannerKind,
+    pub(crate) name: &'static str,
+    pub(crate) build: fn() -> Box<dyn Planner>,
     /// Whether this planner records anything into a [`Diagnostics`]
     /// recorder. Planners without receding-horizon search geometry to show
     /// never call `ctx.diagnostics`.
-    pub has_diagnostics: bool,
+    pub(crate) has_diagnostics: bool,
 }
 
 /// The planner registry, indexed by `PlannerKind as usize`.
@@ -191,7 +191,7 @@ const SPECS: [PlannerSpec; 12] = [
 ];
 
 impl PlannerKind {
-    pub const ALL: [PlannerKind; 12] = [
+    pub(crate) const ALL: [PlannerKind; 12] = [
         PlannerKind::Straight,
         PlannerKind::Basic,
         PlannerKind::BezierToppra,
@@ -207,20 +207,22 @@ impl PlannerKind {
     ];
 
     /// This planner's registry row.
-    pub fn spec(self) -> &'static PlannerSpec {
-        &SPECS[self as usize]
+    pub(crate) fn spec(self) -> &'static PlannerSpec {
+        let spec = &SPECS[self as usize];
+        debug_assert_eq!(spec.kind, self);
+        spec
     }
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         self.spec().name
     }
 
-    pub fn build(self) -> Box<dyn Planner> {
+    pub(crate) fn build(self) -> Box<dyn Planner> {
         (self.spec().build)()
     }
 
     /// See [`PlannerSpec::has_diagnostics`].
-    pub fn has_diagnostics(self) -> bool {
+    pub(crate) fn has_diagnostics(self) -> bool {
         self.spec().has_diagnostics
     }
 }
@@ -267,7 +269,21 @@ pub(crate) fn test_run_on(
 ) -> Vec<State> {
     let mut sim = crate::simulation::Simulator::new(ego, road.dt);
     (0..ticks)
-        .map(|_| sim.tick(planner, &test_ctx(road, actors)))
+        .map(|_| {
+            let command = planner
+                .plan(sim.state, &test_ctx(road, actors))
+                .first()
+                .copied()
+                .unwrap_or_default();
+            sim.step(
+                command,
+                road,
+                actors
+                    .iter()
+                    .copied()
+                    .map(|actor| (actor, crate::geometry::CAR_FOOTPRINT)),
+            )
+        })
         .collect()
 }
 

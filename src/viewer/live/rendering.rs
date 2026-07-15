@@ -22,7 +22,7 @@ pub(super) struct RenderSnapshot {
 impl RenderSnapshot {
     pub(super) fn capture(world: &LiveWorld) -> Self {
         Self {
-            ego: world.ego,
+            ego: world.ego(),
             actors: world
                 .actors
                 .iter()
@@ -51,7 +51,7 @@ pub(crate) fn draw(
     } else {
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
-    let ego = interpolate_state(live.previous.ego, live.world.ego, render_alpha);
+    let ego = interpolate_state(live.previous.ego, live.world.ego(), render_alpha);
     let (position, yaw) = match live.camera.target {
         CameraTarget::Ego => (px(&ego), ego.yaw),
         CameraTarget::Track => {
@@ -92,7 +92,7 @@ pub(crate) fn draw(
 
     let world = &live.world;
     if state.show_carpet && !world.plan.is_empty() {
-        carpet::draw(&mut carpet_gizmos, ego, &world.plan, world.dt);
+        carpet::draw(&mut carpet_gizmos, ego, &world.plan, world.dt());
     }
     track::draw(
         &mut gizmos,

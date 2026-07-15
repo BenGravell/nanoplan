@@ -26,12 +26,12 @@ const MAX_TICKS_PER_FRAME: usize = 3;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
 
 pub(crate) struct Live {
-    pub world: LiveWorld,
-    pub seed: u64,
-    pub paused: bool,
-    pub camera: CameraState,
-    pub latency: LatencyStats,
-    pub friction_box: FrictionBox,
+    pub(crate) world: LiveWorld,
+    pub(crate) seed: u64,
+    pub(crate) paused: bool,
+    pub(crate) camera: CameraState,
+    pub(crate) latency: LatencyStats,
+    pub(crate) friction_box: FrictionBox,
     previous: RenderSnapshot,
     planner: PlannerKind,
     recorder: Latency,
@@ -39,7 +39,7 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub fn regenerate(&mut self, seed: u64, planner: PlannerKind, track: usize) {
+    pub(crate) fn regenerate(&mut self, seed: u64, planner: PlannerKind, track: usize) {
         self.seed = seed;
         self.world = LiveWorld::with_track(track, seed, planner, MAX_ACTORS, DT);
         self.planner = planner;
@@ -51,11 +51,11 @@ impl Live {
         self.reset_camera();
     }
 
-    pub fn reset_camera(&mut self) {
-        self.camera.reset(px(&self.world.ego));
+    pub(crate) fn reset_camera(&mut self) {
+        self.camera.reset(px(&self.world.ego()));
     }
 
-    pub fn toggle_pause(&mut self) {
+    pub(crate) fn toggle_pause(&mut self) {
         self.paused = !self.paused;
         self.reset_render_history();
     }
@@ -77,7 +77,7 @@ impl Live {
         self.previous = RenderSnapshot::capture(&self.world);
         self.world.tick_recording_latency(&self.recorder);
         self.friction_box
-            .record(self.previous.ego, self.world.ego, self.world.dt);
+            .record(self.previous.ego, self.world.ego(), self.world.dt());
         self.latency.absorb(self.recorder.take());
     }
 }
@@ -90,7 +90,7 @@ impl Default for Live {
         let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {
-                center: px(&world.ego),
+                center: px(&world.ego()),
                 ..Default::default()
             },
             world,

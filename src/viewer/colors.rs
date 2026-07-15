@@ -5,6 +5,8 @@ use bevy_egui::egui;
 pub(crate) const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
 pub(crate) const BLUE: egui::Color32 = egui::Color32::from_rgb(45, 135, 160);
 pub(crate) const RED: egui::Color32 = egui::Color32::from_rgb(255, 65, 80);
+pub(crate) const GREEN: egui::Color32 = egui::Color32::from_rgb(35, 150, 105);
+pub(crate) const PURPLE: egui::Color32 = egui::Color32::from_rgb(125, 90, 190);
 pub(crate) const GREY: egui::Color32 = egui::Color32::from_rgb(147, 158, 156);
 
 // Functional colors

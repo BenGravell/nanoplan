@@ -8,7 +8,7 @@ use super::{Knot, NU, Optimizer, OptimizerConfig, SIGMA_SCALE, noised_knots, ram
 /// re-fits it to the elite rollouts every iteration: the nominal becomes
 /// the elite mean and the std the elite std (clipped), so the distribution
 /// contracts around whatever region keeps scoring well.
-pub struct Cem {
+pub(crate) struct Cem {
     cfg: OptimizerConfig,
     /// Per-node dimensionless sampling std, `[acceleration, curvature]` each,
     /// scaled by [`SIGMA_SCALE`] at sampling time. Adapted in

@@ -7,7 +7,7 @@ use super::{Knot, Optimizer, OptimizerConfig, noised_knots, ramp};
 /// but, instead of taking the single best, blends every rollout by an
 /// exponential reward weight (judo's `exp(-(costs - min)/temperature)`,
 /// normalized).
-pub struct Mppi {
+pub(crate) struct Mppi {
     cfg: OptimizerConfig,
     /// Dimensionless sampling std (judo's `sigma`).
     sigma: f64,

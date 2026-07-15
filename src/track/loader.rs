@@ -1,9 +1,6 @@
 //! Startup download and platform cache for the racetrack database.
 
-use super::catalog::{
-    TRACK_CATALOG, install_test_catalog as install_catalog_fixture, install_track_data,
-    track_catalog_loaded,
-};
+use super::catalog::{TRACK_CATALOG, install_track_data, track_catalog_loaded};
 
 const REVISION: &str = "e59595d1f3573b30d1ded6a08984935b957688e0";
 const BASE_URL: &str = "https://raw.githubusercontent.com/TUMFTM/racetrack-database";
@@ -26,13 +23,8 @@ fn unpack(data: &str) -> Option<Vec<String>> {
     (tracks.len() == TRACK_CATALOG.len()).then_some(tracks)
 }
 
-#[doc(hidden)]
-pub fn install_test_catalog() {
-    install_catalog_fixture();
-}
-
 #[cfg(not(target_family = "wasm"))]
-pub fn load() -> Result<(), String> {
+pub(crate) fn load() -> Result<(), String> {
     use std::path::PathBuf;
 
     if track_catalog_loaded() {
@@ -73,7 +65,7 @@ pub fn load() -> Result<(), String> {
 }
 
 #[cfg(target_family = "wasm")]
-pub async fn load() -> Result<(), String> {
+pub(crate) async fn load() -> Result<(), String> {
     use futures_util::future::try_join_all;
     use gloo_net::http::Request;
 
@@ -114,6 +106,25 @@ pub async fn load() -> Result<(), String> {
             .map_err(|error| format!("write browser track cache: {error:?}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn install_test_catalog() {
+    use std::sync::Arc;
+
+    use super::catalog::{LOADED_CATALOG, LoadedCatalog};
+    use super::circuit::Circuit;
+    use super::model::TrackModel;
+
+    LOADED_CATALOG.get_or_init(|| {
+        let circuit =
+            Arc::new(Circuit::parse("0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n").unwrap());
+        let model = TrackModel::train(&[circuit.training_track()]).unwrap();
+        LoadedCatalog {
+            circuits: vec![circuit; TRACK_CATALOG.len()],
+            model,
+        }
+    });
 }
 
 #[cfg(test)]

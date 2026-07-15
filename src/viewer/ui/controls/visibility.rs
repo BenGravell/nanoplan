@@ -8,7 +8,6 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
     ui.checkbox(&mut state.show_centerline, "Track centerline");
     ui.checkbox(&mut state.show_carpet, "Ego carpet");
     ui.checkbox(&mut state.show_plan, "Planned path");
-    ui.checkbox(&mut state.show_hud, "Driving HUD");
     if state.planner.has_diagnostics() {
         ui.checkbox(&mut state.show_diag_points, "Search points");
         ui.checkbox(&mut state.show_diag_trajectories, "Candidate trajectories");

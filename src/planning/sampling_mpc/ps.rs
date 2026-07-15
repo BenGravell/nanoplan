@@ -6,7 +6,7 @@ use super::{Knot, Optimizer, OptimizerConfig, noised_knots, ramp};
 /// Predictive sampling. The simplest optimizer: perturb the nominal with a
 /// fixed sampling std and keep whichever sample scored best (judo's
 /// `sampled_knots[rewards.argmax()]`).
-pub struct PredictiveSampling {
+pub(crate) struct PredictiveSampling {
     cfg: OptimizerConfig,
     /// Dimensionless sampling std (judo's `sigma`), scaled per control
     /// dimension by [`super::SIGMA_SCALE`] at sampling time.

@@ -3,11 +3,12 @@ use std::path::Path;
 use bevy_egui::egui;
 use egui_kittest::{Harness, kittest::Queryable};
 
-use super::controls::metrics::preview_metric_scores;
+use super::controls::metrics::preview_metrics;
 use super::{
     ControlTab, UiState, compact_layout, compact_rail_widths, configure, portrait_prompt,
-    viewer_layout,
+    right_rail_width, viewer_layout,
 };
+use crate::planning::Latency;
 use crate::viewer::{CANVAS_RGB, live::Live};
 
 const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
@@ -26,9 +27,11 @@ struct ViewerHarnessState {
 
 impl Default for ViewerHarnessState {
     fn default() -> Self {
+        let mut live = Live::default();
+        live.world.tick_recording_latency(&Latency::default());
         Self {
             ui: UiState::default(),
-            live: Live::default(),
+            live,
             tab: ControlTab::Planner,
             configured: false,
         }
@@ -125,12 +128,12 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size * pixels_per_point);
         let compact = compact_layout(size);
-        let (control_width, hud_width) = if compact {
+        let (control_width, rail_width) = if compact {
             compact_rail_widths(size)
         } else {
             (
                 (size.x * 0.2).clamp(372.0, 440.0),
-                (size.x * 0.1).clamp(184.0, 220.0),
+                right_rail_width(size, compact),
             )
         };
         for label in [
@@ -148,7 +151,16 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 "future preview [s]"
             },
         ] {
-            for node in harness.get_all_by_label(label) {
+            let nodes: Vec<_> = harness
+                .get_all_by_label(label)
+                .into_iter()
+                .filter(|node| node.rect().left() < control_width * pixels_per_point)
+                .collect();
+            assert!(
+                !nodes.is_empty(),
+                "{label:?} missing from the control rail at {name}"
+            );
+            for node in nodes {
                 let rect = node.rect();
                 assert!(
                     screen.contains_rect(rect)
@@ -158,10 +170,15 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 );
             }
         }
+        let rail = harness.get_by_label("Timeseries rail").rect();
+        assert!(
+            screen.contains_rect(rail) && rail.min.x >= (size.x - rail_width) * pixels_per_point,
+            "timeseries rail is clipped at {name}: {rail:?}"
+        );
         let hud = harness.get_by_label("Driving HUD").rect();
         assert!(
-            screen.contains_rect(hud) && hud.min.x >= (size.x - hud_width) * pixels_per_point,
-            "HUD is clipped at {name}: {hud:?} outside the HUD rail"
+            rail.contains_rect(hud),
+            "HUD is outside the right rail at {name}: {hud:?}"
         );
 
         let pause = harness.get_by_label("PAUSE").rect();
@@ -169,12 +186,18 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         let planner = harness.get_by_label("PLANNER").rect();
         assert!((pause.width() - new_track.width()).abs() <= 1.0);
         assert!((pause.left() - planner.left()).abs() <= 1.0);
-        let last_tab = harness
-            .get_by_label(if compact { "CAMERA" } else { "METRICS" })
-            .rect();
+        let control_rect = |label| {
+            harness
+                .get_all_by_label(label)
+                .into_iter()
+                .map(|node| node.rect())
+                .find(|rect| rect.left() < control_width * pixels_per_point)
+                .unwrap()
+        };
+        let last_tab = control_rect(if compact { "CAMERA" } else { "METRICS" });
         assert!((new_track.right() - last_tab.right()).abs() <= 1.0);
         for label in ["CAMERA", "VIZ", "METRICS"] {
-            let tab = harness.get_by_label(label).rect();
+            let tab = control_rect(label);
             assert!(
                 (tab.width() - planner.width()).abs() <= 1.0,
                 "tab widths differ at {name}: PLANNER {planner:?}, {label} {tab:?}"
@@ -191,6 +214,12 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
 #[test]
 fn preview_metrics_are_valid_scores() {
-    let scores = preview_metric_scores(&Live::default());
-    assert!(scores.into_iter().all(|score| (0.0..=1.0).contains(&score)));
+    let metrics = preview_metrics(&Live::default());
+    assert!(
+        metrics
+            .aggregate
+            .into_iter()
+            .chain([metrics.score])
+            .all(|score| (0.0..=1.0).contains(&score))
+    );
 }

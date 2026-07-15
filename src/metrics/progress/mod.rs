@@ -4,7 +4,7 @@
 use crate::metrics::TickCtx;
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 
-pub fn score(ctx: &TickCtx, i: usize) -> f64 {
+pub(crate) fn score(ctx: &TickCtx, i: usize) -> f64 {
     let station = ctx.station;
     let n = station.len();
     let ds = if i + 1 < n {
@@ -14,5 +14,10 @@ pub fn score(ctx: &TickCtx, i: usize) -> f64 {
     } else {
         0.0
     };
-    (ds / ctx.dt / *MAX_TERMINAL_SPEED_MPS).clamp(0.0, 1.0)
+    speed_score(ds / ctx.dt)
+}
+
+/// Forward speed as the same normalized score used by rollout evaluation.
+pub(crate) fn speed_score(speed: f64) -> f64 {
+    (speed / *MAX_TERMINAL_SPEED_MPS).clamp(0.0, 1.0)
 }

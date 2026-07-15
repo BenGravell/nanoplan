@@ -5,21 +5,21 @@ use crate::simulation::{Position, State};
 use crate::track::Road;
 
 /// Road-side barrier restitution: 0 = stick to the wall normal, 1 = elastic.
-pub const BARRIER_RESTITUTION: f64 = 0.2;
+pub(crate) const BARRIER_RESTITUTION: f64 = 0.2;
 
 /// A two-sided physical barrier segment. `normal` is only the reference side;
 /// crossing either way clamps the vehicle to the segment and reflects the
 /// velocity component through the crossed side.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Barrier {
-    pub a: Position,
-    pub b: Position,
-    pub normal: [f64; 2],
-    pub restitution: f64,
+pub(crate) struct Barrier {
+    pub(crate) a: Position,
+    pub(crate) b: Position,
+    pub(crate) normal: [f64; 2],
+    pub(crate) restitution: f64,
 }
 
 impl Barrier {
-    pub fn new(a: impl Into<Position>, b: impl Into<Position>, normal: [f64; 2]) -> Self {
+    pub(crate) fn new(a: impl Into<Position>, b: impl Into<Position>, normal: [f64; 2]) -> Self {
         let n = normal[0].hypot(normal[1]).max(1e-9);
         Barrier {
             a: a.into(),
@@ -130,7 +130,7 @@ impl Barrier {
     }
 }
 
-pub fn road_side_barriers(centerline: &[[f64; 2]], half_width: f64) -> Vec<Barrier> {
+pub(crate) fn road_side_barriers(centerline: &[[f64; 2]], half_width: f64) -> Vec<Barrier> {
     if centerline.len() < 2 {
         return vec![];
     }
@@ -185,7 +185,7 @@ pub fn road_side_barriers(centerline: &[[f64; 2]], half_width: f64) -> Vec<Barri
         .collect()
 }
 
-pub fn collide_with_barriers(
+pub(crate) fn collide_with_barriers(
     prev: State,
     state: State,
     barriers: impl IntoIterator<Item = Barrier>,

@@ -8,7 +8,7 @@ use crate::simulation::{Control, State};
 use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-pub struct BasicPlanner;
+pub(crate) struct BasicPlanner;
 
 impl Planner for BasicPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
@@ -155,18 +155,8 @@ mod tests {
             speed: 8.0,
         };
 
-        let ctx = Context {
-            road: &road,
-            actors: &[],
-            horizon: 30,
-            latency: None,
-            diagnostics: None,
-        };
-        let mut sim = crate::simulation::Simulator::new(ego, road.dt);
-        for _ in 0..20 {
-            sim.tick(&mut BasicPlanner, &ctx);
-        }
-        let (_, d) = path.project(sim.state.position());
+        let trace = test_run_on(&mut BasicPlanner, &road, ego, &[], 20);
+        let (_, d) = path.project(trace.last().unwrap().position());
         assert!(d.abs() < 1.0, "offset {d}");
     }
 

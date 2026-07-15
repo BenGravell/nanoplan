@@ -10,7 +10,7 @@ use crate::vehicle::{
 /// Signed passive resistance term from rolling resistance and air drag.
 /// Positive while moving forward and negative while reversing, so subtracting
 /// it from commanded acceleration always opposes the current motion.
-pub fn longitudinal_resistance_accel(speed: f64) -> f64 {
+pub(crate) fn longitudinal_resistance_accel(speed: f64) -> f64 {
     if speed == 0.0 {
         0.0
     } else {
@@ -22,7 +22,7 @@ pub fn longitudinal_resistance_accel(speed: f64) -> f64 {
 
 /// Terminal speed for a constant positive requested acceleration under the
 /// simple rolling/aero resistance model.
-pub fn terminal_speed_for_accel(accel: f64) -> Option<f64> {
+pub(crate) fn terminal_speed_for_accel(accel: f64) -> Option<f64> {
     let rolling = ROLLING_RESISTANCE_COEFF * GRAVITY_MS2;
     let aero = 0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 / EGO_MASS_KG;
     if accel > rolling {
@@ -33,12 +33,12 @@ pub fn terminal_speed_for_accel(accel: f64) -> Option<f64> {
 }
 
 /// Static speed envelope used by pure planner rollouts.
-pub static MAX_TERMINAL_SPEED_MPS: LazyLock<f64> =
+pub(crate) static MAX_TERMINAL_SPEED_MPS: LazyLock<f64> =
     LazyLock::new(|| terminal_speed_for_accel(MAX_LON_ACCEL).unwrap());
 
 /// State curvature bound for a given speed: the tighter of steering geometry
 /// and lateral grip.
-pub fn curvature_limit(speed: f64) -> f64 {
+pub(crate) fn curvature_limit(speed: f64) -> f64 {
     let v2 = speed * speed;
     if v2 > 1e-6 {
         MAX_ABS_CURVATURE.min(MAX_ABS_LAT_ACCEL / v2)
@@ -53,7 +53,7 @@ fn clamp_curvature(curvature: f64, speed: f64) -> f64 {
 }
 
 /// Clamp an action to acceleration, steering, and lateral-grip limits.
-pub fn clamp_control(u: Control, speed: f64) -> Control {
+pub(crate) fn clamp_control(u: Control, speed: f64) -> Control {
     Control {
         acceleration: u.acceleration.clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
         curvature: clamp_curvature(u.curvature, speed),

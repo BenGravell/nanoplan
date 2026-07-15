@@ -1,27 +1,25 @@
 //! Kinematic vehicle model and collision handling.
 
-use crate::planning::{Context, Planner};
-
 mod collision;
 mod integration;
 pub(crate) mod physics;
 mod state_control;
 
-pub(crate) use collision::{collide_with_actors, collide_with_car_actors};
+pub(crate) use collision::collide_with_actors;
 pub(crate) use integration::CommandLimiter;
-pub use integration::world_step;
-pub use physics::{MAX_TERMINAL_SPEED_MPS, clamp_control, curvature_limit};
-pub use state_control::{Control, Pose, Position, State};
+pub(crate) use integration::world_step;
+pub(crate) use physics::{MAX_TERMINAL_SPEED_MPS, clamp_control, curvature_limit};
+pub(crate) use state_control::{Control, Pose, Position, State};
 
-/// Replan and advance one fixed-size tick.
-pub struct Simulator {
-    pub state: State,
-    pub dt: f64,
+/// The ego vehicle plant: state, actuator memory, and collision response.
+pub(crate) struct Simulator {
+    pub(crate) state: State,
+    pub(crate) dt: f64,
     limiter: CommandLimiter,
 }
 
 impl Simulator {
-    pub fn new(state: State, dt: f64) -> Self {
+    pub(crate) fn new(state: State, dt: f64) -> Self {
         Self {
             state,
             dt,
@@ -29,20 +27,37 @@ impl Simulator {
         }
     }
 
-    pub fn tick(&mut self, planner: &mut dyn Planner, ctx: &Context) -> State {
-        let u = ctx
-            .time("total", || planner.plan(self.state, ctx))
-            .first()
-            .copied()
-            .unwrap_or_default();
+    pub(crate) fn actuation(&self) -> Control {
+        self.limiter.applied
+    }
+
+    pub(crate) fn preview(&self, commands: &[Control], ticks: usize) -> Vec<State> {
+        let mut state = self.state;
+        let mut limiter = self.limiter;
+        commands
+            .iter()
+            .take(ticks)
+            .map(|&command| {
+                state = limiter.step(state, command, self.dt);
+                state
+            })
+            .collect()
+    }
+
+    pub(crate) fn step(
+        &mut self,
+        command: Control,
+        road: &crate::track::Road,
+        actors: impl IntoIterator<Item = (State, crate::geometry::Footprint)>,
+    ) -> State {
         let prev = self.state;
         let next = crate::geometry::barrier::collide_with_road_barriers(
             prev,
-            self.limiter.step(self.state, u, self.dt),
-            ctx.road,
+            self.limiter.step(self.state, command, self.dt),
+            road,
         );
-        let next = collide_with_car_actors(next, ctx.actors.iter().copied());
-        self.state = crate::geometry::barrier::collide_with_road_barriers(prev, next, ctx.road);
+        let next = collide_with_actors(next, actors);
+        self.state = crate::geometry::barrier::collide_with_road_barriers(prev, next, road);
         self.state
     }
 }

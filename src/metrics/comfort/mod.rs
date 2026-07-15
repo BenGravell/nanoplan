@@ -8,7 +8,7 @@ use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 /// Comfort at tick `i`: reads the [`Kinematics`] precomputed for the whole
 /// rollout (forward differences need the neighboring ticks, so they can't
 /// be built tickwise).
-pub fn score(ctx: &TickCtx, i: usize) -> f64 {
+pub(crate) fn score(ctx: &TickCtx, i: usize) -> f64 {
     ctx.kinematics.score(i)
 }
 
@@ -21,13 +21,13 @@ fn diff(v: &[f64], dt: f64) -> Vec<f64> {
 }
 
 /// Tickwise kinematics of an ego trace (forward differences, padded).
-pub struct Kinematics {
+pub(crate) struct Kinematics {
     lon_accel: Vec<f64>,
     lat_accel: Vec<f64>,
 }
 
 impl Kinematics {
-    pub fn new(ego: &[State], dt: f64) -> Self {
+    pub(crate) fn new(ego: &[State], dt: f64) -> Self {
         let speed: Vec<f64> = ego.iter().map(|s| s.speed).collect();
         let lon_accel = diff(&speed, dt);
         let mut lat_accel: Vec<f64> = ego
@@ -46,12 +46,12 @@ impl Kinematics {
         }
     }
 
-    pub fn score(&self, i: usize) -> f64 {
+    pub(crate) fn score(&self, i: usize) -> f64 {
         accel_score(self.lon_accel[i], self.lat_accel[i])
     }
 }
 
-fn accel_score(lon: f64, lat: f64) -> f64 {
+pub(crate) fn accel_score(lon: f64, lat: f64) -> f64 {
     let lon_excess = if lon < MIN_LON_ACCEL {
         (MIN_LON_ACCEL - lon) / -MIN_LON_ACCEL
     } else if lon > MAX_LON_ACCEL {

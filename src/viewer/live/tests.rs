@@ -107,7 +107,7 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     live.regenerate(2, PlannerKind::BezierToppra, 0);
 
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
-    assert!((live.world.ego.yaw - track_yaw).abs() < 1e-12);
+    assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);
     assert_eq!(live.previous.ego.yaw, track_yaw);
     assert_eq!(live.acc, 0.0);
 }

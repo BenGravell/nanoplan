@@ -7,9 +7,9 @@ use bevy_egui::input::EguiWantsInput;
 use super::Live;
 use super::screen::{PX_PER_M, px};
 
-pub(super) const DEFAULT_ZOOM: f32 = 0.5;
-pub(crate) const MIN_ZOOM: f32 = 0.125;
-pub(crate) const MAX_ZOOM: f32 = 4.0;
+pub(super) const DEFAULT_ZOOM: f32 = 1.0;
+pub(crate) const MIN_ZOOM: f32 = 0.01;
+pub(crate) const MAX_ZOOM: f32 = 6.0;
 pub(super) const CAMERA_BOTTOM_PADDING_PX: f32 = 48.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -20,13 +20,13 @@ pub(crate) enum CameraTarget {
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
-    pub center: Vec2,
-    pub zoom: f32,
-    pub rotation: f32,
-    pub follow: bool,
-    pub align_heading: bool,
-    pub target: CameraTarget,
-    pub smooth: bool,
+    pub(crate) center: Vec2,
+    pub(crate) zoom: f32,
+    pub(crate) rotation: f32,
+    pub(crate) follow: bool,
+    pub(crate) align_heading: bool,
+    pub(crate) target: CameraTarget,
+    pub(crate) smooth: bool,
 }
 
 impl CameraState {

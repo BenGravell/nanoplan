@@ -1,10 +1,10 @@
-//! Actor state prediction shared by metrics, planners, and tuning.
+//! Actor state prediction.
 
 use crate::common::math::wrap_angle;
 use crate::simulation::State;
 use crate::track::Path;
 
-pub use crate::geometry::project;
+pub(crate) use crate::geometry::project;
 
 /// Heading alignment within which an actor counts as travelling *along* the
 /// lane, so [`predict`] rolls it forward following the lane's curve.
@@ -22,7 +22,7 @@ const LANE_RETURN_TAU_S: f64 = 2.0;
 /// rolled forward along the lane curve at constant speed while its lateral
 /// offset decays toward the centerline. Otherwise this falls back to
 /// [`project`].
-pub fn predict(s: &State, lane: Option<&Path>, t: f64) -> State {
+pub(crate) fn predict(s: &State, lane: Option<&Path>, t: f64) -> State {
     let Some(path) = lane else {
         return project(s, t);
     };

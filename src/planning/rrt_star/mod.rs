@@ -105,7 +105,6 @@ const STEER_SAMPLES: usize = 16;
 // (projection was the dominant cost once the spatial index removed the
 // linear neighbour scans).
 const PROJECT_WINDOW_M: f64 = 20.0;
-const LATERAL_COST_WEIGHT: f64 = 0.5;
 // planner-specific safety margin, a bit more than the shared constraint
 // hard-collision threshold (`constraints::COLLISION_DIAMETER_M` = 2.5 m)
 // to leave headroom for the discrete curve sampling below (the true closest
@@ -130,17 +129,14 @@ const WARM_VIABLE_BAND_M: f64 = 5.0;
 // path has to reach implausibly much further to be preferred, and the
 // coin-flip that made the goal chatter is gone. Not so large that it overrides
 // a genuinely blocked side (that side simply has no feasible candidates to
-// discount), and tuned against the synthetic batch: 0.15 both cut realized
-// lateral-velocity reversals (151→128, worst 15→13 over 40 runs) and
-// nudged mean score up (0.5549→0.5761), where a heavier 0.3 started trading
-// score away. See the goal-selection comment.
+// discount). See the goal-selection comment.
 const CONTINUITY_WEIGHT: f64 = 0.15;
 // How fast `committed_bias` tracks the chosen path's side each tick (EMA
 // weight on the new value). High enough to follow a real change of plan
 // within a few ticks, low enough to smooth over single-tick sampling jitter.
 const COMMIT_SMOOTHING: f64 = 0.5;
 // How far inside the road's own drivable half-width ([`Road::half_width`],
-// the bound the `ttc` metric and the shared cost score against)
+// the bound the safety metric and planner objective use)
 // RRT* holds its detours, so a bypass never scores a "successful" avoidance
 // by driving right up against the true edge. Subtracted from the road's
 // actual half-width per plan (see `drivable_bound`) rather than a fixed
@@ -208,13 +204,12 @@ struct Node {
 ///
 /// Feasible means every point clears every actor's lane-aware predicted
 /// position ([`crate::prediction::predict`], with this planner's own
-/// `COLLISION_MARGIN_M` headroom on top of the shared cost's hard-collision
+/// `COLLISION_MARGIN_M` headroom on top of the metric objective's hard-collision
 /// check — an actor driving the route is predicted along its curve), stays on
 /// the drivable
 /// road, and keeps the curve's curvature within what's actually drivable.
-/// The edge cost is arc length (RRT*'s cost-to-come, what the "star"
-/// rewiring minimizes) plus a lateral-offset pull toward the lane center,
-/// plus the shared per-point cost (timed under the `cost` seam). Curvature
+/// The edge cost is the composite-metric objective sampled along the curve
+/// (timed under the `cost` seam). Curvature
 /// comes from the steering curve's own closed-form derivative — a geometric
 /// fact about this already-fixed candidate, not a search gradient. `s0`/`v`
 /// convert a point's station into a predicted time as the Frenet lattice
@@ -231,7 +226,6 @@ fn steer_cost(
     [sa, sb]: [f64; 2],
 ) -> Option<f64> {
     let mut total = 0.0;
-    let mut prev: Option<[f64; 2]> = None;
     let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
@@ -248,7 +242,7 @@ fn steer_cost(
         // way as the other structural bugs here: running the batch runner
         // over varied synthetic runs and finding `ttc`
         // scoring 0 despite every sampled *target* being in-bounds. This
-        // is tighter than the shared cost function's own road-edge check
+        // is tighter than the metric objective's own road-edge check
         // (the road's `half_width`), on purpose: a bypass should never count
         // as "successful" avoidance by driving right up against the true
         // edge.
@@ -274,11 +268,7 @@ fn steer_cost(
         if point.is_infinite() {
             return None;
         }
-        total += point + LATERAL_COST_WEIGHT * d * d / segment.len() as f64;
-        if let Some(q) = prev {
-            total += dist(q, p); // arc length
-        }
-        prev = Some(p);
+        total += point;
     }
     Some(total)
 }
@@ -421,7 +411,7 @@ fn try_extend(
 }
 
 #[derive(Default)]
-pub struct RrtStarPlanner {
+pub(crate) struct RrtStarPlanner {
     /// Last tick's winning polyline, in the same fixed world frame the ego
     /// is — reused to warm-start this tick's tree (see `plan`'s doc note).
     prev_path: Vec<[f64; 2]>,

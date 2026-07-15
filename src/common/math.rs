@@ -1,9 +1,9 @@
-pub fn smoothstep(u: f64) -> f64 {
+pub(crate) fn smoothstep(u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     u * u * (3.0 - 2.0 * u)
 }
 
-pub fn signed_fraction(value: f32, positive_max: f32, negative_max: f32) -> f32 {
+pub(crate) fn signed_fraction(value: f32, positive_max: f32, negative_max: f32) -> f32 {
     if value >= 0.0 {
         (value / positive_max).clamp(0.0, 1.0)
     } else {

@@ -38,13 +38,13 @@
 //!   Every treetop notion of "distance to goal" and "target hit" then
 //!   carries over, with the hit tolerance loosened from treetop's
 //!   parking-precision 0.01 to a lane-driving [`GOAL_HIT_TOL`].
-//! - **Obstacles are moving actors priced by the shared cost function.**
+//! - **Obstacles are moving actors priced by the shared metric objective.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
 //!   [`cost::HardConstraints`](crate::planning::cost::HardConstraints) at
 //!   the absolute time the state is reached, which folds in the same
-//!   constant-velocity actor prediction, drivable-area bound, and comfort
-//!   terms every other search planner uses.
+//!   actor prediction, drivable-area bound, and production composite every
+//!   other search planner uses.
 //! - **Determinism.** treetop samples its tree with `std::mt19937` and
 //!   jitters actions with pseudo-random noise. The port draws every sample
 //!   from the shared Halton sequence ([`crate::planning::sampling`])
@@ -55,11 +55,11 @@
 //!
 //! See `src/planning/README.md` for the design write-up of each planner.
 
-pub mod ilqr;
-pub mod rrt;
+pub(crate) mod ilqr;
+pub(crate) mod rrt;
 
-pub use ilqr::IlqrPlanner;
-pub use rrt::RrtPlanner;
+pub(crate) use ilqr::IlqrPlanner;
+pub(crate) use rrt::RrtPlanner;
 
 use crate::planning::search_tree::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, warm_start_matches};
@@ -96,8 +96,8 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
     x
 }
 
-/// The goal state the tree grows toward and the iLQR terminal cost pulls
-/// on: the centerline pose one planning horizon ahead of the ego's current
+/// The goal state the tree grows toward: the centerline pose one planning
+/// horizon ahead of the ego's current
 /// station (at the average of current and target speed, so a slow start
 /// aims at a reachable point), at the road's target speed. This is the
 /// treetop→nanoplan bridge — treetop's fixed user-placed goal pose becomes
@@ -162,7 +162,7 @@ const OPT_ITERS: usize = 6;
 /// split (`TimingInfo { tree_exp, traj_opt }`) as `tree` (grow + candidate
 /// extraction) and `traj_opt` (the iLQR passes), both nested under
 /// `optimize`; `extract` for control emission. `cost` nests inside `tree`
-/// (the tree prices edges through the shared cost function, once per
+/// (the tree prices edges through the shared metric objective, once per
 /// sampled point); the iLQR passes bury their shared-cost calls inside
 /// `derivs`/`rollout` instead — see [`ilqr`]'s seam note.
 ///
@@ -171,7 +171,7 @@ const OPT_ITERS: usize = 6;
 /// pre-optimization polyline and its post-iLQR trajectory — the pair that
 /// shows what the optimizer bought.
 #[derive(Default)]
-pub struct TreetopPlanner {
+pub(crate) struct TreetopPlanner {
     /// Last tick's optimized action sequence, re-fed to the tree as its
     /// warm start (treetop's `warm`/`use_hot` loop).
     prev: Option<Vec<Control>>,
@@ -229,7 +229,6 @@ impl Planner for TreetopPlanner {
             let ocp = ilqr::Ocp {
                 path: &path,
                 start: ego,
-                goal,
                 ctx,
             };
             let best = ctx.time("traj_opt", || {
@@ -326,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_centerline_and_speed() {
+    fn stays_on_road_and_accelerates() {
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -334,8 +333,8 @@ mod tests {
         };
         let trace = crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.2, "offset {}", end.y);
-        assert!((end.speed - 10.0).abs() < 2.5, "speed {}", end.speed);
+        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
     #[test]

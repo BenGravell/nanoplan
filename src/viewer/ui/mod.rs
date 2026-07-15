@@ -8,13 +8,14 @@ mod controls;
 mod hud;
 mod portrait_prompt;
 mod style;
+mod timeseries;
 mod widgets;
 
 use super::colors::PANEL;
 pub(crate) use controls::ControlTab;
 use controls::control_deck;
-use hud::{compact_hud, hud};
 use style::configure;
+use timeseries::timeseries_rail;
 pub(crate) use widgets::friction_box::FrictionBox;
 
 pub(crate) fn ui(
@@ -52,13 +53,13 @@ fn viewer_layout(
 ) {
     let viewport = root.max_rect().size();
     let compact = compact_layout(viewport);
-    if state.show_hud {
-        if compact {
-            compact_hud(root, live, compact_rail_widths(viewport).1);
-        } else {
-            hud(root, live, (viewport.x * 0.1).clamp(184.0, 220.0));
-        }
-    }
+    timeseries_rail(
+        root,
+        state,
+        live,
+        right_rail_width(viewport, compact),
+        compact,
+    );
     let frame = egui::Frame::new()
         .fill(PANEL)
         .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
@@ -74,6 +75,14 @@ fn viewer_layout(
         .show(root, |ui| {
             control_deck(ui, state, live, active_tab, compact)
         });
+}
+
+fn right_rail_width(viewport: egui::Vec2, compact: bool) -> f32 {
+    if compact {
+        compact_rail_widths(viewport).1
+    } else {
+        (viewport.x * 0.17).clamp(280.0, 340.0)
+    }
 }
 
 fn compact_layout(viewport: egui::Vec2) -> bool {

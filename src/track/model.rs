@@ -8,16 +8,16 @@ pub(crate) const SAMPLE_COUNT: usize = 256;
 const MAX_ATTEMPTS: usize = 64;
 
 pub(crate) struct TrainingTrack {
-    pub length: f64,
-    pub points: Vec<[f64; 2]>,
-    pub right: Vec<f64>,
-    pub left: Vec<f64>,
+    pub(crate) length: f64,
+    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) right: Vec<f64>,
+    pub(crate) left: Vec<f64>,
 }
 
 pub(crate) struct GeneratedTrack {
-    pub points: Vec<[f64; 2]>,
-    pub right: Vec<f64>,
-    pub left: Vec<f64>,
+    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) right: Vec<f64>,
+    pub(crate) left: Vec<f64>,
 }
 
 pub(crate) struct TrackModel {
@@ -38,7 +38,7 @@ struct Coeff {
 }
 
 impl TrackModel {
-    pub fn train(tracks: &[TrainingTrack]) -> Result<Self, String> {
+    pub(crate) fn train(tracks: &[TrainingTrack]) -> Result<Self, String> {
         let profiles = tracks
             .iter()
             .map(|track| {
@@ -77,7 +77,7 @@ impl TrackModel {
         Ok(Self { profiles })
     }
 
-    pub fn generate(&self, seed: u64) -> Option<GeneratedTrack> {
+    pub(crate) fn generate(&self, seed: u64) -> Option<GeneratedTrack> {
         let mut rng = Rng(seed ^ 0xd1b5_4a32_d192_ed03);
         for attempt in 0..MAX_ATTEMPTS {
             let profile = &self.profiles

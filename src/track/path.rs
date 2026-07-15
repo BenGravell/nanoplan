@@ -3,14 +3,14 @@
 use crate::simulation::{Position, State};
 
 /// A polyline with arc-length lookup and Frenet projection.
-pub struct Path {
+pub(crate) struct Path {
     pts: Vec<[f64; 2]>,
     s: Vec<f64>,
     actor_projections: std::cell::RefCell<Vec<(State, (f64, f64, f64))>>,
 }
 
 impl Path {
-    pub fn new(pts: &[[f64; 2]]) -> Self {
+    pub(crate) fn new(pts: &[[f64; 2]]) -> Self {
         assert!(pts.len() >= 2);
         let mut s = vec![0.0];
         for w in pts.windows(2) {
@@ -23,11 +23,11 @@ impl Path {
         }
     }
 
-    pub fn length(&self) -> f64 {
+    pub(crate) fn length(&self) -> f64 {
         *self.s.last().unwrap()
     }
 
-    pub fn pose_at(&self, s: f64) -> ([f64; 2], f64) {
+    pub(crate) fn pose_at(&self, s: f64) -> ([f64; 2], f64) {
         let s = s.clamp(0.0, self.length());
         let i = self
             .s
@@ -41,7 +41,7 @@ impl Path {
         )
     }
 
-    pub fn project(&self, p: impl Into<Position>) -> (f64, f64) {
+    pub(crate) fn project(&self, p: impl Into<Position>) -> (f64, f64) {
         self.project_range(p.into(), 0, self.pts.len() - 1)
     }
 
@@ -69,7 +69,12 @@ impl Path {
         self.actor_projections.borrow().len()
     }
 
-    pub fn project_near(&self, p: impl Into<Position>, hint: f64, window: f64) -> (f64, f64) {
+    pub(crate) fn project_near(
+        &self,
+        p: impl Into<Position>,
+        hint: f64,
+        window: f64,
+    ) -> (f64, f64) {
         let lo = self
             .s
             .partition_point(|&x| x < hint - window)
@@ -97,7 +102,7 @@ impl Path {
         best
     }
 
-    pub fn frenet_to_xy(&self, s: f64, d: f64) -> [f64; 2] {
+    pub(crate) fn frenet_to_xy(&self, s: f64, d: f64) -> [f64; 2] {
         let (p, yaw) = self.pose_at(s);
         [p[0] - d * yaw.sin(), p[1] + d * yaw.cos()]
     }

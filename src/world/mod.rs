@@ -3,13 +3,12 @@
 use web_time::Instant;
 
 use crate::common::rng::Rng;
-use crate::geometry::barrier::collide_with_road_barriers;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT};
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
-use crate::simulation::{CommandLimiter, Control, State, collide_with_actors};
+use crate::simulation::{Control, Simulator, State};
 use crate::track::{Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
 
@@ -20,10 +19,10 @@ const ROAD_SAMPLE_M: f64 = 15.0;
 const ACTOR_MARGIN_M: f64 = 25.0;
 
 /// A car following the same single track as the ego.
-pub struct SmartActor {
-    pub id: usize,
-    pub state: State,
-    pub personality: Personality,
+pub(crate) struct SmartActor {
+    pub(crate) id: usize,
+    pub(crate) state: State,
+    pub(crate) personality: Personality,
     track_x: f64,
     lateral: f64,
     lateral_target: f64,
@@ -32,37 +31,31 @@ pub struct SmartActor {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Personality {
-    pub aggressiveness: f64,
-    pub sloppiness: f64,
+pub(crate) struct Personality {
+    pub(crate) aggressiveness: f64,
+    pub(crate) sloppiness: f64,
 }
 
 /// The complete demo world: one track, traffic, ego, and planner.
-pub struct LiveWorld {
-    pub track: Track,
-    pub track_progress: f64,
-    pub road: Road,
-    pub ego: State,
-    pub actors: Vec<SmartActor>,
-    pub plan: Vec<State>,
-    pub diagnostics: DiagnosticsData,
-    pub last_plan_ms: f64,
-    pub last_planner_actors: usize,
-    pub dt: f64,
-    pub preview_ticks: usize,
-    pub diagnostics_enabled: bool,
+pub(crate) struct LiveWorld {
+    pub(crate) track: Track,
+    pub(crate) track_progress: f64,
+    pub(crate) road: Road,
+    pub(crate) actors: Vec<SmartActor>,
+    pub(crate) plan: Vec<State>,
+    pub(crate) diagnostics: DiagnosticsData,
+    pub(crate) last_plan_ms: f64,
+    pub(crate) last_planner_actors: usize,
+    pub(crate) preview_ticks: usize,
+    pub(crate) diagnostics_enabled: bool,
     planner_kind: PlannerKind,
     planner: Box<dyn Planner>,
-    limiter: CommandLimiter,
+    simulator: Simulator,
     road_anchor_x: f64,
 }
 
 impl LiveWorld {
-    pub fn new(seed: u64, planner: PlannerKind, max_actors: usize, dt: f64) -> Self {
-        Self::with_track(0, seed, planner, max_actors, dt)
-    }
-
-    pub fn with_track(
+    pub(crate) fn with_track(
         track_index: usize,
         seed: u64,
         planner: PlannerKind,
@@ -84,7 +77,7 @@ impl LiveWorld {
         } else {
             0
         };
-        let mut rng = Rng(seed ^ 0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(seed.max(1));
         let actors = (0..actor_count)
             .map(|i| {
                 let x = if i < behind {
@@ -120,54 +113,56 @@ impl LiveWorld {
             track,
             track_progress: 0.0,
             road,
-            ego,
             actors,
             plan: vec![],
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
             last_planner_actors: 0,
-            dt,
             preview_ticks: DEFAULT_PREVIEW_TICKS,
             diagnostics_enabled: false,
             planner_kind: planner,
             planner: planner.build(),
-            limiter: CommandLimiter::new(),
+            simulator: Simulator::new(ego, dt),
             road_anchor_x: 0.0,
         }
     }
 
-    pub fn set_planner(&mut self, kind: PlannerKind) {
+    pub(crate) fn set_planner(&mut self, kind: PlannerKind) {
         if kind != self.planner_kind {
             self.planner_kind = kind;
             self.planner = kind.build();
         }
     }
 
-    pub fn actuation(&self) -> Control {
-        self.limiter.applied
+    pub(crate) fn actuation(&self) -> Control {
+        self.simulator.actuation()
     }
 
-    pub fn tick(&mut self) {
-        self.tick_with_latency(None);
+    pub(crate) fn ego(&self) -> State {
+        self.simulator.state
     }
 
-    pub fn tick_recording_latency(&mut self, latency: &Latency) {
+    pub(crate) fn dt(&self) -> f64 {
+        self.simulator.dt
+    }
+
+    pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) {
         self.tick_with_latency(Some(latency));
     }
 
     fn tick_with_latency(&mut self, latency: Option<&Latency>) {
         self.track_progress = self
             .track
-            .project_progress([self.ego.x, self.ego.y], self.track_progress);
+            .project_progress([self.ego().x, self.ego().y], self.track_progress);
         if (self.track_progress - self.road_anchor_x).abs() >= 20.0 {
             self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
             self.road = timed(latency, "world_track", || {
-                road_window(&self.track, self.road_anchor_x, self.dt)
+                road_window(&self.track, self.road_anchor_x, self.dt())
             });
         }
 
         timed(latency, "world_traffic", || self.step_traffic());
-        let ego_reach = self.ego.speed.max(0.0) * PLANNING_HORIZON_S
+        let ego_reach = self.ego().speed.max(0.0) * PLANNING_HORIZON_S
             + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2);
         let actor_states: Vec<State> = self
             .actors
@@ -182,6 +177,7 @@ impl LiveWorld {
         self.last_planner_actors = actor_states.len();
 
         let diagnostics = Diagnostics::default();
+        let ego = self.ego();
         let controls = {
             let ctx = Context {
                 road: &self.road,
@@ -192,39 +188,24 @@ impl LiveWorld {
             };
             let start = Instant::now();
             let controls = match latency {
-                Some(l) => l.time("total", || self.planner.plan(self.ego, &ctx)),
-                None => self.planner.plan(self.ego, &ctx),
+                Some(l) => l.time("total", || self.planner.plan(ego, &ctx)),
+                None => self.planner.plan(ego, &ctx),
             };
             self.last_plan_ms = start.elapsed().as_secs_f64() * 1e3;
             controls
         };
         self.diagnostics = diagnostics.take();
 
-        let mut state = self.ego;
-        let mut preview_limiter = self.limiter;
-        self.plan = controls
-            .iter()
-            .take(self.preview_ticks)
-            .map(|&u| {
-                state = preview_limiter.step(state, u, self.dt);
-                state
-            })
-            .collect();
-        let prev = self.ego;
-        let next = collide_with_road_barriers(
-            prev,
-            self.limiter.step(
-                self.ego,
-                controls.first().copied().unwrap_or_default(),
-                self.dt,
-            ),
+        self.plan = self.simulator.preview(&controls, self.preview_ticks);
+        self.simulator.step(
+            controls.first().copied().unwrap_or_default(),
             &self.road,
+            self.actors.iter().map(|a| (a.state, CAR_FOOTPRINT)),
         );
-        let next = collide_with_actors(next, self.actors.iter().map(|a| (a.state, CAR_FOOTPRINT)));
-        self.ego = collide_with_road_barriers(prev, next, &self.road);
     }
 
     fn step_traffic(&mut self) {
+        let dt = self.dt();
         self.actors.sort_by(|a, b| a.track_x.total_cmp(&b.track_x));
         let snapshot: Vec<(f64, f64)> = self
             .actors
@@ -240,8 +221,8 @@ impl LiveWorld {
                     / (2.0 * gap.max(1.0)))
                 .clamp(crate::vehicle::MIN_LON_ACCEL, MAX_LON_ACCEL)
             });
-            let speed = (actor.state.speed + accel * self.dt).clamp(0.0, *MAX_TERMINAL_SPEED_MPS);
-            actor.track_x += speed * self.dt;
+            let speed = (actor.state.speed + accel * dt).clamp(0.0, *MAX_TERMINAL_SPEED_MPS);
+            actor.track_x += speed * dt;
             if actor.track_x >= actor.next_wander_x {
                 actor.lateral_target = lateral_target(
                     actor.personality,
@@ -250,11 +231,10 @@ impl LiveWorld {
                 );
                 actor.next_wander_x = actor.track_x + 15.0 + 25.0 * actor.rng.uniform();
             }
-            let lateral_step =
-                (actor.lateral_target - actor.lateral).clamp(-0.35 * self.dt, 0.35 * self.dt);
+            let lateral_step = (actor.lateral_target - actor.lateral).clamp(-0.35 * dt, 0.35 * dt);
             actor.lateral += lateral_step;
             let (p, lane_yaw) = self.track.pose(actor.track_x);
-            let yaw = lane_yaw + (lateral_step / (speed * self.dt).max(0.1)).atan();
+            let yaw = lane_yaw + (lateral_step / (speed * dt).max(0.1)).atan();
             actor.state = State {
                 x: p[0] - actor.lateral * lane_yaw.sin(),
                 y: p[1] + actor.lateral * lane_yaw.cos(),
@@ -317,9 +297,9 @@ mod tests {
 
     #[test]
     fn world_keeps_driving_without_a_route_or_goal() {
-        let mut world = LiveWorld::new(1, PlannerKind::BezierToppra, 0, 0.1);
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::BezierToppra, 0, 0.1);
         for _ in 0..100 {
-            world.tick();
+            world.tick_with_latency(None);
         }
         assert!(world.track_progress > 5.0);
         assert!(world.road.centerline.len() > 10);
@@ -327,17 +307,17 @@ mod tests {
 
     #[test]
     fn planner_only_sees_reachable_traffic() {
-        let mut world = LiveWorld::new(1, PlannerKind::Straight, 12, 0.1);
-        world.tick();
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 12, 0.1);
+        world.tick_with_latency(None);
         assert!(world.last_planner_actors > 0);
         assert!(world.last_planner_actors < world.actors.len());
     }
 
     #[test]
     fn ego_bounces_off_road_barriers() {
-        let mut world = LiveWorld::new(1, PlannerKind::Straight, 0, 0.1);
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
         world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
-        world.ego = State {
+        world.simulator.state = State {
             x: 0.0,
             y: 0.0,
             yaw: std::f64::consts::FRAC_PI_2,
@@ -346,16 +326,16 @@ mod tests {
         world.track_progress = world.track.project_progress([0.0, 0.0], 0.0);
         world.road_anchor_x = world.track_progress;
 
-        world.tick();
+        world.tick_with_latency(None);
 
-        let support = EGO_FOOTPRINT.support_radius(world.ego.yaw, [0.0, 1.0]);
-        assert!(world.ego.y <= world.road.half_width - support + 1e-9);
-        assert!(world.ego.yaw < 0.0);
+        let support = EGO_FOOTPRINT.support_radius(world.ego().yaw, [0.0, 1.0]);
+        assert!(world.ego().y <= world.road.half_width - support + 1e-9);
+        assert!(world.ego().yaw < 0.0);
     }
 
     #[test]
     fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
-        let mut world = LiveWorld::new(1, PlannerKind::Straight, 12, 0.1);
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 12, 0.1);
         assert!(
             world
                 .actors
@@ -390,7 +370,7 @@ mod tests {
 
     #[test]
     fn unblocked_traffic_accelerates() {
-        let mut world = LiveWorld::new(1, PlannerKind::Straight, 1, 0.1);
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
         let before = world.actors[0].state.speed;
         world.step_traffic();
         assert!(world.actors[0].state.speed > before);
@@ -398,16 +378,16 @@ mod tests {
 
     #[test]
     fn preview_horizon_and_diagnostics_are_live_configurable() {
-        let mut world = LiveWorld::new(1, PlannerKind::Lattice, 0, 0.1);
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Lattice, 0, 0.1);
         world.preview_ticks = 5;
         world.diagnostics_enabled = true;
-        world.tick();
+        world.tick_with_latency(None);
         assert_eq!(world.plan.len(), 5);
         assert!(!world.diagnostics.points.is_empty());
 
         world.preview_ticks = 0;
         world.diagnostics_enabled = false;
-        world.tick();
+        world.tick_with_latency(None);
         assert!(world.plan.is_empty());
         assert!(world.diagnostics.points.is_empty());
     }

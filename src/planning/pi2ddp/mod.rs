@@ -15,9 +15,7 @@
 //! the lane width at the preview distance.
 
 use crate::common::rng::Rng;
-use crate::planning::planner_math::{
-    self, M2, M4, M6, M24, TrajectoryCost, TrajectoryCostWeights, V2,
-};
+use crate::planning::planner_math::{self, M2, M4, M6, M24, TrajectoryCost, V2};
 use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::simulation::{Control, State, world_step};
@@ -31,14 +29,6 @@ const ALPHA: f64 = 0.5; // covariance damping (eq. 36)
 const LAMBDA_REG: f64 = 1e-3; // inverse regularization heuristic
 const SIGMA_ACCEL: f64 = 4.0; // [m/s²] exploration std
 const LANE_HALF_M: f64 = 1.75;
-const STATE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
-    center: 0.5,
-    progress: 2.0,
-    acceleration: 0.0,
-    curvature: 0.0,
-    scale: 1.0,
-    timed_shared_cost: true,
-};
 // physical action limits; also keep near-singular Σₓₓ inversions from
 // blowing the policy up when near-stationary rollouts lack state diversity
 
@@ -101,7 +91,7 @@ struct Policy {
     prev_cost: f64,       // noise-free rollout cost of the last generation
 }
 
-pub struct Pi2DdpPlanner {
+pub(crate) struct Pi2DdpPlanner {
     rng: Rng,
     policy: Option<Policy>,
 }
@@ -156,34 +146,21 @@ impl Planner for Pi2DdpPlanner {
             [SIGMA_ACCEL * SIGMA_ACCEL, 0.0],
             [0.0, sigma_kappa * sigma_kappa],
         ];
-        // linear solvability: control cost is the inverse of the exploration
-        let r_diag = [1.0 / sigma_init[0][0], 1.0 / sigma_init[1][1]];
-
-        // Shared cost of being at `x` at tick `j` after applying a direct
-        // acceleration/curvature command — the road/actor/comfort terms every
-        // search planner agrees on (`cost::HardConstraints`), plus a planner-specific
-        // centerline-pull term (no metric measures "distance from
-        // centerline" directly — it's a structural bias toward the lane the
-        // lattice and RRT* also keep as their own terms, not part of the
-        // shared cost). A hard
-        // violation (collision, or off the drivable area) becomes a large but
+        // Composite-metric cost of being at `x` at tick `j`. A hard violation
+        // (collision, or off the drivable area) becomes a large but
         // finite `constraints::HARD_VIOLATION_PENALTY · (1 + depth)` via
         // `HardConstraints::soft_point_cost` rather than `f64::INFINITY` — the
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
-        // The terminal call (no control has been applied yet) passes zero for
-        // both, so it prices position/speed but not comfort.
-        let trajectory_cost = TrajectoryCost::new(&path, ctx, STATE_COST_WEIGHTS);
+        let trajectory_cost = TrajectoryCost::new(&path, ctx);
         let state_cost =
             |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
-        let effort = |u: &V2| 0.5 * (r_diag[0] * u[0] * u[0] + r_diag[1] * u[1] * u[1]);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
             let mut xs = vec![ego];
             let mut cost = 0.0;
             for (j, &uj) in u.iter().enumerate() {
-                cost += effort(&uj);
                 x = world_step(
                     x,
                     Control {
@@ -195,7 +172,7 @@ impl Planner for Pi2DdpPlanner {
                 cost += state_cost(&x, j + 1);
                 xs.push(x);
             }
-            (xs, cost + 5.0 * state_cost(&x, HORIZON))
+            (xs, cost)
         };
 
         // warm start: shift the previous policy one step if the sim followed it
@@ -240,13 +217,12 @@ impl Planner for Pi2DdpPlanner {
                             pol.u[j][0] + kx[0] + eps[0],
                             pol.u[j][1] + kx[1] + eps[1],
                         ]);
-                        ctg[k][j] = effort(&u);
                         us[k][j] = u;
                         x = world_step(x, planner_math::control(u), ctx.road.dt);
-                        ctg[k][j] += state_cost(&x, j + 1);
+                        ctg[k][j] = state_cost(&x, j + 1);
                         xs[k][j + 1] = x;
                     }
-                    ctg[k][HORIZON] = 5.0 * state_cost(&x, HORIZON);
+                    ctg[k][HORIZON] = 0.0;
                     for j in (0..HORIZON).rev() {
                         ctg[k][j] += ctg[k][j + 1]; // suffix sums (eq. 10)
                     }
@@ -467,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_centerline_and_speed() {
+    fn stays_on_road_and_accelerates() {
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -475,8 +451,8 @@ mod tests {
         };
         let trace = run(ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.0, "offset {}", end.y);
-        assert!((end.speed - 10.0).abs() < 2.0, "speed {}", end.speed);
+        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
     #[test]

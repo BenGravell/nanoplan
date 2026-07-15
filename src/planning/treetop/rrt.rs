@@ -96,25 +96,24 @@ const WARM_D_SPEED: f64 = 2.0;
 /// reached it (treetop `node.h`, with `Rc` parent pointers flattened into
 /// arena indices).
 pub(crate) struct Node {
-    pub state: State,
-    pub parent: Option<usize>,
+    pub(crate) state: State,
+    pub(crate) parent: Option<usize>,
     /// Clamped actions of the edge from the parent ([`STEER_TICKS`] of
     /// them; empty for the root).
-    pub controls: Vec<Control>,
+    pub(crate) controls: Vec<Control>,
     /// Rollout states of that edge, parent state included
     /// (`controls.len() + 1`; just the state for the root).
-    pub states: Vec<State>,
-    pub cost_to_come: f64,
-    pub dist_to_goal: f64,
+    pub(crate) states: Vec<State>,
+    pub(crate) cost_to_come: f64,
+    pub(crate) dist_to_goal: f64,
     /// Whether any edge on the path to this node hard-violates the shared
     /// cost (collision / off-road) — set only by the fallback chains that
     /// deliberately ignore collisions to guarantee connectivity.
-    pub collides: bool,
+    pub(crate) collides: bool,
 }
 
-/// Edge evaluation: the shared cost function per rolled-out stage plus
-/// treetop's `softLoss` integrand (the magnitude of total acceleration —
-/// effort), averaged over the segment. A hard violation is priced at the
+/// Edge evaluation: the shared metric objective per rolled-out stage,
+/// averaged over the segment. A hard violation is priced at the
 /// shared depth-scaled penalty and flagged rather than propagated as an
 /// infinity, because the fallback chains must be able to carry a cost.
 struct EdgeEval {
@@ -125,8 +124,8 @@ struct EdgeEval {
 /// The layered tree (treetop `tree.h`). `layers[0]` holds only the root;
 /// `layers[SEGMENTS]` holds the goal nodes.
 pub(crate) struct Tree {
-    pub nodes: Vec<Node>,
-    pub layers: [Vec<usize>; SEGMENTS + 1],
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) layers: [Vec<usize>; SEGMENTS + 1],
 }
 
 impl Tree {
@@ -245,7 +244,7 @@ impl Tree {
                 };
 
                 // Sampled state itself in collision → discard (treetop
-                // checks its obstacles here; the shared cost's hard reject
+                // checks its obstacles here; the metric objective's hard reject
                 // is the equivalent).
                 let t_s = layer as f64 * steer_dur;
                 let (_, sample) = planner_math::state_sample(path, &target, t_s, None);
@@ -436,16 +435,9 @@ impl Grower<'_, '_> {
         (us, xs, ee)
     }
 
-    /// Price one edge: the shared cost function per stage (hard violations
-    /// flagged and finitized) plus treetop's `softLoss` effort integrand
-    /// and this planner's own centerline pull (the shared cost has no
-    /// "hug the centerline" term by design — see the README's shared-cost
-    /// section; without a pull of its own the tree happily settles ~2 m
-    /// off-center, since a goal-hitting path there prices almost the same
-    /// as a centered one), averaged over the segment. `layer` fixes the
+    /// Price one edge with the composite-metric objective. `layer` fixes the
     /// absolute time of each stage, so actors are priced where they'll be.
     fn edge_eval(&self, xs: &[State], us: &[Control], layer: usize) -> EdgeEval {
-        const CENTER_W: f64 = 0.5;
         let dt = self.ctx.road.dt;
         let t0 = (layer - 1) as f64 * STEER_TICKS as f64 * dt;
         let mut total = 0.0;
@@ -459,18 +451,11 @@ impl Grower<'_, '_> {
             sample.accel = us[i].acceleration;
             sample.curvature = us[i].curvature;
             let shared = self.ctx.time("cost", || constraints.point_cost(&sample));
-            // treetop softLoss: magnitude of (lon, lat) acceleration
-            let effort = us[i]
-                .acceleration
-                .hypot(x.speed * x.speed * us[i].curvature);
-            let pull = CENTER_W * sample.lateral * sample.lateral;
-            let speed_err = x.speed - self.ctx.road.target_speed;
-            let speed_cost = 0.5 * speed_err * speed_err;
             if shared.is_finite() {
-                total += shared + effort + pull + speed_cost;
+                total += shared;
             } else {
                 collides = true;
-                total += constraints.violation_penalty(&sample) + effort + pull + speed_cost;
+                total += constraints.violation_penalty(&sample);
             }
         }
         EdgeEval {
@@ -500,7 +485,7 @@ fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Con
 /// consecutive replans refine one detour instead of rediscovering a
 /// different one each tick.
 #[derive(Default)]
-pub struct RrtPlanner {
+pub(crate) struct RrtPlanner {
     prev: Option<Vec<Control>>,
     expected_next: State,
 }

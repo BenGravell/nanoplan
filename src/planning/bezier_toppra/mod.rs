@@ -12,7 +12,7 @@ use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LO
 
 const GRID_STEPS: usize = 100;
 
-pub struct BezierToppraPlanner;
+pub(crate) struct BezierToppraPlanner;
 
 impl Planner for BezierToppraPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {

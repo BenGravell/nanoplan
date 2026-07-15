@@ -1,75 +1,54 @@
 /// 2D world position.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Position {
-    pub x: f64,
-    pub y: f64,
+pub(crate) struct Position {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
 }
 
 impl Position {
-    pub const fn new(x: f64, y: f64) -> Self {
+    pub(crate) const fn new(x: f64, y: f64) -> Self {
         Position { x, y }
     }
 
-    pub const fn xy(self) -> [f64; 2] {
+    pub(crate) const fn xy(self) -> [f64; 2] {
         [self.x, self.y]
     }
 
-    pub fn distance(self, other: Position) -> f64 {
+    pub(crate) fn distance(self, other: Position) -> f64 {
         (self.x - other.x).hypot(self.y - other.y)
     }
 }
 
 /// Position and heading without speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Pose {
-    pub x: f64,
-    pub y: f64,
-    pub yaw: f64,
+pub(crate) struct Pose {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) yaw: f64,
 }
 
 impl Pose {
-    pub const fn new(x: f64, y: f64, yaw: f64) -> Self {
+    pub(crate) const fn new(x: f64, y: f64, yaw: f64) -> Self {
         Self { x, y, yaw }
-    }
-
-    pub const fn xy(self) -> [f64; 2] {
-        [self.x, self.y]
     }
 }
 
 /// Vehicle state: pose and speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct State {
-    pub x: f64,
-    pub y: f64,
-    pub yaw: f64,
-    pub speed: f64,
+pub(crate) struct State {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) yaw: f64,
+    pub(crate) speed: f64,
 }
 
 impl State {
-    pub fn pose(self) -> Pose {
+    pub(crate) fn pose(self) -> Pose {
         self.into()
     }
 
-    pub fn position(self) -> Position {
+    pub(crate) fn position(self) -> Position {
         self.into()
-    }
-
-    pub fn with_pose(self, pose: Pose) -> Self {
-        State {
-            x: pose.x,
-            y: pose.y,
-            yaw: pose.yaw,
-            ..self
-        }
-    }
-
-    pub fn with_position(self, position: Position) -> Self {
-        State {
-            x: position.x,
-            y: position.y,
-            ..self
-        }
     }
 }
 
@@ -144,7 +123,7 @@ impl From<Pose> for State {
 
 /// Control action: longitudinal acceleration and path curvature.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Control {
-    pub acceleration: f64,
-    pub curvature: f64,
+pub(crate) struct Control {
+    pub(crate) acceleration: f64,
+    pub(crate) curvature: f64,
 }

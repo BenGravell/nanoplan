@@ -17,11 +17,11 @@ use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
 
 pub(crate) struct RoadFrame {
-    pub path: Path,
-    pub s0: f64,
-    pub d0: f64,
-    pub speed: f64,
-    pub horizon_m: f64,
+    pub(crate) path: Path,
+    pub(crate) s0: f64,
+    pub(crate) d0: f64,
+    pub(crate) speed: f64,
+    pub(crate) horizon_m: f64,
 }
 
 impl RoadFrame {
@@ -41,8 +41,8 @@ impl RoadFrame {
 
 /// A best-first queue item where the lowest cost pops first.
 pub(crate) struct QueueEntry {
-    pub cost: f64,
-    pub node: usize,
+    pub(crate) cost: f64,
+    pub(crate) node: usize,
 }
 
 impl PartialEq for QueueEntry {
@@ -94,8 +94,8 @@ pub(crate) fn parent_chain(
 }
 
 pub(crate) struct BestFirstResult {
-    pub goal: usize,
-    pub parent: Vec<usize>,
+    pub(crate) goal: usize,
+    pub(crate) parent: Vec<usize>,
 }
 
 pub(crate) fn best_first(

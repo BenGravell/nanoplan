@@ -13,7 +13,7 @@ use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 pub(crate) use linalg::{dot, mat_add, mat_mul, mat_vec, transpose, vec_add};
 pub(crate) use matrix::{M2, M4, M6, M22, M24, M42};
-pub(crate) use trajectory_cost::{TrajectoryCost, TrajectoryCostWeights};
+pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use vector::{V2, V4};
 
 pub(crate) fn clamp_u(u: V2) -> V2 {

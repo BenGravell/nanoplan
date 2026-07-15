@@ -18,8 +18,8 @@
 //!
 //! treetop's `Loss` carries ~200 lines of hand-derived gradients and
 //! Hessians (`loss.h`), and its `Dynamics::jacobian` is closed-form.
-//! nanoplan deliberately provides neither: its shared cost
-//! ([`cost::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
+//! nanoplan deliberately provides neither: its shared metric objective
+//! ([`crate::planning::cost::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/planning/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the state-cost gradient/Hessian
@@ -35,12 +35,8 @@
 //!
 //! ## The optimal control problem ([`Ocp`])
 //!
-//! The running cost goes through [`cost::HardConstraints`] — the same cost
-//! interface every search planner prices candidates with — plus the usual
-//! planner-specific structural terms (centerline pull and
-//! a small control-effort quadratic that also keeps `l_uu` strictly
-//! positive), scaled by `1/TICKS` as treetop scales by
-//! `inverse_traj_length`. Two adaptations make the shared cost usable
+//! The running cost is the production composite-metric objective used by
+//! every search planner. One adaptation makes it usable
 //! under an optimizer that *differentiates* it rather than compares it:
 //!
 //! - **Hard violations get an escape slope.** `point_cost` returns
@@ -52,12 +48,6 @@
 //!   `HARD_VIOLATION_PENALTY · (1 + depth)` where `depth` is how far
 //!   inside the violation the sample sits — same cliff at the boundary,
 //!   but with a gradient pointing back out of it.
-//! - **The terminal cost is a quadratic pull to the goal state** (position,
-//!   heading, speed) — treetop's terminal loss with its parking-grade
-//!   `smoothAbs(·, 0.01)` tolerances swapped for lane-driving quadratics;
-//!   the goal is the rolling lane target from
-//!   [`goal_state`](super::goal_state).
-//!
 //! **Seams**: `route`, `warm_start`, `optimize` (the whole solve), with
 //! `derivs` (all backward-pass FD work), `fd_cost`, `fd_dynamics`, and
 //! `rollout` (the line-search forward passes) nested inside, and `extract`.
@@ -69,11 +59,10 @@
 //! as polylines (what the optimizer bought), the optimized states as
 //! points.
 
-use super::{TICKS, goal_state, take_warm};
-use crate::common::math::wrap_angle;
+use super::{TICKS, take_warm};
 use crate::planning::planner_math::{
-    M4, M22, M24, M42, TrajectoryCost, TrajectoryCostWeights, V2, V4, dot, mat_add, mat_mul,
-    mat_vec, state, state_from_v4, transpose, vec_add,
+    M4, M22, M24, M42, TrajectoryCost, V2, V4, dot, mat_add, mat_mul, mat_vec, state,
+    state_from_v4, transpose, vec_add,
 };
 use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
@@ -98,38 +87,13 @@ const FFGS_DECREASE: f64 = 0.2;
 
 // ---- The optimal control problem ------------------------------------------
 
-/// Weights of the structural running-cost terms on top of the shared cost
-/// (see the module doc): centerline pull and the
-/// control-effort quadratics that also keep `l_uu` strictly positive
-/// (curvature's weight is larger because curvature is numerically ~50×
-/// smaller than acceleration).
-const CENTER_W: f64 = 0.5;
-const EFFORT_ACCEL_W: f64 = 0.1;
-const EFFORT_CURV_W: f64 = 10.0;
-const STAGE_COST_WEIGHTS: TrajectoryCostWeights = TrajectoryCostWeights {
-    center: CENTER_W,
-    progress: 0.0,
-    acceleration: EFFORT_ACCEL_W,
-    curvature: EFFORT_CURV_W,
-    scale: 1.0 / TICKS as f64,
-    timed_shared_cost: false,
-};
-
-/// Terminal quadratic weights: position, heading, speed pulls toward the
-/// goal state.
-const TERM_XY_W: f64 = 0.05;
-const TERM_YAW_W: f64 = 5.0;
-const TERM_SPEED_W: f64 = 0.2;
-
-/// One trajectory-optimization problem: minimize running + terminal cost
-/// from a fixed start — treetop's `Problem`, with the loss built on
-/// nanoplan's shared cost function.
+/// One trajectory-optimization problem: minimize composite-metric cost from
+/// a fixed start.
 pub(crate) struct Ocp<'a, 'b> {
-    pub path: &'a Path,
+    pub(crate) path: &'a Path,
     /// treetop `Problem::initial_state`: where every rollout starts.
-    pub start: State,
-    pub goal: State,
-    pub ctx: &'a Context<'b>,
+    pub(crate) start: State,
+    pub(crate) ctx: &'a Context<'b>,
 }
 
 impl Ocp<'_, '_> {
@@ -137,7 +101,7 @@ impl Ocp<'_, '_> {
     /// `s_hint` narrows the Frenet projection during FD probing, where the
     /// state moves by ±[`H_COST`] around a known station.
     fn stage_cost(&self, x: &State, u: &Control, t: usize, s_hint: Option<f64>) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, STAGE_COST_WEIGHTS).stage(x, *u, t, s_hint)
+        TrajectoryCost::new(self.path, self.ctx).stage(x, *u, t, s_hint)
     }
 
     fn stage_cost_with_predicted_actors(
@@ -148,7 +112,7 @@ impl Ocp<'_, '_> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, STAGE_COST_WEIGHTS).stage_with_predicted_actors(
+        TrajectoryCost::new(self.path, self.ctx).stage_with_predicted_actors(
             x,
             *u,
             t,
@@ -157,12 +121,8 @@ impl Ocp<'_, '_> {
         )
     }
 
-    /// Quadratic pull of the trajectory endpoint toward the goal state.
     fn terminal_cost(&self, x: &State) -> f64 {
-        let (dx, dy) = (x.x - self.goal.x, x.y - self.goal.y);
-        let dyaw = wrap_angle(x.yaw - self.goal.yaw);
-        let dv = x.speed - self.goal.speed;
-        TERM_XY_W * (dx * dx + dy * dy) + TERM_YAW_W * dyaw * dyaw + TERM_SPEED_W * dv * dv
+        TrajectoryCost::new(self.path, self.ctx).stage(x, Control::default(), TICKS, None)
     }
 
     /// Total cost of a rolled-out trajectory (treetop `Loss::totalValue`).
@@ -177,8 +137,8 @@ impl Ocp<'_, '_> {
 
 // ---- Finite-difference derivatives ----------------------------------------
 
-/// FD step for cost derivatives. All four state coordinates (meters,
-/// radians, m/s) are O(0.1-10) here, so one step suits them all;
+/// FD step for cost derivatives. State and control coordinates are
+/// O(0.01-10) here, so one step suits them all;
 /// ~eps^(1/4) is the classic sweet spot for second differences.
 const H_COST: f64 = 1e-3;
 
@@ -187,9 +147,8 @@ const H_COST: f64 = 1e-3;
 const H_DYN: f64 = 1e-5;
 
 /// Quadratic expansion of the running cost at one `(x, u)` — treetop's
-/// `Loss::gradientAndHessian`. The expensive shared cost depends on state;
-/// control effort is an explicit quadratic in `u`, so only the six state
-/// coordinates need finite differences.
+/// `Loss::gradientAndHessian`, numerically differentiated over state and
+/// control together.
 struct StageDerivs {
     lx: V4,
     lu: V2,
@@ -209,48 +168,31 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
         .iter()
         .map(|a| predict(a, Some(ocp.path), t_s))
         .collect();
-    let eval = |z: V4| {
+    let eval = |z: [f64; 6]| {
         ocp.stage_cost_with_predicted_actors(
-            &state_from_v4(z),
-            &Control::default(),
+            &state_from_v4([z[0], z[1], z[2], z[3]]),
+            &Control {
+                acceleration: z[4],
+                curvature: z[5],
+            },
             t,
             Some(s_hint),
             &predicted_actors,
         )
     };
-    let (grad, hess) = fd_grad_hess(&eval, state(x));
-    let scale = STAGE_COST_WEIGHTS.scale;
+    let z = [x.x, x.y, x.yaw, x.speed, u.acceleration, u.curvature];
+    let (grad, hess) = fd_grad_hess(&eval, z);
     StageDerivs {
-        lx: grad,
-        lu: [
-            2.0 * scale * STAGE_COST_WEIGHTS.acceleration * u.acceleration,
-            2.0 * scale * STAGE_COST_WEIGHTS.curvature * u.curvature,
-        ],
-        lxx: hess,
-        lxu: [[0.0; 2]; 4],
-        luu: [
-            [2.0 * scale * STAGE_COST_WEIGHTS.acceleration, 0.0],
-            [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature],
-        ],
+        lx: [grad[0], grad[1], grad[2], grad[3]],
+        lu: [grad[4], grad[5]],
+        lxx: std::array::from_fn(|i| std::array::from_fn(|j| hess[i][j])),
+        lxu: std::array::from_fn(|i| [hess[i][4], hess[i][5]]),
+        luu: [[hess[4][4], hess[4][5]], [hess[5][4], hess[5][5]]],
     }
 }
 
-/// Terminal gradient and Hessian. The terminal cost is a plain quadratic
-/// pull to the goal, so no finite differences are needed here.
 fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M4) {
-    let dyaw = wrap_angle(x.yaw - ocp.goal.yaw);
-    let grad = [
-        2.0 * TERM_XY_W * (x.x - ocp.goal.x),
-        2.0 * TERM_XY_W * (x.y - ocp.goal.y),
-        2.0 * TERM_YAW_W * dyaw,
-        2.0 * TERM_SPEED_W * (x.speed - ocp.goal.speed),
-    ];
-    let mut hess = [[0.0; 4]; 4];
-    hess[0][0] = 2.0 * TERM_XY_W;
-    hess[1][1] = 2.0 * TERM_XY_W;
-    hess[2][2] = 2.0 * TERM_YAW_W;
-    hess[3][3] = 2.0 * TERM_SPEED_W;
-    (grad, hess)
+    fd_grad_hess(&|z| ocp.terminal_cost(&state_from_v4(z)), state(x))
 }
 
 /// Central-difference gradient and Hessian of a black-box scalar. The
@@ -366,9 +308,9 @@ impl Ecc {
 /// leaves the solver).
 #[derive(Clone)]
 pub(crate) struct Solution {
-    pub states: Vec<State>,
-    pub controls: Vec<Control>,
-    pub cost: f64,
+    pub(crate) states: Vec<State>,
+    pub(crate) controls: Vec<Control>,
+    pub(crate) cost: f64,
 }
 
 /// One backward pass (treetop `BackwardPassRunner::run`): from the
@@ -573,7 +515,7 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
 /// the treetop coordination exists to fix; kept standalone so the registry
 /// can show that difference side by side.
 #[derive(Default)]
-pub struct IlqrPlanner {
+pub(crate) struct IlqrPlanner {
     prev: Option<Vec<Control>>,
     expected_next: State,
 }
@@ -587,7 +529,6 @@ const SOLO_ITERS: usize = 12;
 impl Planner for IlqrPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(&ctx.road.centerline));
-        let goal = goal_state(&path, ego, ctx);
         let init = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
                 .unwrap_or_else(|| centerline_follow_controls(ego, &path, ctx, TICKS))
@@ -596,7 +537,6 @@ impl Planner for IlqrPlanner {
         let ocp = Ocp {
             path: &path,
             start: ego,
-            goal,
             ctx,
         };
         let sol = ctx.time("optimize", || solve(&ocp, &init, SOLO_ITERS));
@@ -679,11 +619,9 @@ mod tests {
             speed: 6.0,
             ..Default::default()
         };
-        let goal = goal_state(&path, ego, &ctx);
         let ocp = Ocp {
             path: &path,
             start: ego,
-            goal,
             ctx: &ctx,
         };
         // a lazy guess: coast straight, ignoring the lane offset and speed
@@ -692,15 +630,11 @@ mod tests {
         let cost0 = ocp.traj_cost(&xs0, &us0);
         let sol = solve(&ocp, &init, 20);
         assert!(sol.cost < cost0, "no improvement: {} vs {cost0}", sol.cost);
-        // the optimized endpoint is much closer to the goal
-        let end = sol.states.last().unwrap();
-        let d0 = super::super::state_distance(xs0.last().unwrap(), &goal);
-        let d1 = super::super::state_distance(end, &goal);
-        assert!(d1 < d0, "endpoint got no closer: {d1} vs {d0}");
+        assert!(sol.states.last().unwrap().speed > xs0.last().unwrap().speed);
     }
 
     #[test]
-    fn stage_derivs_use_analytic_control_quadratic() {
+    fn stage_derivs_include_composite_comfort() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(&road.centerline);
@@ -711,7 +645,6 @@ mod tests {
         let ocp = Ocp {
             path: &path,
             start: ego,
-            goal: goal_state(&path, ego, &ctx),
             ctx: &ctx,
         };
         let u = Control {
@@ -720,22 +653,9 @@ mod tests {
         };
 
         let d = stage_derivs(&ocp, &ego, &u, 0);
-        let scale = STAGE_COST_WEIGHTS.scale;
-        assert_eq!(
-            d.lu,
-            [
-                2.0 * scale * STAGE_COST_WEIGHTS.acceleration * u.acceleration,
-                2.0 * scale * STAGE_COST_WEIGHTS.curvature * u.curvature,
-            ]
-        );
-        assert_eq!(
-            d.luu,
-            [
-                [2.0 * scale * STAGE_COST_WEIGHTS.acceleration, 0.0],
-                [0.0, 2.0 * scale * STAGE_COST_WEIGHTS.curvature],
-            ]
-        );
-        assert!(d.lxu.iter().flatten().all(|v| *v == 0.0));
+        assert!(d.lu.into_iter().all(f64::is_finite));
+        assert!(d.luu.iter().flatten().all(|v| v.is_finite()));
+        assert_eq!(d.luu[0][1], d.luu[1][0]);
     }
 
     #[test]
@@ -749,7 +669,7 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
         let path = Path::new(&road.centerline);
-        let tc = TrajectoryCost::new(&path, &ctx, STAGE_COST_WEIGHTS);
+        let tc = TrajectoryCost::new(&path, &ctx);
         let x = State {
             x: 5.0,
             speed: 8.0,
@@ -768,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_centerline_and_speed() {
+    fn stays_on_road_and_accelerates() {
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -776,8 +696,8 @@ mod tests {
         };
         let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.2, "offset {}", end.y);
-        assert!((end.speed - 10.0).abs() < 2.5, "speed {}", end.speed);
+        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
     #[test]

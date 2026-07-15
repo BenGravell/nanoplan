@@ -10,7 +10,7 @@ use crate::simulation::State;
 const TTC_HORIZON_S: f64 = 3.0;
 const LEAST_MIN_TTC_S: f64 = 0.95;
 
-pub fn score(ctx: &TickCtx, i: usize) -> f64 {
+pub(crate) fn score(ctx: &TickCtx, i: usize) -> f64 {
     let min_ttc = time_to_unsafe_state(ctx, i).unwrap_or(f64::INFINITY);
     if min_ttc >= LEAST_MIN_TTC_S { 1.0 } else { 0.0 }
 }
@@ -63,7 +63,7 @@ mod tests {
             ego.len()
         ];
 
-        assert_eq!(evaluate(&ego, &[parked], &road()).at(0).0[0], 1.0);
+        assert_eq!(evaluate(&ego, &[parked], &road()).per_tick[0][0], 1.0);
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(evaluate(&ego, &[actor], &road()).at(0).0[0], 1.0);
+        assert_eq!(evaluate(&ego, &[actor], &road()).per_tick[0][0], 1.0);
     }
 
     #[test]
@@ -98,6 +98,6 @@ mod tests {
         ];
         actor[5].x = 0.0;
 
-        assert_eq!(evaluate(&ego, &[actor], &road()).at(0).0[0], 0.0);
+        assert_eq!(evaluate(&ego, &[actor], &road()).per_tick[0][0], 0.0);
     }
 }

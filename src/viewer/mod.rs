@@ -11,18 +11,25 @@ mod ui;
 pub(crate) const DT: f64 = 0.1;
 const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
 
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum TimeseriesGroup {
+    #[default]
+    Signals,
+    Metrics,
+}
+
 #[derive(Resource)]
 pub(crate) struct UiState {
-    pub track: usize,
-    pub planner: PlannerKind,
-    pub preview_s: f32,
-    pub show_grid: bool,
-    pub show_centerline: bool,
-    pub show_carpet: bool,
-    pub show_plan: bool,
-    pub show_hud: bool,
-    pub show_diag_points: bool,
-    pub show_diag_trajectories: bool,
+    pub(crate) track: usize,
+    pub(crate) planner: PlannerKind,
+    pub(crate) preview_s: f32,
+    pub(crate) show_grid: bool,
+    pub(crate) show_centerline: bool,
+    pub(crate) show_carpet: bool,
+    pub(crate) show_plan: bool,
+    pub(crate) timeseries_group: TimeseriesGroup,
+    pub(crate) show_diag_points: bool,
+    pub(crate) show_diag_trajectories: bool,
 }
 
 impl Default for UiState {
@@ -35,14 +42,14 @@ impl Default for UiState {
             show_centerline: true,
             show_carpet: true,
             show_plan: true,
-            show_hud: true,
+            timeseries_group: TimeseriesGroup::Signals,
             show_diag_points: false,
             show_diag_trajectories: false,
         }
     }
 }
 
-pub fn run() {
+pub(crate) fn run() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {

@@ -31,13 +31,13 @@ use web_time::Instant;
 /// Per-call span recorder. Interior mutability so it can sit behind the
 /// shared [`Context`](super::Context) reference planners already receive.
 #[derive(Default)]
-pub struct Latency {
+pub(crate) struct Latency {
     spans: std::cell::RefCell<Vec<(&'static str, f64)>>,
 }
 
 impl Latency {
     /// Time `f` and record it under `name` (milliseconds).
-    pub fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
+    pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         let t0 = Instant::now();
         let out = f();
         self.spans
@@ -47,7 +47,7 @@ impl Latency {
     }
 
     /// Drain the spans recorded since the last take.
-    pub fn take(&self) -> Vec<(&'static str, f64)> {
+    pub(crate) fn take(&self) -> Vec<(&'static str, f64)> {
         self.spans.take()
     }
 }
@@ -56,28 +56,28 @@ impl Latency {
 /// in which the seam appeared; repeated recordings within one call are
 /// summed before folding in.
 #[derive(Debug, Clone, Copy)]
-pub struct SeamStats {
-    pub name: &'static str,
-    pub calls: usize,
-    pub total_ms: f64,
-    pub max_ms: f64,
+pub(crate) struct SeamStats {
+    pub(crate) name: &'static str,
+    pub(crate) calls: usize,
+    pub(crate) total_ms: f64,
+    pub(crate) max_ms: f64,
 }
 
 impl SeamStats {
-    pub fn mean_ms(&self) -> f64 {
+    pub(crate) fn mean_ms(&self) -> f64 {
         self.total_ms / self.calls.max(1) as f64
     }
 }
 
 /// Latency statistics for a whole rollout, seams in order of first appearance.
 #[derive(Debug, Clone, Default)]
-pub struct LatencyStats {
-    pub seams: Vec<SeamStats>,
+pub(crate) struct LatencyStats {
+    pub(crate) seams: Vec<SeamStats>,
 }
 
 impl LatencyStats {
     /// Fold in the spans of one `plan()` call.
-    pub fn absorb(&mut self, spans: Vec<(&'static str, f64)>) {
+    pub(crate) fn absorb(&mut self, spans: Vec<(&'static str, f64)>) {
         // sum repeated seams within this call, preserving first-seen order
         let mut per_call: Vec<(&'static str, f64)> = Vec::new();
         for (name, ms) in spans {

@@ -1,7 +1,6 @@
 //! Hard trajectory constraints shared by planners.
 
-use crate::metrics::COLLISION_CLEARANCE_M;
-use crate::planning::cost::{N_FEATURES, WEIGHTS, soft_features};
+use crate::metrics::{COLLISION_CLEARANCE_M, METRICS, aggregation, comfort, progress};
 use crate::prediction::predict;
 use crate::simulation::State;
 use crate::track::Path;
@@ -11,9 +10,8 @@ use crate::track::Path;
 /// this is the narrow proxy for planners that only carry a point sample.
 pub(crate) const COLLISION_DIAMETER_M: f64 = COLLISION_CLEARANCE_M;
 
-/// Finite stand-in for a hard violation, for callers whose statistics can't
-/// tolerate an actual infinity propagating through them (PI²-DDP's
-/// min/max-normalized rollout weighting).
+/// Finite stand-in for a hard violation, for numeric optimizers that cannot
+/// propagate infinity through statistics or finite differences.
 pub(crate) const HARD_VIOLATION_PENALTY: f64 = 1e4;
 
 /// One sample along a candidate trajectory: enough geometry and kinematics
@@ -22,17 +20,17 @@ pub(crate) const HARD_VIOLATION_PENALTY: f64 = 1e4;
 /// term" value.
 #[derive(Default)]
 pub(crate) struct Sample {
-    /// World-frame position, for actor-proximity checks.
-    pub xy: [f64; 2],
+    /// World-frame position, for actor collision checks.
+    pub(crate) xy: [f64; 2],
     /// Signed Frenet offset from the centerline.
-    pub lateral: f64,
+    pub(crate) lateral: f64,
     /// Signed heading error from the lane direction at this point.
-    pub heading_err: f64,
-    pub speed: f64,
-    pub curvature: f64,
-    pub accel: f64,
+    pub(crate) heading_err: f64,
+    pub(crate) speed: f64,
+    pub(crate) curvature: f64,
+    pub(crate) accel: f64,
     /// Seconds from now this sample is reached, for actor prediction.
-    pub t: f64,
+    pub(crate) t: f64,
 }
 
 /// One hard rule a candidate sample must satisfy. Each rule reports both a
@@ -106,25 +104,19 @@ impl<'a> HardConstraints<'a> {
         self.drivable.violation_depth(sample) + self.collision.violation_depth(sample)
     }
 
-    /// Soft feature vector of one sample, or `None` for a hard violation.
-    /// Each feature is already squared/hinged so the cost is linear in
-    /// [`WEIGHTS`] — the form the IRL tuner learns.
-    pub(crate) fn features(&self, sample: &Sample) -> Option<[f64; N_FEATURES]> {
-        if self.drivable.is_violated(sample) {
-            return None;
-        }
-
-        let proximity = actor_proximity(sample, self.collision.actors, self.collision.lane)?;
-        Some(soft_features(sample, self.drivable.half_width, proximity))
-    }
-
-    /// [`WEIGHTS`] dotted with [`HardConstraints::features`], or
-    /// `f64::INFINITY` for a hard violation a planner should reject.
+    /// Per-sample complement of the production composite metric, or infinity
+    /// when its safety multiplier is zero.
     pub(crate) fn point_cost(&self, sample: &Sample) -> f64 {
-        match self.features(sample) {
-            None => f64::INFINITY,
-            Some(f) => WEIGHTS.iter().zip(f).map(|(w, x)| w * x).sum(),
+        if self.drivable.is_violated(sample) || self.collision.is_violated(sample) {
+            return f64::INFINITY;
         }
+        let forward_speed = sample.speed * sample.heading_err.cos();
+        let scores = [
+            1.0,
+            progress::speed_score(forward_speed),
+            comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
+        ];
+        1.0 - aggregation::composite(&METRICS, &scores)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.
@@ -143,26 +135,4 @@ impl<'a> HardConstraints<'a> {
             self.violation_penalty(sample)
         }
     }
-}
-
-fn actor_proximity(sample: &Sample, actors: &[State], lane: Option<&Path>) -> Option<f64> {
-    let mut proximity = 0.0;
-    for a in actors {
-        let predicted = predict(a, lane, sample.t);
-        let gap = (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y);
-        if gap < COLLISION_DIAMETER_M {
-            return None;
-        }
-        // smooth inverse-square repulsion inside the safe zone, so a search
-        // that samples near an actor without touching it still prefers
-        // more clearance. Weighted heavily for the same reason as the
-        // road-edge hinge below: the lattice and RRT* both hard-reject a
-        // colliding candidate outright (via the `None` above) and never
-        // select one, so this soft term barely matters to them — but
-        // PI²-DDP's continuous, sampling-based search has no such hard
-        // accept/reject step, so a weak gradient here is its only actor-
-        // avoidance margin.
-        proximity += 1.0 / (gap * gap);
-    }
-    Some(proximity)
 }

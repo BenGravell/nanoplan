@@ -2,20 +2,20 @@
 
 mod catalog;
 mod circuit;
-pub mod loader;
+pub(crate) mod loader;
 mod model;
 mod path;
 mod road;
 mod track;
 
-pub use catalog::TRACK_CATALOG;
-pub use path::Path;
-pub use road::Road;
-pub use track::{GENERATED_TRACK_NAME, Track};
+pub(crate) use catalog::TRACK_CATALOG;
+pub(crate) use path::Path;
+pub(crate) use road::Road;
+pub(crate) use track::{GENERATED_TRACK_NAME, Track};
 
 #[cfg(test)]
 mod tests {
-    use super::catalog::install_test_catalog;
+    use super::loader::install_test_catalog;
     use super::model::is_simple;
     use super::track::TrackGeometry;
     use super::*;
