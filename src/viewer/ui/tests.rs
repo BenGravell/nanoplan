@@ -64,12 +64,12 @@ fn landing_starts_with_the_keyboard() {
             },
             ViewerHarnessState::default(),
         );
-    harness.run();
+    harness.run_steps(2);
 
     assert!(harness.query_by_label("NANOPLAN").is_some());
-    assert!(harness.query_by_label("▶  START DRIVING").is_some());
+    assert!(harness.query_by_label("START DRIVING").is_some());
     harness.key_press(egui::Key::Enter);
-    harness.run();
+    harness.step();
     assert!(harness.state().ui.started);
 }
 

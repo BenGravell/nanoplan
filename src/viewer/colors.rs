@@ -19,6 +19,12 @@ pub(crate) const SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 252)
 pub(crate) const CONTROL: egui::Color32 = egui::Color32::from_rgb(232, 235, 229);
 pub(crate) const FAINT: egui::Color32 = egui::Color32::from_rgb(224, 229, 223);
 
+// Landing screen colors
+pub(crate) const LANDING_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(250, 251, 249);
+pub(crate) const LANDING_BLUE: egui::Color32 = egui::Color32::from_rgb(0, 109, 174);
+pub(crate) const LANDING_DARK_BLUE: egui::Color32 = egui::Color32::from_rgb(10, 42, 75);
+pub(crate) const LANDING_MUTED: egui::Color32 = egui::Color32::from_rgb(91, 106, 116);
+
 // Semantic colors
 pub(crate) const GOOD: egui::Color32 = BLUE;
 pub(crate) const OK: egui::Color32 = GREY;
