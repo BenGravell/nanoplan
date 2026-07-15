@@ -39,6 +39,14 @@ impl Default for ViewerHarnessState {
 }
 
 #[test]
+fn visualization_defaults_show_only_track_stations() {
+    let state = UiState::default();
+    assert!(state.show_stations);
+    assert!(!state.show_centerline);
+    assert!(!state.show_plan);
+}
+
+#[test]
 fn portrait_prompt_is_the_only_interactive_view() {
     let size = egui::vec2(390.0, 844.0);
     let mut harness = Harness::builder().with_size(size).build_ui_state(

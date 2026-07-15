@@ -15,6 +15,7 @@ pub(in crate::viewer::live) fn draw(
     gizmos: &mut Gizmos,
     track: &Track,
     progress: f64,
+    show_stations: bool,
     show_centerline: bool,
 ) {
     if let Some(length) = track.lap_length() {
@@ -38,19 +39,21 @@ pub(in crate::viewer::live) fn draw(
 
     draw_lines(gizmos, &samples, show_centerline, EDGE, CENTERLINE);
 
-    for &(position, yaw, right, left) in &samples {
-        let normal = [-yaw.sin(), yaw.cos()];
-        gizmos.line_2d(
-            ppx([
-                position[0] - right * normal[0],
-                position[1] - right * normal[1],
-            ]),
-            ppx([
-                position[0] + left * normal[0],
-                position[1] + left * normal[1],
-            ]),
-            Color::srgba(0.6, 0.6, 0.6, 0.2),
-        );
+    if show_stations {
+        for &(position, yaw, right, left) in &samples {
+            let normal = [-yaw.sin(), yaw.cos()];
+            gizmos.line_2d(
+                ppx([
+                    position[0] - right * normal[0],
+                    position[1] - right * normal[1],
+                ]),
+                ppx([
+                    position[0] + left * normal[0],
+                    position[1] + left * normal[1],
+                ]),
+                Color::srgba(0.6, 0.6, 0.6, 0.2),
+            );
+        }
     }
 }
 

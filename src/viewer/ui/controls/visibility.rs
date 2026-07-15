@@ -5,6 +5,7 @@ use crate::viewer::UiState;
 
 pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
     ui.checkbox(&mut state.show_grid, "Grid");
+    ui.checkbox(&mut state.show_stations, "Track stations");
     ui.checkbox(&mut state.show_centerline, "Track centerline");
     ui.checkbox(&mut state.show_carpet, "Ego carpet");
     ui.checkbox(&mut state.show_plan, "Planned path");

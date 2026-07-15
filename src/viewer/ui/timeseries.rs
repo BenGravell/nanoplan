@@ -73,7 +73,7 @@ pub(super) fn timeseries_rail(
                 TimeseriesGroup::Metrics => metric_traces(live),
             };
             legend(ui, &traces, compact);
-            let chart_height = ui.available_height().max(80.0);
+            let chart_height = ui.available_height().max(if compact { 45.0 } else { 80.0 });
             chart(ui, &traces, live.world.dt(), chart_height, compact);
 
             ui.interact(

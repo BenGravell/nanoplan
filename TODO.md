@@ -40,11 +40,6 @@ This works for static obstacles.
 ## UX
 
 --
-camera
-smooth motion should be even smoother, use a longer duration for the filtering on the pose of the camera.
-this is needed to overcome coarse discretization of the tracks.
-
---
 mobile controls
 pinch to zoom
 
@@ -52,14 +47,13 @@ pinch to zoom
 start the app fullscreen
 
 --
+consider replacing the timeseries charts with a selector for coloring the ego carpet according to signals or metrics. more fun and intuitive, and yields back space in the right rail.
+
+--
 Show the predicted future poses of actors in the viewer.
 Re-use the ego carpet element.
 Must stay lightweight on compute and rendering side.
 Add checkbox in VIZ options for showing them.
-
---
-friction box and curv and accel bars
-pick one or the either, they are redundant
 
 --
 Give nanoplan a unique icon/favicon.

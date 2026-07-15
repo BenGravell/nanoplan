@@ -12,7 +12,7 @@ use super::drawing::{
 use super::screen::{ppx, px};
 use crate::viewer::{DT, UiState};
 
-const CAMERA_SMOOTH_RATE: f32 = 8.0;
+const CAMERA_SMOOTH_DURATION_S: f32 = 0.5;
 
 pub(super) struct RenderSnapshot {
     pub(super) ego: State,
@@ -67,7 +67,7 @@ pub(crate) fn draw(
         .align_heading
         .then_some(yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = if live.camera.smooth {
-        1.0 - (-CAMERA_SMOOTH_RATE * time.delta_secs()).exp()
+        1.0 - (-time.delta_secs() / CAMERA_SMOOTH_DURATION_S).exp()
     } else {
         1.0
     };
@@ -98,6 +98,7 @@ pub(crate) fn draw(
         &mut gizmos,
         &world.track,
         world.track_progress,
+        state.show_stations,
         state.show_centerline,
     );
     diagnostics::draw(
