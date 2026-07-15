@@ -1,4 +1,4 @@
-pub(crate) fn smoothstep(u: f64) -> f64 {
+pub fn smoothstep(u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
     u * u * (3.0 - 2.0 * u)
 }

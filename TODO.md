@@ -25,6 +25,13 @@ Taxonomy of planners
 - Tree search (RRT)
 - Local optimization (iLQR)
 
+## tracks
+
+vendor the tracks from 
+https://github.com/TUMFTM/racetrack-database/tree/master
+
+add a gui selector for track selection. default first selection should still be the procedural world.
+
 
 ## planning horizon
 

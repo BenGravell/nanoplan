@@ -8,9 +8,11 @@ use nanoplan::simulation::curvature_limit;
 use nanoplan::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 use nanoplan::{Path, State};
 
-use super::UiState;
 use super::friction_box;
 use super::live::{CameraTarget, Live, MAX_ZOOM, MIN_ZOOM};
+use super::{UiState, is_portrait};
+
+mod portrait_prompt;
 
 const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
 const BLUE: egui::Color32 = egui::Color32::from_rgb(45, 135, 160);
@@ -51,6 +53,11 @@ pub(crate) fn ui(
         "viewer_ui".into(),
         egui::UiBuilder::new().max_rect(ctx.content_rect()),
     );
+    if is_portrait(root.max_rect().width(), root.max_rect().height()) {
+        portrait_prompt::show(&mut root);
+        ctx.request_repaint();
+        return;
+    }
     viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
 }
 
@@ -649,8 +656,8 @@ mod tests {
     use egui_kittest::{Harness, kittest::Queryable};
 
     use super::{
-        ControlTab, UiState, compact_layout, compact_rail_widths, configure, preview_metric_scores,
-        signed_fraction, viewer_layout,
+        ControlTab, UiState, compact_layout, compact_rail_widths, configure, portrait_prompt,
+        preview_metric_scores, signed_fraction, viewer_layout,
     };
     use crate::viewer::{CANVAS_RGB, live::Live};
 
@@ -677,6 +684,38 @@ mod tests {
                 configured: false,
             }
         }
+    }
+
+    #[test]
+    fn portrait_prompt_is_the_only_interactive_view() {
+        let size = egui::vec2(390.0, 844.0);
+        let mut harness = Harness::builder().with_size(size).build_ui_state(
+            |ui, configured: &mut bool| {
+                let ctx = ui.ctx().clone();
+                if !*configured {
+                    configure(&ctx);
+                    *configured = true;
+                    ctx.request_repaint();
+                    return;
+                }
+                let mut root = egui::Ui::new(
+                    ctx.clone(),
+                    "portrait_render_test".into(),
+                    egui::UiBuilder::new().max_rect(ctx.content_rect()),
+                );
+                portrait_prompt::show(&mut root);
+            },
+            false,
+        );
+        harness.run();
+
+        assert!(harness.query_by_label("NANOPLAN").is_some());
+        assert!(
+            harness
+                .query_by_label("TURN YOUR DEVICE SIDEWAYS")
+                .is_some()
+        );
+        assert!(harness.query_by_label("PAUSE").is_none());
     }
 
     #[test]

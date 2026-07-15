@@ -81,7 +81,16 @@ pub fn run() {
                 live::configure_diagnostics,
                 live::draw,
             )
-                .chain(),
+                .chain()
+                .run_if(landscape),
         )
         .run();
+}
+
+fn landscape(window: Single<&Window>) -> bool {
+    !is_portrait(window.width(), window.height())
+}
+
+fn is_portrait(width: f32, height: f32) -> bool {
+    height > width
 }

@@ -13,7 +13,7 @@
 
 pub mod barrier;
 pub mod geometry;
-pub(crate) mod math;
+pub mod math;
 pub mod metrics;
 pub mod planning;
 pub mod prediction;
