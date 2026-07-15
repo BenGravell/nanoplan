@@ -84,7 +84,7 @@ Curvature
 
 The x axis (time) should be hard synchronized between all plots.
 
-Show trace for actual Ego in thick white line, trace for planned trajectory in thinner line matching the accent color for semantic "planned" meaning (pink). Link all the semantic meaning colors with a single source of truth color definition.
+Show trace for actual Ego in thick white line, trace for planned trajectory in thinner line matching the accent color for semantic "planned" meaning. Link all the semantic meaning colors with a single source of truth color definition.
 
 --
 Give the various actors in the scene minimal meshes representative of the semantic class (car, truck, cycle, pedestrian, etc)

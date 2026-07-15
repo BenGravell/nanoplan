@@ -57,6 +57,7 @@ pub fn run() {
         }))
         .add_plugins(EguiPlugin::default())
         .init_gizmo_group::<live::EgoCarpetGizmos>()
+        .init_gizmo_group::<live::PlannedTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticPointGizmos>()
         .insert_resource(ClearColor(Color::srgb_u8(
@@ -77,6 +78,7 @@ pub fn run() {
                 live::update,
                 live::configure_carpet,
                 live::configure_diagnostics,
+                live::configure_plan,
                 live::draw,
             )
                 .chain()

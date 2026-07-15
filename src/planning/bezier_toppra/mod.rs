@@ -1,7 +1,7 @@
 //! Cubic Bezier lane return with a TOPP-RA speed parameterization.
 
+use crate::geometry::{CAR_COLLISION_RADIUS_M, EGO_COLLISION_RADIUS_M};
 use crate::math::wrap_angle;
-use crate::planning::constraints::COLLISION_DIAMETER_M;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
 use crate::simulation::curvature_limit;
@@ -58,7 +58,8 @@ impl Planner for BezierToppraPlanner {
                     let xy = planned_position(&b, &path, s0, lookahead, d);
                     if ctx.actors.iter().any(|actor| {
                         let p = predict(actor, Some(&path), time);
-                        (xy[0] - p.x).hypot(xy[1] - p.y) < COLLISION_DIAMETER_M
+                        (xy[0] - p.x).hypot(xy[1] - p.y)
+                            < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
                     }) {
                         let stop = i - 1;
                         if max_speed2[stop] != 0.0 {
@@ -270,5 +271,33 @@ mod tests {
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
         assert!(end.x < 45.0, "x {}", end.x);
+    }
+
+    #[test]
+    fn follows_a_slower_lead_without_contact() {
+        use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, footprints_overlap};
+        use crate::planning::{test_ctx, test_road};
+        use crate::simulation::CommandLimiter;
+
+        let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
+        let mut planner = BezierToppraPlanner;
+        let mut limiter = CommandLimiter::new();
+        let mut ego = State::default();
+        let mut lead = State {
+            x: 55.0,
+            speed: 7.0,
+            ..Default::default()
+        };
+
+        for tick in 0..300 {
+            lead.x += lead.speed * road.dt;
+            let actors = [lead];
+            let controls = planner.plan(ego, &test_ctx(&road, &actors));
+            ego = limiter.step(ego, controls[0], road.dt);
+            assert!(
+                !footprints_overlap(ego.pose(), EGO_FOOTPRINT, lead.pose(), CAR_FOOTPRINT),
+                "contact at tick {tick}: ego {ego:?}, lead {lead:?}"
+            );
+        }
     }
 }

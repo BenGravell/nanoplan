@@ -2,8 +2,8 @@
 
 The viewer contains only the endless-track mode, split by responsibility:
 
-- `live/` owns simulation updates, camera input, world rendering, the ego
-  carpet, and drawing primitives;
+- `live/` owns simulation updates, camera input, and world rendering, with
+  atomic scene drawing in `live/drawing/`;
 - `ui/` owns layout, controls, the driving HUD, visual style, and reusable
   widgets;
 - `mod.rs` wires those features into the Bevy app.

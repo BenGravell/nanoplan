@@ -115,25 +115,23 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
         DIM,
     );
 
-    for (older, newer) in friction.samples.iter().zip(friction.samples.iter().skip(1)) {
-        let age = ((friction.time - newer.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
+    for sample in &friction.samples {
+        let age = ((friction.time - sample.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
         let alpha = ((1.0 - age).powi(2) * 180.0) as u8;
-        let color = comfort_color(utilization(*newer));
-        painter.line_segment(
-            [plot_position(plot, *older), plot_position(plot, *newer)],
-            egui::Stroke::new(
-                2.0,
-                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
-            ),
+        let color = comfort_color(utilization(*sample));
+        painter.circle_filled(
+            plot_position(plot, *sample),
+            5.0,
+            egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
         );
     }
 
     let current = friction.current();
     let ball = plot_position(plot, current);
     let color = comfort_color(utilization(current));
-    painter.line_segment([center, ball], egui::Stroke::new(1.0, color));
-    painter.circle_filled(ball, 6.0, color);
-    painter.circle_stroke(ball, 6.0, egui::Stroke::new(1.0, TEXT));
+    painter.line_segment([center, ball], egui::Stroke::new(5.0, color));
+    painter.circle_filled(ball, 9.0, color);
+    painter.circle_stroke(ball, 9.0, egui::Stroke::new(1.0, TEXT));
     painter.text(
         egui::pos2(rect.center().x, plot.bottom() + 7.0),
         egui::Align2::CENTER_TOP,

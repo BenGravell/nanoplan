@@ -9,17 +9,17 @@ use super::{DT, UiState};
 use crate::viewer::ui::FrictionBox;
 
 mod camera;
-mod carpet;
-mod primitives;
+mod drawing;
 mod rendering;
 mod screen;
 
 pub(crate) use camera::{CameraState, CameraTarget, MAX_ZOOM, MIN_ZOOM, camera_input};
-pub(crate) use carpet::{EgoCarpetGizmos, configure as configure_carpet};
-use rendering::RenderSnapshot;
-pub(crate) use rendering::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, configure_diagnostics, draw,
+pub(crate) use drawing::{
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
+    configure_carpet, configure_diagnostics, configure_plan,
 };
+use rendering::RenderSnapshot;
+pub(crate) use rendering::draw;
 use screen::px;
 
 const MAX_ACTORS: usize = 12;
