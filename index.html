@@ -7,7 +7,16 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>nanoplan</title>
+    <meta name="theme-color" content="#ff6900" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="nanoplan" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <link data-trunk rel="rust" data-bin="nanoplan" data-wasm-opt="s" />
+    <link data-trunk rel="copy-file" href="manifest.webmanifest" />
+    <link data-trunk rel="copy-dir" href="assets/icons" />
     <style>
       html,
       body {
@@ -27,7 +36,35 @@
         outline: none;
         touch-action: none;
       }
+      #fullscreen {
+        position: fixed;
+        z-index: 1;
+        top: calc(env(safe-area-inset-top) + 8px);
+        right: calc(env(safe-area-inset-right) + 8px);
+        width: 44px;
+        height: 44px;
+        border: 0;
+        border-radius: 6px;
+        color: white;
+        background: #ff6900;
+        font: 24px sans-serif;
+      }
+      @media (display-mode: fullscreen), (display-mode: standalone) {
+        #fullscreen {
+          display: none;
+        }
+      }
     </style>
   </head>
-  <body></body>
+  <body>
+    <button id="fullscreen" aria-label="Enter full screen" title="Full screen">&#x26F6;</button>
+    <script>
+      const button = document.querySelector("#fullscreen");
+      button.addEventListener("click", () => document.documentElement.requestFullscreen());
+      document.addEventListener("fullscreenchange", () => {
+        button.hidden = Boolean(document.fullscreenElement);
+      });
+      if (!document.documentElement.requestFullscreen) button.hidden = true;
+    </script>
+  </body>
 </html>
