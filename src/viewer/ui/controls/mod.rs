@@ -27,8 +27,6 @@ pub(super) fn control_deck(
     active_tab: &mut ControlTab,
     compact: bool,
 ) {
-    super::style::brand_header(ui, compact);
-    ui.add_space(if compact { 4.0 } else { 12.0 });
     transport_controls(ui, state, live);
     ui.add_space(if compact { 6.0 } else { 9.0 });
 

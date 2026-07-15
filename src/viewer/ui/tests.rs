@@ -5,7 +5,7 @@ use egui_kittest::{Harness, kittest::Queryable};
 
 use super::controls::metrics::preview_metrics;
 use super::{
-    ControlTab, UiState, compact_layout, compact_rail_widths, configure, portrait_prompt,
+    ControlTab, UiState, compact_layout, compact_rail_widths, configure, landing, portrait_prompt,
     right_rail_width, viewer_layout,
 };
 use crate::planning::Latency;
@@ -41,9 +41,36 @@ impl Default for ViewerHarnessState {
 #[test]
 fn visualization_defaults_show_only_track_stations() {
     let state = UiState::default();
+    assert!(!state.started);
     assert!(state.show_stations);
     assert!(!state.show_centerline);
     assert!(!state.show_plan);
+}
+
+#[test]
+fn landing_starts_with_the_keyboard() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                let ctx = ui.ctx().clone();
+                if !state.configured {
+                    configure(&ctx);
+                    state.configured = true;
+                    ctx.request_repaint();
+                    return;
+                }
+                landing::show(ui, &mut state.ui.started);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run();
+
+    assert!(harness.query_by_label("NANOPLAN").is_some());
+    assert!(harness.query_by_label("▶  START DRIVING").is_some());
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(harness.state().ui.started);
 }
 
 #[test]
@@ -145,7 +172,6 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             )
         };
         for label in [
-            "NANOPLAN",
             "PAUSE",
             "↻ NEW TRACK",
             "PLANNER",
@@ -178,6 +204,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 );
             }
         }
+        assert!(harness.query_by_label("NANOPLAN").is_none());
         let rail = harness.get_by_label("Timeseries rail").rect();
         assert!(
             screen.contains_rect(rail) && rail.min.x >= (size.x - rail_width) * pixels_per_point,

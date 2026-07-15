@@ -6,6 +6,7 @@ use super::{UiState, is_portrait};
 
 mod controls;
 mod hud;
+mod landing;
 mod portrait_prompt;
 mod style;
 mod timeseries;
@@ -40,6 +41,10 @@ pub(crate) fn ui(
     if is_portrait(root.max_rect().width(), root.max_rect().height()) {
         portrait_prompt::show(&mut root);
         ctx.request_repaint();
+        return;
+    }
+    if !state.started {
+        landing::show(&mut root, &mut state.started);
         return;
     }
     viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);

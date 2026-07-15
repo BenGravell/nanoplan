@@ -20,6 +20,7 @@ pub(crate) enum TimeseriesGroup {
 
 #[derive(Resource)]
 pub(crate) struct UiState {
+    pub(crate) started: bool,
     pub(crate) track: usize,
     pub(crate) planner: PlannerKind,
     pub(crate) preview_s: f32,
@@ -36,6 +37,7 @@ pub(crate) struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            started: false,
             track: 0,
             planner: PlannerKind::BezierToppra,
             preview_s: 3.0,
@@ -93,13 +95,13 @@ pub(crate) fn run() {
                 live::draw,
             )
                 .chain()
-                .run_if(landscape),
+                .run_if(driving),
         )
         .run();
 }
 
-fn landscape(window: Single<&Window>) -> bool {
-    !is_portrait(window.width(), window.height())
+fn driving(window: Single<&Window>, state: Res<UiState>) -> bool {
+    state.started && !is_portrait(window.width(), window.height())
 }
 
 fn is_portrait(width: f32, height: f32) -> bool {
