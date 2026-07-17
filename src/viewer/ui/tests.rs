@@ -23,6 +23,7 @@ struct ViewerHarnessState {
     live: Live,
     tab: ControlTab,
     configured: bool,
+    exit_requested: bool,
 }
 
 impl Default for ViewerHarnessState {
@@ -34,6 +35,7 @@ impl Default for ViewerHarnessState {
             live,
             tab: ControlTab::Planner,
             configured: false,
+            exit_requested: false,
         }
     }
 }
@@ -60,24 +62,65 @@ fn landing_starts_with_the_keyboard() {
                     ctx.request_repaint();
                     return;
                 }
-                landing::show(ui, &mut state.ui.started);
+                state.exit_requested = landing::show(ui, &mut state.ui.started);
             },
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
 
-    assert!(harness.query_by_label("START DRIVING").is_some());
+    assert!(harness.query_by_label("Start").is_some());
     harness.key_press(egui::Key::Enter);
     harness.step();
     assert!(harness.state().ui.started);
 }
 
 #[test]
-fn landing_title_uses_the_1080p_reference_position() {
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+fn landing_exit_selection_requests_app_shutdown() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                let ctx = ui.ctx().clone();
+                if !state.configured {
+                    configure(&ctx);
+                    state.configured = true;
+                    ctx.request_repaint();
+                    return;
+                }
+                state.exit_requested = landing::show(ui, &mut state.ui.started);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    harness.get_by_label("Exit").click();
+    harness.step();
+    assert!(harness.state().exit_requested);
+}
+
+#[test]
+fn landing_title_uses_normalized_reference_coordinates() {
+    let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
     let title = landing::title_rect(screen);
-    assert_eq!(title.left_top(), egui::pos2(80.0, 160.0));
-    assert_eq!(title.width(), 760.0);
+    let reference_width = screen.height() * 16.0 / 9.0;
+    assert!(
+        ((title.left() - screen.left()) / reference_width - 0.041_666_668).abs() < f32::EPSILON
+    );
+    assert!(((title.top() - screen.top()) / screen.height() - 0.148_148_15).abs() < f32::EPSILON);
+    assert!((title.width() / reference_width - 0.395_833_34).abs() < f32::EPSILON);
+}
+
+#[test]
+fn landing_menu_uses_normalized_reference_coordinates() {
+    let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
+    let reference_width = screen.height() * 16.0 / 9.0;
+    let first = landing::menu_row_rect(screen, 0);
+    let second = landing::menu_row_rect(screen, 1);
+    assert!(
+        ((first.left() - screen.left()) / reference_width - 0.057_291_668).abs() < f32::EPSILON
+    );
+    assert!(((first.top() - screen.top()) / screen.height() - 0.324_074_06).abs() < f32::EPSILON);
+    assert!(((second.top() - first.top()) / screen.height() - 0.1).abs() < f32::EPSILON);
 }
 
 #[test]

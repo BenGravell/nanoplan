@@ -25,6 +25,7 @@ pub(crate) fn ui(
     mut live: NonSendMut<Live>,
     mut configured: Local<bool>,
     mut active_tab: Local<ControlTab>,
+    mut app_exit: MessageWriter<AppExit>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     if !*configured {
@@ -44,7 +45,9 @@ pub(crate) fn ui(
         return;
     }
     if !state.started {
-        landing::show(&mut root, &mut state.started);
+        if landing::show(&mut root, &mut state.started) {
+            app_exit.write(AppExit::Success);
+        }
         return;
     }
     viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);

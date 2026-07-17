@@ -1,65 +1,114 @@
 use bevy_egui::egui;
 
-use super::super::colors::{BLACK, HOVER, LANDING_BACKGROUND as BACKGROUND, ORANGE, WHITE};
-use super::style::caps_font;
+use super::super::colors::{ORANGE, WHITE};
 
-const BACKGROUND_ASPECT_RATIO: f32 = 2560.0 / 1440.0;
+const BACKGROUND_ASPECT_RATIO: f32 = 16.0 / 9.0;
 const TITLE_ASPECT_RATIO: f32 = 146.65262 / 23.909071;
+const MENU_ITEMS: [&str; 2] = ["Start", "Exit"];
+const MENU_INACTIVE: egui::Color32 = egui::Color32::from_rgb(171, 180, 193);
+const MENU_ROW_SPACING: f32 = 0.1;
 
-pub(super) fn show(root: &mut egui::Ui, started: &mut bool) {
-    let screen = root.max_rect();
-    let content_left = (screen.width() * 0.06).clamp(24.0, 96.0);
+pub(super) fn show(root: &mut egui::Ui, started: &mut bool) -> bool {
     background_graphics(root);
     title_graphic(root);
+    let exit_requested = start_menu(root, started);
     root.ctx()
         .request_repaint_after(std::time::Duration::from_millis(16));
+    exit_requested
+}
 
-    egui::Area::new("landing_menu".into())
-        .anchor(
+pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
+    egui::Rect::from_min_size(
+        normalized_pos(
+            screen,
+            0.057_291_668,
+            0.324_074_06 + index as f32 * MENU_ROW_SPACING,
+        ),
+        normalized_size(screen, 0.229_166_67, 0.064_814_81),
+    )
+}
+
+fn start_menu(root: &mut egui::Ui, started: &mut bool) -> bool {
+    let screen = root.max_rect();
+    let selection_id = egui::Id::new("landing_menu_selection");
+    let mut selected = root.data_mut(|data| data.get_temp::<usize>(selection_id).unwrap_or(0));
+
+    if root.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+        selected = (selected + 1) % MENU_ITEMS.len();
+    }
+    if root.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+        selected = (selected + MENU_ITEMS.len() - 1) % MENU_ITEMS.len();
+    }
+
+    let mut clicked = None;
+    for (index, label) in MENU_ITEMS.iter().enumerate() {
+        let response = root.interact(
+            menu_row_rect(screen, index),
+            root.make_persistent_id(("landing_menu_item", index)),
+            egui::Sense::click(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *label));
+        if response.hovered() {
+            selected = index;
+        }
+        if response.clicked() {
+            selected = index;
+            clicked = Some(index);
+        }
+    }
+
+    for (index, label) in MENU_ITEMS.iter().enumerate() {
+        let color = if index == selected {
+            ORANGE
+        } else {
+            MENU_INACTIVE
+        };
+        let row_y = 1.0 / 3.0 + index as f32 * MENU_ROW_SPACING;
+        let center_y = row_y + 0.020_370_37;
+        let painter = root.painter();
+        let text_rect = painter.text(
+            normalized_pos(screen, 0.080_729_164, center_y),
             egui::Align2::LEFT_CENTER,
-            egui::vec2(content_left, (screen.height() / 6.0).min(120.0)),
-        )
-        .show(root.ctx(), |ui| {
-            ui.set_width((screen.width() * 0.34).clamp(300.0, 440.0));
-            let response = egui::Frame::new()
-                .fill(BACKGROUND)
-                .inner_margin(egui::Margin::same(32))
-                .show(ui, |ui| {
-                    ui.scope(|ui| {
-                        let widgets = &mut ui.style_mut().visuals.widgets;
-                        widgets.inactive.bg_fill = ORANGE;
-                        widgets.inactive.weak_bg_fill = ORANGE;
-                        widgets.inactive.fg_stroke.color = WHITE;
-                        widgets.hovered.bg_fill = HOVER;
-                        widgets.hovered.weak_bg_fill = HOVER;
-                        widgets.hovered.fg_stroke.color = BLACK;
-                        ui.visuals_mut().override_text_color = None;
-                        ui.add_sized(
-                            [ui.available_width(), 52.0],
-                            egui::Button::new(
-                                egui::RichText::new("START DRIVING").font(caps_font(19.0)),
-                            )
-                            .corner_radius(0),
-                        )
-                    })
-                    .inner
-                })
-                .inner;
-            corner_brackets(
-                ui.painter(),
-                response.rect,
-                ui.input(|input| input.time) as f32,
-            );
-            if response.clicked() {
-                *started = true;
-            }
-        });
+            *label,
+            egui::FontId::new(
+                screen.height() * 0.044_444_446,
+                egui::FontFamily::Proportional,
+            ),
+            color,
+        );
+        painter.add(egui::Shape::line(
+            [
+                normalized_pos(screen, 0.063_541_666, center_y - 0.007_407_407_3),
+                normalized_pos(screen, 0.068_75, center_y),
+                normalized_pos(screen, 0.063_541_666, center_y + 0.007_407_407_3),
+            ]
+            .to_vec(),
+            egui::Stroke::new(screen.height() * 0.003_703_703_6, color),
+        ));
+        let leader_y = (text_rect.bottom() - screen.top()) / screen.height() + 0.003_703_703_6;
+        painter.add(egui::Shape::line(
+            [
+                normalized_pos(screen, 0.080_729_164, leader_y),
+                normalized_pos(screen, 0.271_875, leader_y),
+                normalized_pos(screen, 0.279_166_67, leader_y + 0.012_962_963),
+            ]
+            .to_vec(),
+            egui::Stroke::new(screen.height() * 0.001_851_851_8, color),
+        ));
+    }
 
-    if root
-        .input(|input| input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space))
-    {
+    let activate = clicked.or_else(|| {
+        root.input(|input| input.key_pressed(egui::Key::Enter))
+            .then_some(selected)
+    });
+    if activate == Some(0) {
         *started = true;
     }
+    if root.input(|input| input.key_pressed(egui::Key::Space)) {
+        *started = true;
+    }
+    root.data_mut(|data| data.insert_temp(selection_id, selected));
+    matches!(activate, Some(index) if index == MENU_ITEMS.len() - 1)
 }
 
 pub(super) fn background_rect(screen: egui::Rect, anchor: egui::Align2) -> egui::Rect {
@@ -93,10 +142,21 @@ fn background_graphics(ui: &egui::Ui) {
 }
 
 pub(super) fn title_rect(screen: egui::Rect) -> egui::Rect {
-    let scale = screen.height() / 1080.0;
+    let width = normalized_size(screen, 0.395_833_34, 0.0).x;
     egui::Rect::from_min_size(
-        screen.left_top() + egui::vec2(80.0, 160.0) * scale,
-        egui::vec2(760.0, 760.0 / TITLE_ASPECT_RATIO) * scale,
+        normalized_pos(screen, 0.041_666_668, 0.148_148_15),
+        egui::vec2(width, width / TITLE_ASPECT_RATIO),
+    )
+}
+
+fn normalized_pos(screen: egui::Rect, x: f32, y: f32) -> egui::Pos2 {
+    screen.left_top() + normalized_size(screen, x, y)
+}
+
+fn normalized_size(screen: egui::Rect, x: f32, y: f32) -> egui::Vec2 {
+    egui::vec2(
+        screen.height() * BACKGROUND_ASPECT_RATIO * x,
+        screen.height() * y,
     )
 }
 
@@ -135,41 +195,4 @@ pub(super) fn background_raster_size(
 ) -> egui::Vec2 {
     let max_side_in_points = max_texture_side as f32 / pixels_per_point;
     display_size * (max_side_in_points / display_size.max_elem()).min(1.0)
-}
-
-fn corner_brackets(painter: &egui::Painter, rect: egui::Rect, time: f32) {
-    let pulse = (time * 4.0).sin() * 0.5 + 0.5;
-    let rect = rect.expand(10.0 + pulse * 2.0);
-    let length = 12.0 + pulse * 4.0;
-    let color = egui::Color32::from_rgba_unmultiplied(
-        ORANGE.r(),
-        ORANGE.g(),
-        ORANGE.b(),
-        (170.0 + pulse * 85.0) as u8,
-    );
-    let stroke = egui::Stroke::new(3.0, color);
-    for points in [
-        vec![
-            egui::pos2(rect.left() + length, rect.top()),
-            rect.left_top(),
-            egui::pos2(rect.left(), rect.top() + length),
-        ],
-        vec![
-            egui::pos2(rect.right() - length, rect.top()),
-            rect.right_top(),
-            egui::pos2(rect.right(), rect.top() + length),
-        ],
-        vec![
-            egui::pos2(rect.left(), rect.bottom() - length),
-            rect.left_bottom(),
-            egui::pos2(rect.left() + length, rect.bottom()),
-        ],
-        vec![
-            egui::pos2(rect.right(), rect.bottom() - length),
-            rect.right_bottom(),
-            egui::pos2(rect.right() - length, rect.bottom()),
-        ],
-    ] {
-        painter.add(egui::Shape::line(points, stroke));
-    }
 }

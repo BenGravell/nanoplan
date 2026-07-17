@@ -9,7 +9,6 @@ pub(crate) const GREEN: egui::Color32 = egui::Color32::from_rgb(35, 150, 105);
 pub(crate) const PURPLE: egui::Color32 = egui::Color32::from_rgb(125, 90, 190);
 
 pub(crate) const WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
-pub(crate) const BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 pub(crate) const GREY: egui::Color32 = egui::Color32::from_rgb(147, 158, 156);
 
 // Functional colors
@@ -21,9 +20,6 @@ pub(crate) const PANEL: egui::Color32 = egui::Color32::from_rgb(250, 250, 246);
 pub(crate) const SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 252);
 pub(crate) const CONTROL: egui::Color32 = egui::Color32::from_rgb(232, 235, 229);
 pub(crate) const FAINT: egui::Color32 = egui::Color32::from_rgb(224, 229, 223);
-
-// Landing screen colors
-pub(crate) const LANDING_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 
 // Semantic colors
 pub(crate) const GOOD: egui::Color32 = BLUE;
