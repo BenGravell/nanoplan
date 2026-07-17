@@ -3,6 +3,7 @@ use bevy_egui::egui;
 use crate::viewer::colors::{CONTROL, FAINT, HOVER, ORANGE, PANEL, SURFACE, TEXT};
 
 pub(super) fn configure(ctx: &egui::Context) {
+    egui_extras::install_image_loaders(ctx);
     ctx.set_theme(egui::Theme::Light);
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(

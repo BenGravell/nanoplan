@@ -66,11 +66,41 @@ fn landing_starts_with_the_keyboard() {
         );
     harness.run_steps(2);
 
-    assert!(harness.query_by_label("NANOPLAN").is_some());
     assert!(harness.query_by_label("START DRIVING").is_some());
     harness.key_press(egui::Key::Enter);
     harness.step();
     assert!(harness.state().ui.started);
+}
+
+#[test]
+fn landing_title_uses_the_1080p_reference_position() {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+    let title = landing::title_rect(screen);
+    assert_eq!(title.left_top(), egui::pos2(80.0, 160.0));
+    assert_eq!(title.width(), 760.0);
+}
+
+#[test]
+fn landing_backgrounds_span_height_and_anchor_to_their_corners() {
+    let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
+    let bottom_right = landing::background_rect(screen, egui::Align2::RIGHT_BOTTOM);
+    let bottom_left = landing::background_rect(screen, egui::Align2::LEFT_BOTTOM);
+    let top_left = landing::background_rect(screen, egui::Align2::LEFT_TOP);
+
+    for background in [bottom_right, bottom_left, top_left] {
+        assert_eq!(background.height(), screen.height());
+        assert_eq!(background.width(), 1280.0);
+    }
+    assert_eq!(bottom_right.right_bottom(), screen.right_bottom());
+    assert_eq!(bottom_left.left_bottom(), screen.left_bottom());
+    assert_eq!(top_left.left_top(), screen.left_top());
+}
+
+#[test]
+fn landing_background_respects_the_gpu_texture_limit() {
+    let raster = landing::background_raster_size(egui::vec2(2155.0, 1212.0), 1.0, 2048);
+    assert_eq!(raster.x, 2048.0);
+    assert!(raster.y <= 2048.0);
 }
 
 #[test]
