@@ -138,7 +138,7 @@ pub(super) fn followed_camera_center(
 ) -> Vec2 {
     let up = Rot2::radians(camera.rotation) * Vec2::Y;
     let rear_extent =
-        CAR_FOOTPRINT.support_radius(ego.yaw, [up.x as f64, up.y as f64]) as f32 * PX_PER_M;
+        CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
     let ego_y = -(viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX) / camera.zoom + rear_extent;
     camera.center + up * ((px(&ego) - camera.center).dot(up) - ego_y)
 }

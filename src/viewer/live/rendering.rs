@@ -115,6 +115,7 @@ pub(crate) fn draw(
     vehicles::draw(
         &mut gizmos,
         &ego,
+        world.actuation().curvature,
         &world.actors,
         &live.previous.actors,
         render_alpha,

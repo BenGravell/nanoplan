@@ -190,6 +190,21 @@ pub(crate) fn collide_with_barriers(
     state: State,
     barriers: impl IntoIterator<Item = Barrier>,
 ) -> State {
+    let prev_center = center_state(prev);
+    let state_center = center_state(state);
+    let result = collide_centers_with_barriers(prev_center, state_center, barriers);
+    if result == state_center {
+        state
+    } else {
+        rear_state(result)
+    }
+}
+
+fn collide_centers_with_barriers(
+    prev: State,
+    state: State,
+    barriers: impl IntoIterator<Item = Barrier>,
+) -> State {
     let barriers: Vec<_> = barriers.into_iter().collect();
     if let Some((b, t, p, n)) = barriers
         .iter()
@@ -217,7 +232,8 @@ pub(crate) fn collide_with_barriers(
 
 /// Clamp the ego to the road sides and reflect its outward velocity component.
 pub(crate) fn collide_with_road_barriers(prev: State, state: State, road: &Road) -> State {
-    let Some(i) = closest_centerline_segment(&road.centerline, state.position()) else {
+    let Some(i) = closest_centerline_segment(&road.centerline, center_state(state).position())
+    else {
         return state;
     };
     let start = 2 * i.saturating_sub(1);
@@ -226,6 +242,19 @@ pub(crate) fn collide_with_road_barriers(prev: State, state: State, road: &Road)
         return state;
     };
     collide_with_barriers(prev, state, barriers.iter().copied())
+}
+
+fn center_state(mut state: State) -> State {
+    let center = EGO_FOOTPRINT.center(state.pose());
+    state.x = center.x;
+    state.y = center.y;
+    state
+}
+
+fn rear_state(mut state: State) -> State {
+    state.x -= 0.5 * EGO_FOOTPRINT.length * state.yaw.cos();
+    state.y -= 0.5 * EGO_FOOTPRINT.length * state.yaw.sin();
+    state
 }
 
 pub(crate) fn collides_with_road_barrier(state: State, road: &Road) -> bool {
@@ -278,8 +307,9 @@ mod tests {
             &road,
         );
 
-        let support = EGO_FOOTPRINT.support_radius(prev.yaw, [0.0, 1.0]);
-        assert_eq!((hit.x, hit.y), (12.0, road.half_width - support));
+        assert!(
+            (hit.y + EGO_FOOTPRINT.support(hit.yaw, [0.0, 1.0]) - road.half_width).abs() < 1e-12
+        );
         assert!((hit.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
         assert!((hit.yaw + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
     }
@@ -310,20 +340,19 @@ mod tests {
         let wall = Barrier::new([0.0, 0.0], [100.0, 0.0], [0.0, 1.0]);
         let inside = State {
             x: 12.0,
-            y: -3.0,
+            y: -6.0,
             yaw: std::f64::consts::FRAC_PI_2,
             speed: 10.0,
         };
         assert_eq!(collide_with_barriers(inside, inside, [wall]), inside);
 
         let hit = collide_with_barriers(inside, State { y: 1.0, ..inside }, [wall]);
-        let support = EGO_FOOTPRINT.support_radius(inside.yaw, [0.0, 1.0]);
-        assert_eq!((hit.x, hit.y), (12.0, -support));
+        assert_eq!((hit.x, hit.y), (12.0, 0.0));
         assert!((hit.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
 
         let reverse = collide_with_barriers(
             State {
-                y: 3.0,
+                y: 6.0,
                 yaw: -std::f64::consts::FRAC_PI_2,
                 ..inside
             },
@@ -334,7 +363,7 @@ mod tests {
             },
             [wall],
         );
-        assert_eq!((reverse.x, reverse.y), (12.0, support));
+        assert_eq!((reverse.x, reverse.y), (12.0, 0.0));
         assert!((reverse.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
         assert!((reverse.yaw - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
     }
@@ -351,7 +380,7 @@ mod tests {
     fn rectangle_cannot_clip_past_a_barrier_endpoint() {
         let wall = Barrier::new([0.0, 0.0], [10.0, 0.0], [0.0, 1.0]);
         let overlapping = State {
-            x: 11.0,
+            x: 10.0,
             y: -0.5,
             yaw: std::f64::consts::FRAC_PI_4,
             speed: 5.0,
@@ -360,9 +389,6 @@ mod tests {
         let hit = collide_with_barriers(overlapping, overlapping, [wall]);
 
         assert_ne!(hit, overlapping);
-        assert_eq!(
-            hit.y,
-            -EGO_FOOTPRINT.support_radius(overlapping.yaw, [0.0, 1.0])
-        );
+        assert_eq!(collide_with_barriers(hit, hit, [wall]), hit);
     }
 }

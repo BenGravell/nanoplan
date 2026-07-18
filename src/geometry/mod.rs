@@ -36,11 +36,13 @@ pub(crate) struct Overlap {
 
 /// Minimum translation vector for two rendered footprints, if they overlap.
 pub(crate) fn overlap_mtv(
-    a: Pose,
+    a_rear: Pose,
     a_footprint: Footprint,
-    b: Pose,
+    b_rear: Pose,
     b_footprint: Footprint,
 ) -> Option<Overlap> {
+    let a = a_footprint.center(a_rear);
+    let b = b_footprint.center(b_rear);
     let delta = [a.x - b.x, a.y - b.y];
     let mut best = Overlap {
         normal: [1.0, 0.0],
@@ -99,5 +101,14 @@ mod tests {
             Pose::new(gap - 0.01, 0.0, 0.0),
             CAR_FOOTPRINT
         ));
+    }
+
+    #[test]
+    fn pose_is_the_rear_of_the_footprint() {
+        let rear = Pose::new(2.0, 3.0, std::f64::consts::FRAC_PI_2);
+        let center = CAR_FOOTPRINT.center(rear);
+
+        assert!((center.x - 2.0).abs() < 1e-12);
+        assert!((center.y - (3.0 + CAR_FOOTPRINT.length / 2.0)).abs() < 1e-12);
     }
 }

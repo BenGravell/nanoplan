@@ -328,9 +328,13 @@ mod tests {
 
         world.tick_with_latency(None);
 
-        let support = EGO_FOOTPRINT.support_radius(world.ego().yaw, [0.0, 1.0]);
-        assert!(world.ego().y <= world.road.half_width - support + 1e-9);
-        assert!(world.ego().yaw < 0.0);
+        let support = EGO_FOOTPRINT.support(world.ego().yaw, [0.0, 1.0]);
+        assert!(
+            world.ego().y <= world.road.half_width - support + 1e-9,
+            "ego {:?}, support {support}",
+            world.ego()
+        );
+        assert!(world.ego().yaw < 0.0, "ego {:?}", world.ego());
     }
 
     #[test]

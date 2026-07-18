@@ -1,7 +1,9 @@
 //! Cubic Bezier lane return with a TOPP-RA speed parameterization.
 
 use crate::common::math::wrap_angle;
+use crate::geometry::barrier::collide_with_road_barriers;
 use crate::geometry::{CAR_COLLISION_RADIUS_M, EGO_COLLISION_RADIUS_M};
+use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
 use crate::simulation::curvature_limit;
@@ -74,6 +76,29 @@ impl Planner for BezierToppraPlanner {
                 speed2 = toppra_profile(ego.speed.max(0.0).powi(2), ds, &max_speed2);
             }
 
+            // Feed the first full-footprint road collision back into the
+            // speed envelope until the complete rollout is feasible.
+            for _ in 0..GRID_STEPS {
+                let controls = extract_controls(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
+                let mut state = ego;
+                let mut distance = 0.0;
+                let collision = controls.into_iter().find_map(|u| {
+                    let prev = state;
+                    distance += state.speed.max(0.0) * ctx.road.dt;
+                    state = world_step(state, u, ctx.road.dt);
+                    (collide_with_road_barriers(prev, state, ctx.road) != state).then_some(distance)
+                });
+                let Some(distance) = collision else { break };
+                let collision_index = ((distance / ds) as usize)
+                    .saturating_sub(1)
+                    .min(GRID_STEPS - 1);
+                let Some(stop) = (0..=collision_index).rev().find(|&i| max_speed2[i] != 0.0) else {
+                    break;
+                };
+                max_speed2[stop] = 0.0;
+                speed2 = toppra_profile(ego.speed.max(0.0).powi(2), ds, &max_speed2);
+            }
+
             speed2
         });
         ctx.time("extract", || {
@@ -138,10 +163,12 @@ fn extract_controls(
         .map(|_| {
             let i = ((distance / ds) as usize).min(speed2.len() - 2);
             let path_accel = (speed2[i + 1] - speed2[i]) / (2.0 * ds);
+            let feedback = centerline_feedback(path, &state, state.speed);
             let u = Control {
                 acceleration: (path_accel + longitudinal_resistance_accel(state.speed))
                     .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
-                curvature: planned_curvature(b, path, s0, lookahead, distance)
+                curvature: (planned_curvature(b, path, s0, lookahead, distance)
+                    + feedback.curvature)
                     .clamp(-curvature_limit(state.speed), curvature_limit(state.speed)),
             };
             distance += state.speed.max(0.0) * ctx.road.dt;
@@ -298,6 +325,53 @@ mod tests {
                 !footprints_overlap(ego.pose(), EGO_FOOTPRINT, lead.pose(), CAR_FOOTPRINT),
                 "contact at tick {tick}: ego {ego:?}, lead {lead:?}"
             );
+        }
+    }
+
+    #[test]
+    fn generated_track_predictions_stay_inside_road_for_full_horizon() {
+        use crate::geometry::barrier::collides_with_road_barrier;
+        use crate::simulation::MAX_TERMINAL_SPEED_MPS;
+        use crate::track::{Road, Track};
+
+        for seed in 0..10 {
+            let track = Track::new(seed);
+            let lap = track.lap_length().unwrap();
+            for n in 0..20 {
+                let progress = lap * n as f64 / 20.0;
+                let road = Road::new(
+                    track.centerline(progress - 50.0, progress + 250.0, 15.0),
+                    *MAX_TERMINAL_SPEED_MPS,
+                    track.half_width(progress),
+                    0.1,
+                );
+                let (p, yaw) = track.pose(progress);
+                let ego = State {
+                    x: p[0],
+                    y: p[1],
+                    yaw,
+                    speed: 20.0,
+                };
+                let ctx = Context {
+                    road: &road,
+                    actors: &[],
+                    horizon: 100,
+                    latency: None,
+                    diagnostics: None,
+                };
+                let path = Path::new(&road.centerline);
+                let mut state = ego;
+                for (tick, control) in BezierToppraPlanner.plan(ego, &ctx).into_iter().enumerate() {
+                    state = world_step(state, control, road.dt);
+                    let (s, d) = path.project(state.position());
+                    assert!(
+                        !collides_with_road_barrier(state, &road),
+                        "seed {seed} progress {progress} width {} tick {tick} d {d} heading_err {} control {control:?} state {state:?}",
+                        road.half_width,
+                        wrap_angle(state.yaw - path.pose_at(s).1)
+                    );
+                }
+            }
         }
     }
 }

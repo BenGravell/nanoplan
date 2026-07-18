@@ -96,11 +96,7 @@ fn carpet_bands(footprints: &[TimedState]) -> Vec<TimedState> {
         return vec![];
     };
     let mut centers = Vec::new();
-    let half_length = EGO_FOOTPRINT.length * 0.5;
-    let extensions = (half_length / BAND_M).ceil() as usize;
-    for i in (1..=extensions).rev() {
-        centers.push(offset_state(first, -(i as f64 * BAND_M).min(half_length)));
-    }
+    let extensions = (EGO_FOOTPRINT.length / BAND_M).ceil() as usize;
     centers.push(first);
     let mut traversed = 0.0;
     let mut next_band = BAND_M;
@@ -121,7 +117,10 @@ fn carpet_bands(footprints: &[TimedState]) -> Vec<TimedState> {
         centers.push(last);
     }
     for i in 1..=extensions {
-        centers.push(offset_state(last, (i as f64 * BAND_M).min(half_length)));
+        centers.push(offset_state(
+            last,
+            (i as f64 * BAND_M).min(EGO_FOOTPRINT.length),
+        ));
     }
 
     centers
@@ -149,7 +148,8 @@ fn mean_occupancy_time(point: State, footprints: &[TimedState]) -> Option<f64> {
         let s = sample.state.yaw.sin();
         let longitudinal = dx * c + dy * s;
         let lateral = -dx * s + dy * c;
-        if longitudinal.abs() <= EGO_FOOTPRINT.length * 0.5 + FOOTPRINT_EPSILON_M
+        if longitudinal >= -FOOTPRINT_EPSILON_M
+            && longitudinal <= EGO_FOOTPRINT.length + FOOTPRINT_EPSILON_M
             && lateral.abs() <= EGO_FOOTPRINT.width * 0.5 + FOOTPRINT_EPSILON_M
         {
             total += sample.time;
@@ -222,7 +222,7 @@ mod tests {
             yaw: 0.7,
             ..Default::default()
         };
-        let nose = offset_state(TimedState { state, time: 0.0 }, EGO_FOOTPRINT.length * 0.5);
+        let nose = offset_state(TimedState { state, time: 0.0 }, EGO_FOOTPRINT.length);
 
         assert_eq!(
             mean_occupancy_time(nose.state, &[TimedState { state, time: 0.0 }]),

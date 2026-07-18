@@ -33,7 +33,7 @@ impl Pose {
     }
 }
 
-/// Vehicle state: pose and speed.
+/// Vehicle state at the rear midpoint: pose and speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct State {
     pub(crate) x: f64,

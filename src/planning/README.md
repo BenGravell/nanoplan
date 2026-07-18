@@ -416,7 +416,9 @@ special case of [TOPP-RA](https://arxiv.org/abs/1707.07239): squared path
 speed is propagated over a station grid by a backward controllable-set pass
 and a maximum-acceleration forward pass. Commanded longitudinal acceleration,
 geometric curvature, lateral grip, target speed, and predicted actor clearance
-are hard bounds.
+are hard bounds. Extraction adds the shared centerline feedback to the
+geometric curvature, then rolls out the full vehicle footprint and tightens
+the speed envelope until it stays between the road barriers.
 
 **Seams**: `route` (build the `Path`, project the ego), `bezier_fit` (compute
 the four Bezier control points), `optimize` (TOPP-RA backward/forward passes

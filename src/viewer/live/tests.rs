@@ -69,7 +69,7 @@ fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
         let up = Rot2::radians(camera.rotation) * Vec2::Y;
         let ego_in_view = (screen::px(&ego) - center).dot(up);
         let rear_extent =
-            CAR_FOOTPRINT.support_radius(ego.yaw, [up.x as f64, up.y as f64]) as f32 * PX_PER_M;
+            CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
         let rear_screen_y = (ego_in_view - rear_extent) * zoom;
 
         assert!((rear_screen_y + viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX).abs() < 1e-3);

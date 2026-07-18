@@ -1,4 +1,5 @@
 use crate::common::measure::dot;
+use crate::simulation::Pose;
 
 /// Rectangular footprint dimensions in meters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -10,6 +11,23 @@ pub(crate) struct Footprint {
 impl Footprint {
     pub(crate) const fn new(length: f64, width: f64) -> Self {
         Self { length, width }
+    }
+
+    /// Geometric center for a pose whose position is the rear of the vehicle.
+    pub(crate) fn center(self, pose: Pose) -> Pose {
+        Pose::new(
+            pose.x + 0.5 * self.length * pose.yaw.cos(),
+            pose.y + 0.5 * self.length * pose.yaw.sin(),
+            pose.yaw,
+        )
+    }
+
+    /// Furthest extent from the rear reference point along a world-space axis.
+    pub(crate) fn support(self, yaw: f64, axis: [f64; 2]) -> f64 {
+        let n = axis[0].hypot(axis[1]).max(1e-9);
+        let axis = [axis[0] / n, axis[1] / n];
+        let center = 0.5 * self.length * (axis[0] * yaw.cos() + axis[1] * yaw.sin());
+        center + self.support_radius(yaw, axis)
     }
 
     /// Half-extent of this rectangle along a world-space axis.

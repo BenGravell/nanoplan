@@ -43,7 +43,7 @@ mod tests {
     fn actor_collision_separates_rendered_footprints() {
         let actor = State::default();
         let ego = State {
-            x: 4.0,
+            x: 9.0,
             speed: 5.0,
             yaw: std::f64::consts::PI,
             ..Default::default()
