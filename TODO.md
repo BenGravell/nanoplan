@@ -19,6 +19,42 @@ Taxonomy of planners
 - Tree search (RRT)
 - Local optimization (iLQR)
 
+--
+https://github.com/BenGravell/nanoplan/blob/main/src/prediction.rs
+Notion of lane and lane association are irrelevant on a race track. Remove lane association logic.
+
+Prediction model should assume that actors will initially follow the track at the actors current lateral offset from centerline, then return to track centerline over time.
+Basically use a Frenet motion decomposition.
+Longitudinal motion: maintain current speed
+Lateral motion: smooth return to centerline
+
+--
+Focus on getting planners performing well when no other actors are present.
+We should see racelines (setting up outside of a corner and hitting the apex of the turn) emerge naturally. 
+
+
+--
+Add options for the non- ego racers.
+1. Slider for the count. Should range from zero to eight.
+2. Planner to use for actors.
+3. Personality characteristics. 
+  - Assertiveness - progress weight
+  - Recklessness - safety weight
+
+
+--
+Ego and actors have their centerpoint at xy state, but it should be at the rear of the vehicle consistent with the kinematic bicycle model dynamics - x and y rate are proportional to speed times cos, sin of heading, which corresponds to rear of vehicle.
+
+
+--
+Render the tires of each vehicle.
+Render them as small rectangles at the corners of the body rectangle.
+Center each tire on the body rectangle corner points.
+Rear tires are locked to the body frame.
+Front tires are the steering tires, and their angle relative to the body should be set by the curvature control action, using the relation
+tan(delta) = curvature x wheelbase
+where delta is the angle of wheel relative to body
+
 ## bezier+TOPP-RA planner
 
 Fix: Why does it fail to plan inside the road boundaries over the entire prediction horizon?
