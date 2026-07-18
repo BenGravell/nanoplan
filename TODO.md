@@ -62,32 +62,6 @@ This works for static obstacles.
 ## UX
 
 --
-Start menu
-Put all shaded rectangle around the buttons on hover, and also on selection.
-
-On selection, wiat just a short moment, perhaps 200ms, before proceeding, so that we get a visual indicator the button was pushed. Add an additional splash animation around the button to show it was selected.
-
---
-Enforce minimum screen width and aspect ratio such that corner bkgd graphics never collide. add unit tests for that.
-
---
-Exit button for mobile app needs to close app, hook into android and apple sys
-
---
-Color the non-drivable area slightly darker grey than the road.
-
---
-mobile controls
-pinch to zoom
-
---
-start the app fullscreen, both on mobile and desktop.
-
---
-consider replacing the timeseries charts with a selector for coloring the ego carpet according to signals or metrics.
-more fun and intuitive, and yields back space in the right rail.
-
---
 ego carpet
 rendering issues
 1. flickering of one box about 4 boxes from the end
