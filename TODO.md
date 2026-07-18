@@ -1,7 +1,7 @@
 # TODO
 
 --
-Factor out the procedurally track generator to a separate repo and crate.
+Factor out the procedural track generator to a separate repo and crate.
 
 Factor out the TUM racetrack database loader to a separate repo and crate.
 
@@ -19,13 +19,19 @@ Taxonomy of planners
 - Tree search (RRT)
 - Local optimization (iLQR)
 
+## basic planner
 
 Fix the basic planners. Why do they fail to plan inside the road boundaries over the entire prediction horizon?
 
+## Actor planning
 
 Fix the actors. They should run a basic planner instead of using magic unphysical motion.
 
+## collision physics
+
 Fix the collision physics system. Actors and ego should bounce off each other, two way collisions. Treat every actor including ego as equal first class citizens in terms of collision physics. Road barriers are perfectly static and do not move, infinite inertia. 
+
+## guidance mode
 
 Add guidance mode, human steers target for planner
 
@@ -57,15 +63,7 @@ Generated tracks sometimes intersect themselves. Not just a road width thing, bu
 - Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
 This works for static obstacles.
 
-
-## road model
-
-https://github.com/BenGravell/nanoplan/tree/main/src/track
-
-Save/check-in the trained model in repo.
-
 ## UX
-
 
 --
 Start menu
@@ -81,7 +79,6 @@ Enforce minimum screen width and aspect ratio such that corner bkgd graphics nev
 Exit button for mobile app needs to close app, hook into android and apple sys
 
 --
-
 Color the drivable area slightly darker grey than the background.
 
 --
@@ -92,7 +89,14 @@ pinch to zoom
 start the app fullscreen, both on mobile and desktop.
 
 --
-consider replacing the timeseries charts with a selector for coloring the ego carpet according to signals or metrics. more fun and intuitive, and yields back space in the right rail.
+consider replacing the timeseries charts with a selector for coloring the ego carpet according to signals or metrics.
+more fun and intuitive, and yields back space in the right rail.
+
+--
+ego carpet
+rendering issues
+1. flickering of one box about 4 boxes from the end
+2. patches are not the correct thickness on mobile
 
 --
 Show the predicted future poses of actors in the viewer.
@@ -106,7 +110,7 @@ Display the favicon on the website app ( browser tab), both local and cloud depl
 Use a combination of AI generation and open source iconography according to Best design principles a la Allan Peters.
 
 Symbology:
-Trajectory tree: two levels of hierarchy of branching, very thick edge weights, inside a steering wheel toncreate a disk lockup.
+steering wheel with 45 degree chamfer corners, in a square lockup.
 
 --
 Add timescrubbers for freezing simulation and replaying past.
