@@ -3,7 +3,7 @@
 use std::sync::{Arc, OnceLock};
 
 use super::circuit::Circuit;
-use super::model::{TrackModel, is_simple};
+use super::model::TrackModel;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TrackInfo {
@@ -164,14 +164,10 @@ pub(super) fn install_track_data(data: &[String]) -> Result<(), String> {
         .map(|(csv, track)| {
             Circuit::parse(csv)
                 .and_then(|circuit| {
-                    let points = circuit
-                        .samples
-                        .iter()
-                        .map(|sample| sample.point)
-                        .collect::<Vec<_>>();
-                    is_simple(&points)
+                    circuit
+                        .is_simple()
                         .then_some(circuit)
-                        .ok_or_else(|| "centerline intersects itself".to_owned())
+                        .ok_or_else(|| "road intersects itself".to_owned())
                 })
                 .map(Arc::new)
                 .map_err(|error| format!("{}: {error}", track.id))

@@ -9,6 +9,7 @@ mod road;
 mod track;
 
 pub(crate) use catalog::TRACK_CATALOG;
+pub(crate) use model::road_edges;
 pub(crate) use path::Path;
 pub(crate) use road::Road;
 pub(crate) use track::{GENERATED_TRACK_NAME, Track};

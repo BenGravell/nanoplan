@@ -1,6 +1,8 @@
 //! Closed-circuit samples, parsing, interpolation, and projection.
 
-use super::model::{GeneratedTrack, SAMPLE_COUNT, TrainingTrack};
+use super::model::{
+    GeneratedTrack, SAMPLE_COUNT, TrainingTrack, limit_widths_for_curvature, road_is_simple,
+};
 use crate::common::measure::dist;
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +51,13 @@ impl Circuit {
         if !circuit.length.is_finite() || circuit.length <= 0.0 {
             return Err("track length must be finite and positive".to_owned());
         }
+        if circuit
+            .samples
+            .iter()
+            .any(|sample| sample.right <= 0.0 || sample.left <= 0.0)
+        {
+            return Err("track curvature is too tight for a positive width".to_owned());
+        }
         Ok(circuit)
     }
 
@@ -64,7 +73,21 @@ impl Circuit {
         )
     }
 
-    fn from_samples(samples: Vec<Sample>) -> Self {
+    fn from_samples(mut samples: Vec<Sample>) -> Self {
+        let points = samples
+            .iter()
+            .map(|sample| sample.point)
+            .collect::<Vec<_>>();
+        let mut right = samples
+            .iter()
+            .map(|sample| sample.right)
+            .collect::<Vec<_>>();
+        let mut left = samples.iter().map(|sample| sample.left).collect::<Vec<_>>();
+        limit_widths_for_curvature(&points, &mut right, &mut left);
+        for ((sample, right), left) in samples.iter_mut().zip(right).zip(left) {
+            sample.right = right;
+            sample.left = left;
+        }
         let mut distance = vec![0.0];
         for pair in samples.windows(2) {
             distance.push(distance.last().unwrap() + dist(pair[0].point, pair[1].point));
@@ -145,5 +168,49 @@ impl Circuit {
             }
         }
         best.0 + ((hint - best.0) / self.length).round() * self.length
+    }
+
+    pub(super) fn is_simple(&self) -> bool {
+        road_is_simple(
+            &self
+                .samples
+                .iter()
+                .map(|sample| sample.point)
+                .collect::<Vec<_>>(),
+            &self
+                .samples
+                .iter()
+                .map(|sample| sample.right)
+                .collect::<Vec<_>>(),
+            &self
+                .samples
+                .iter()
+                .map(|sample| sample.left)
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circuit_construction_limits_catalog_widths_for_curvature() {
+        let samples = (0..8)
+            .map(|i| {
+                let angle = std::f64::consts::TAU * i as f64 / 8.0;
+                Sample {
+                    point: [10.0 * angle.cos(), 10.0 * angle.sin()],
+                    right: 20.0,
+                    left: 20.0,
+                }
+            })
+            .collect();
+
+        let circuit = Circuit::from_samples(samples);
+
+        assert!(circuit.samples.iter().all(|sample| sample.right == 20.0));
+        assert!(circuit.samples.iter().all(|sample| sample.left < 10.0));
     }
 }

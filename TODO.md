@@ -35,28 +35,11 @@ Fix the collision physics system. Actors and ego should bounce off each other, t
 
 Add guidance mode, human steers target for planner
 
-
-
 ## planning horizon
 
 planning horizon might be too long, seems to cause bad behaviors like flickering and slowdown.
 
 need to handle progress rewards somehow elegantly so that we encourage short-term acceleration without becoming too myopic and failing to reason about and anticipate corners and overtake maneuvers 
-
-
-
-## road geometry - width vs curvature to avoid self intersection
-
-Handle road widths that are too wide for curvature in a robust way. Must avoid self clipping of road geometry.
-
-Limit local road width by the local radius of curvature on either side of the centerline, plus some small extra buffer to avoid degenerate near zero inner radius of road.
-
-Use menger curvature to approximate radius of curvature from xy positions of centerline.
-
-## road geometry - self intersection
-
-Generated tracks sometimes intersect themselves. Not just a road width thing, but the centerline itself intersects. Road width also needs to be considered, i.e. actually materialize the full road geometry and check for self intersections of the full width road throughout the entire course. 
-
 
 ## Cost map
 
@@ -79,7 +62,7 @@ Enforce minimum screen width and aspect ratio such that corner bkgd graphics nev
 Exit button for mobile app needs to close app, hook into android and apple sys
 
 --
-Color the drivable area slightly darker grey than the background.
+Color the non-drivable area slightly darker grey than the road.
 
 --
 mobile controls

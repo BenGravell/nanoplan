@@ -2,11 +2,13 @@
 
 pub(crate) mod barrier;
 mod footprint;
+mod polygon;
 
 use crate::common::measure::dot;
 use crate::simulation::{Pose, State};
 
 pub(crate) use footprint::Footprint;
+pub(crate) use polygon::{polygons_overlap, segments_intersect};
 
 /// Representative passenger-car footprint.
 pub(crate) const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);

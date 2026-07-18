@@ -3,12 +3,15 @@
 use std::f64::consts::TAU;
 
 use crate::common::rng::Rng;
+use crate::geometry::{polygons_overlap, segments_intersect};
 use serde::{Deserialize, Serialize};
 
 use super::loader::{REVISION, SOURCE};
 
 pub(crate) const SAMPLE_COUNT: usize = 256;
 const MAX_ATTEMPTS: usize = 64;
+const CURVATURE_WIDTH_BUFFER_M: f64 = 0.25;
+const MIN_GENERATED_HALF_WIDTH_M: f64 = 2.5;
 const COEFFICIENT_COUNT: usize = SAMPLE_COUNT / 2 + 1;
 const MODEL: &str = include_str!("trained_model.json");
 
@@ -152,9 +155,15 @@ impl TrackModel {
             let Some(points) = close_curve(&mut turning, length) else {
                 continue;
             };
-            let right = reconstruct(&profile.right, &phases);
-            let left = reconstruct(&profile.left, &phases);
-            if right.iter().chain(&left).all(|width| *width >= 2.5) && is_simple(&points) {
+            let mut right = reconstruct(&profile.right, &phases);
+            let mut left = reconstruct(&profile.left, &phases);
+            limit_widths_for_curvature(&points, &mut right, &mut left);
+            if right
+                .iter()
+                .chain(&left)
+                .all(|width| *width >= MIN_GENERATED_HALF_WIDTH_M)
+                && road_is_simple(&points, &right, &left)
+            {
                 return Some(GeneratedTrack {
                     points: centered(points),
                     right,
@@ -179,6 +188,17 @@ fn signed_curvature(points: &[[f64; 2]]) -> Vec<f64> {
             2.0 * cross / (ab * bc * ac).max(1e-9)
         })
         .collect()
+}
+
+pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64], left: &mut [f64]) {
+    for ((curvature, right), left) in signed_curvature(points).into_iter().zip(right).zip(left) {
+        let inner_limit = 1.0 / curvature.abs().max(1e-9) - CURVATURE_WIDTH_BUFFER_M;
+        if curvature > 0.0 {
+            *left = left.min(inner_limit);
+        } else if curvature < 0.0 {
+            *right = right.min(inner_limit);
+        }
+    }
 }
 
 fn spectrum(values: &[f64]) -> Vec<Coeff> {
@@ -331,16 +351,79 @@ pub(crate) fn is_simple(points: &[[f64; 2]]) -> bool {
     true
 }
 
-fn segments_intersect(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
-    let cross = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
-        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+pub(super) fn road_is_simple(points: &[[f64; 2]], right: &[f64], left: &[f64]) -> bool {
+    if !is_simple(points) || points.len() != right.len() || points.len() != left.len() {
+        return false;
+    }
+    let n = points.len();
+    let Some(strips) = road_edges(points, right, left, true) else {
+        return false;
     };
-    a[0].max(b[0]) >= c[0].min(d[0])
-        && c[0].max(d[0]) >= a[0].min(b[0])
-        && a[1].max(b[1]) >= c[1].min(d[1])
-        && c[1].max(d[1]) >= a[1].min(b[1])
-        && cross(a, b, c) * cross(a, b, d) <= 0.0
-        && cross(c, d, a) * cross(c, d, b) <= 0.0
+    let quads = (0..n)
+        .map(|i| {
+            let next = (i + 1) % n;
+            [strips[i].0, strips[next].0, strips[next].1, strips[i].1]
+        })
+        .collect::<Vec<_>>();
+    quads.iter().all(|quad| is_simple(quad))
+        && (0..n).all(|i| {
+            (i + 1..n).all(|j| {
+                j == i + 1 || (i == 0 && j == n - 1) || !polygons_overlap(&quads[i], &quads[j])
+            })
+        })
+}
+
+pub(crate) fn road_edges(
+    points: &[[f64; 2]],
+    right: &[f64],
+    left: &[f64],
+    closed: bool,
+) -> Option<Vec<([f64; 2], [f64; 2])>> {
+    if points.len() != right.len() || points.len() != left.len() || points.len() < 2 {
+        return None;
+    }
+    let segment_count = if closed {
+        points.len()
+    } else {
+        points.len() - 1
+    };
+    let normals = (0..segment_count)
+        .map(|i| {
+            let next = (i + 1) % points.len();
+            let tangent = [
+                points[next][0] - points[i][0],
+                points[next][1] - points[i][1],
+            ];
+            let length = tangent[0].hypot(tangent[1]);
+            (length >= 1e-9).then_some([-tangent[1] / length, tangent[0] / length])
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (0..points.len())
+        .map(|i| {
+            let (miter, denominator) = if !closed && i == 0 {
+                (normals[0], 1.0)
+            } else if !closed && i == points.len() - 1 {
+                (normals[i - 1], 1.0)
+            } else {
+                let previous = normals[(i + normals.len() - 1) % normals.len()];
+                let next = normals[i % normals.len()];
+                (
+                    [previous[0] + next[0], previous[1] + next[1]],
+                    1.0 + previous[0] * next[0] + previous[1] * next[1],
+                )
+            };
+            (denominator > 1e-9).then_some((
+                [
+                    points[i][0] - right[i] * miter[0] / denominator,
+                    points[i][1] - right[i] * miter[1] / denominator,
+                ],
+                [
+                    points[i][0] + left[i] * miter[0] / denominator,
+                    points[i][1] + left[i] * miter[1] / denominator,
+                ],
+            ))
+        })
+        .collect()
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -355,7 +438,10 @@ mod tests {
     fn bundled_model_is_valid() {
         let model = TrackModel::pretrained();
         assert_eq!(model.profiles.len(), 24);
-        assert!(model.generate(1).is_some());
+        for seed in 0..32 {
+            let track = model.generate(seed).unwrap();
+            assert!(road_is_simple(&track.points, &track.right, &track.left));
+        }
         assert!(TrackModel::from_json(&model.to_json()).is_ok());
     }
 
@@ -393,5 +479,50 @@ mod tests {
         let after = cross(rotated_a, rotated_b);
         assert!((before.0 - after.0).abs() < 1e-12);
         assert!((before.1 - after.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn curvature_limits_only_the_inside_width() {
+        let points = (0..8)
+            .map(|i| {
+                let angle = TAU * i as f64 / 8.0;
+                [10.0 * angle.cos(), 10.0 * angle.sin()]
+            })
+            .collect::<Vec<_>>();
+        let (mut right, mut left) = (vec![20.0; 8], vec![20.0; 8]);
+
+        limit_widths_for_curvature(&points, &mut right, &mut left);
+
+        assert_eq!(right, vec![20.0; 8]);
+        assert!(left.iter().all(|width| *width < 10.0));
+    }
+
+    #[test]
+    fn full_road_geometry_rejects_nonlocal_overlap() {
+        let points = [
+            [0.0, 0.0],
+            [5.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 1.0],
+            [5.0, 1.0],
+            [0.0, 1.0],
+        ];
+
+        assert!(is_simple(&points));
+        assert!(!road_is_simple(&points, &[0.75; 6], &[0.75; 6]));
+        assert!(road_is_simple(&points, &[0.1; 6], &[0.1; 6]));
+    }
+
+    #[test]
+    fn road_edges_miter_polyline_corners() {
+        let edges = road_edges(
+            &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            &[0.2; 3],
+            &[0.2; 3],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(edges[1], ([1.2, -0.2], [0.8, 0.2]));
     }
 }
