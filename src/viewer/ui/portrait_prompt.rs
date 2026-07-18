@@ -4,11 +4,27 @@ use bevy_egui::egui;
 use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
 use super::style::{brand_header, caps_font};
 
+// Below a conventional 320 px phone width, tighten the card for narrow windows and foldables.
+const COMPACT_BREAKPOINT: f32 = 320.0;
+const CARD_MARGIN: i8 = 24;
+const COMPACT_CARD_MARGIN: i8 = 12;
+const CARD_MAX_WIDTH: f32 = 380.0;
+const CARD_STROKE_WIDTH: f32 = 1.0;
+const CARD_CORNER_RADIUS: u8 = 12;
+const ARROW_MAX_SIZE: f32 = 190.0;
+const TITLE_FONT_SIZE: f32 = 22.0;
+const COMPACT_TITLE_FONT_SIZE: f32 = 18.0;
+const BODY_FONT_SIZE: f32 = 16.0;
+const COMPACT_BODY_FONT_SIZE: f32 = 14.0;
+const TITLE_BODY_GAP: f32 = 8.0;
+
 const LOOP_DURATION_S: f32 = 3.0;
 const ROTATION_DURATION_S: f32 = 2.2;
 const ROTATION_END_PAUSE_S: f32 = 0.2;
 const FADE_DURATION_S: f32 = 0.3;
 const ROTATION_RADIANS: f32 = std::f32::consts::FRAC_PI_2;
+// Includes the arrowhead's sweep beyond the arc so every rotation fits when scaled down.
+const ARROW_DESIGN_WIDTH: f32 = 210.0;
 const ARC_RADIUS: f32 = 70.0;
 const ARC_HALF_WIDTH: f32 = 5.5;
 const ARC_START_DEG: f32 = 105.0;
@@ -21,32 +37,51 @@ const MIN_MITER_DOT: f32 = 0.25;
 pub(super) fn show(root: &mut egui::Ui) {
     root.painter().rect_filled(root.max_rect(), 0.0, PANEL);
     brand_header(root, false);
+    let compact = root.max_rect().width() < COMPACT_BREAKPOINT;
+    let margin = if compact {
+        COMPACT_CARD_MARGIN
+    } else {
+        CARD_MARGIN
+    };
 
     egui::Area::new("portrait_prompt".into())
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(root.ctx(), |ui| {
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(egui::Stroke::new(1.0, FAINT))
-                .corner_radius(12)
-                .inner_margin(egui::Margin::same(24))
+                .stroke(egui::Stroke::new(CARD_STROKE_WIDTH, FAINT))
+                .corner_radius(CARD_CORNER_RADIUS)
+                .inner_margin(egui::Margin::same(margin))
                 .show(ui, |ui| {
-                    ui.set_width((root.max_rect().width() - 48.0).min(380.0));
+                    ui.set_width(
+                        (root.max_rect().width() - 2.0 * f32::from(margin)).min(CARD_MAX_WIDTH),
+                    );
                     ui.vertical_centered(|ui| {
                         let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), 190.0),
+                            egui::vec2(
+                                ui.available_width(),
+                                ui.available_width().min(ARROW_MAX_SIZE),
+                            ),
                             egui::Sense::hover(),
                         );
                         rotation_arrow(ui, rect);
                         ui.label(
                             egui::RichText::new("TURN YOUR DEVICE SIDEWAYS")
-                                .font(caps_font(22.0))
+                                .font(caps_font(if compact {
+                                    COMPACT_TITLE_FONT_SIZE
+                                } else {
+                                    TITLE_FONT_SIZE
+                                }))
                                 .color(TEXT),
                         );
-                        ui.add_space(8.0);
+                        ui.add_space(TITLE_BODY_GAP);
                         ui.label(
                             egui::RichText::new("Nanoplan requires landscape orientation.")
-                                .size(16.0)
+                                .size(if compact {
+                                    COMPACT_BODY_FONT_SIZE
+                                } else {
+                                    BODY_FONT_SIZE
+                                })
                                 .color(DIM),
                         );
                     });
@@ -55,6 +90,7 @@ pub(super) fn show(root: &mut egui::Ui) {
 }
 
 fn rotation_arrow(ui: &egui::Ui, rect: egui::Rect) {
+    let scale = (rect.width() / ARROW_DESIGN_WIDTH).min(1.0);
     let time = ui.input(|input| input.time) as f32;
     let elapsed = time % LOOP_DURATION_S;
     let progress = (elapsed / ROTATION_DURATION_S).min(1.0);
@@ -80,8 +116,8 @@ fn rotation_arrow(ui: &egui::Ui, rect: egui::Rect) {
     for step in 0..=ARC_SEGMENTS {
         let angle = start_angle + sweep * step as f32 / ARC_SEGMENTS as f32;
         let radial = egui::vec2(angle.cos(), angle.sin());
-        let outer = center + radial * (ARC_RADIUS + ARC_HALF_WIDTH);
-        let inner = center + radial * (ARC_RADIUS - ARC_HALF_WIDTH);
+        let outer = center + radial * scale * (ARC_RADIUS + ARC_HALF_WIDTH);
+        let inner = center + radial * scale * (ARC_RADIUS - ARC_HALF_WIDTH);
         outer_arc.push(outer);
         inner_arc.push(inner);
         arrow.colored_vertex(outer, color);
@@ -93,10 +129,10 @@ fn rotation_arrow(ui: &egui::Ui, rect: egui::Rect) {
             arrow.add_triangle(current, previous + 1, current + 1);
         }
     }
-    let base = center + ARC_RADIUS * egui::vec2(end_angle.cos(), end_angle.sin());
-    let head_outer = base - normal * HEAD_HALF_WIDTH;
-    let head_inner = base + normal * HEAD_HALF_WIDTH;
-    let head_tip = base + direction * HEAD_LENGTH;
+    let base = center + scale * ARC_RADIUS * egui::vec2(end_angle.cos(), end_angle.sin());
+    let head_outer = base - scale * normal * HEAD_HALF_WIDTH;
+    let head_inner = base + scale * normal * HEAD_HALF_WIDTH;
+    let head_tip = base + scale * direction * HEAD_LENGTH;
     let head = arrow.vertices.len() as u32;
     arrow.colored_vertex(head_outer, color);
     arrow.colored_vertex(head_inner, color);

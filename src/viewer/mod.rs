@@ -60,7 +60,7 @@ pub(crate) fn run() {
                 title: "nanoplan".into(),
                 fit_canvas_to_parent: true,
                 resize_constraints: WindowResizeConstraints {
-                    min_width: 568.0,
+                    min_width: 180.0,
                     min_height: 320.0,
                     ..default()
                 },

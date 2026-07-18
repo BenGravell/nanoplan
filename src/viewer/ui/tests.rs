@@ -148,34 +148,37 @@ fn landing_background_respects_the_gpu_texture_limit() {
 
 #[test]
 fn portrait_prompt_is_the_only_interactive_view() {
-    let size = egui::vec2(390.0, 844.0);
-    let mut harness = Harness::builder().with_size(size).build_ui_state(
-        |ui, configured: &mut bool| {
-            let ctx = ui.ctx().clone();
-            if !*configured {
-                configure(&ctx);
-                *configured = true;
-                ctx.request_repaint();
-                return;
-            }
-            let mut root = egui::Ui::new(
-                ctx.clone(),
-                "portrait_render_test".into(),
-                egui::UiBuilder::new().max_rect(ctx.content_rect()),
-            );
-            portrait_prompt::show(&mut root);
-        },
-        false,
-    );
-    harness.run();
+    for size in [egui::vec2(390.0, 844.0), egui::vec2(180.0, 320.0)] {
+        let mut harness = Harness::builder().with_size(size).build_ui_state(
+            |ui, configured: &mut bool| {
+                let ctx = ui.ctx().clone();
+                if !*configured {
+                    configure(&ctx);
+                    *configured = true;
+                    ctx.request_repaint();
+                    return;
+                }
+                let mut root = egui::Ui::new(
+                    ctx.clone(),
+                    "portrait_render_test".into(),
+                    egui::UiBuilder::new().max_rect(ctx.content_rect()),
+                );
+                portrait_prompt::show(&mut root);
+            },
+            false,
+        );
+        harness.run();
 
-    assert!(harness.query_by_label("NANOPLAN").is_some());
-    assert!(
-        harness
-            .query_by_label("TURN YOUR DEVICE SIDEWAYS")
-            .is_some()
-    );
-    assert!(harness.query_by_label("PAUSE").is_none());
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        for label in [
+            "NANOPLAN",
+            "TURN YOUR DEVICE SIDEWAYS",
+            "Nanoplan requires landscape orientation.",
+        ] {
+            assert!(screen.contains_rect(harness.get_by_label(label).rect()));
+        }
+        assert!(harness.query_by_label("PAUSE").is_none());
+    }
 }
 
 #[test]
