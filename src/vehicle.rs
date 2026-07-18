@@ -8,16 +8,10 @@
 pub(crate) const MAX_LON_ACCEL: f64 = 6.5;
 /// Hardest braking deceleration, m/s2.
 pub(crate) const MIN_LON_ACCEL: f64 = -9.0;
-/// Simulator-internal longitudinal jerk capability, m/s3.
-/// Deliberately permissive: this is a plant guard rail, not a planner model.
-pub(crate) const MAX_ABS_LON_JERK: f64 = 80.0;
 /// Tightest steer the plant will execute, a 5 m turning radius.
 pub(crate) const MAX_ABS_CURVATURE: f64 = 0.2;
 /// Lateral-acceleration limit, m/s2.
 pub(crate) const MAX_ABS_LAT_ACCEL: f64 = 11.0;
-/// Simulator-internal curvature-rate capability, in 1/(m*s).
-/// Deliberately permissive: this is a plant guard rail, not a planner model.
-pub(crate) const MAX_ABS_CURVATURE_RATE: f64 = 2.0;
 
 /// Rolling-resistance coefficient for warm performance tires or racing slicks.
 pub(crate) const ROLLING_RESISTANCE_COEFF: f64 = 0.012;

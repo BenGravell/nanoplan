@@ -1,10 +1,10 @@
-use super::physics::{clamp_control, longitudinal_resistance_accel, rate_limit_control};
+use super::physics::{clamp_control, longitudinal_resistance_accel};
 use super::{Control, State};
 
 /// Advance the high-fidelity world plant by one Euler step of length `dt`,
 /// using an already-applied direct control. This includes passive
-/// longitudinal resistance. [`crate::simulation::Simulator`] owns actuator
-/// memory and collision response around it.
+/// longitudinal resistance. [`crate::simulation::Simulator`] owns collision
+/// response around it.
 pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
     let net_accel = u.acceleration - longitudinal_resistance_accel(s.speed);
@@ -16,8 +16,7 @@ pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
     }
 }
 
-/// Simulator-owned actuator memory. Planners never receive this; they only
-/// command direct acceleration/curvature and the plant slews toward it.
+/// Stores the statically limited control currently applied by the simulator.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommandLimiter {
     pub(crate) applied: Control,
@@ -31,7 +30,7 @@ impl CommandLimiter {
     }
 
     pub(crate) fn step(&mut self, state: State, command: Control, dt: f64) -> State {
-        self.applied = rate_limit_control(self.applied, command, dt, state.speed);
+        self.applied = clamp_control(command, state.speed);
         world_step(state, self.applied, dt)
     }
 }
@@ -40,13 +39,10 @@ impl CommandLimiter {
 mod tests {
     use super::*;
     use crate::simulation::physics::terminal_speed_for_accel;
-    use crate::vehicle::{
-        MAX_ABS_CURVATURE, MAX_ABS_CURVATURE_RATE, MAX_ABS_LAT_ACCEL, MAX_ABS_LON_JERK,
-        MAX_LON_ACCEL, MIN_LON_ACCEL,
-    };
+    use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
     #[test]
-    fn world_step_applies_limits_without_actuator_slew() {
+    fn world_step_applies_static_limits() {
         let s = State {
             speed: 3.0,
             ..Default::default()
@@ -229,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_rate_limits_actuator_commands() {
+    fn simulator_applies_commands_without_rate_limits() {
         let mut limiter = CommandLimiter::new();
         let s0 = State {
             speed: 1.0,
@@ -244,8 +240,8 @@ mod tests {
             },
             dt,
         );
-        assert!((limiter.applied.acceleration - MAX_ABS_LON_JERK * dt).abs() < 1e-9);
-        assert!((limiter.applied.curvature - MAX_ABS_CURVATURE_RATE * dt).abs() < 1e-9);
+        assert_eq!(limiter.applied.acceleration, MAX_LON_ACCEL);
+        assert_eq!(limiter.applied.curvature, MAX_ABS_CURVATURE);
         assert!(
             (s1.speed
                 - (1.0 + (limiter.applied.acceleration - longitudinal_resistance_accel(1.0)) * dt))

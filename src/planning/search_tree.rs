@@ -246,7 +246,7 @@ pub(crate) fn centerline_follow_controls(
 const PATH_TRACK_LOOKAHEAD_TICKS: f64 = 8.0;
 const PATH_TRACK_LOOKAHEAD_MIN_M: f64 = 3.0;
 const PATH_TRACK_LOOKAHEAD_MAX_M: f64 = 10.0;
-const PATH_TRACK_CURVATURE_GAIN: f64 = 10.0;
+const PATH_TRACK_CURVATURE_GAIN: f64 = 1.0;
 
 pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Context) -> Vec<Control> {
     let total_len = path.length();

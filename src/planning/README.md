@@ -29,9 +29,9 @@ pub trait Planner {
 ```
 
 A planner is given the current ego `State` and a `Context`, and returns a
-direct acceleration/curvature command trajectory. It does **not** receive
-actuator state, jerk, or curvature rate; the [`Simulator`](../simulation/README.md)
-may slew-rate limit the first command privately before applying it. The
+direct acceleration/curvature command trajectory. The
+[`Simulator`](../simulation/README.md) clamps the first command to the vehicle's
+static limits before applying it. The
 simulator applies only the **first** control and re-invokes `plan()` next tick
 — this is a receding horizon / MPC-style loop, not open-loop trajectory
 execution. `&mut self` lets a planner keep state between calls (PI²-DDP

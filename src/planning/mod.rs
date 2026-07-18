@@ -74,8 +74,8 @@ impl Context<'_> {
 }
 
 /// A planner turns the current 4D state into a direct acceleration/curvature
-/// command trajectory. It does not receive actuator state; the simulator may
-/// slew-rate limit the first command before applying it.
+/// command trajectory. The simulator applies the first command after clamping
+/// it to the vehicle's static limits.
 pub(crate) trait Planner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
 }

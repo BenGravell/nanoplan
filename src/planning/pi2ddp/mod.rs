@@ -416,9 +416,8 @@ impl Planner for Pi2DdpPlanner {
             }
         }
 
-        // The widened actuator dynamics make PI²-DDP's local update more
-        // fragile; keep the road-model base policy when optimization makes
-        // the noise-free rollout worse.
+        // Keep the road-model base policy when optimization makes the
+        // noise-free rollout worse.
         let base = Self::init_policy(&path, ego, ctx, sigma_init);
         let (_, base_cost) = noise_free(&base.u);
         let (_, opt_cost) = noise_free(&pol.u);

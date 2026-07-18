@@ -3,8 +3,7 @@ use std::sync::LazyLock;
 use super::Control;
 use crate::vehicle::{
     AIR_DENSITY_KG_M3, DRAG_AREA_M2, EGO_MASS_KG, GRAVITY_MS2, MAX_ABS_CURVATURE,
-    MAX_ABS_CURVATURE_RATE, MAX_ABS_LAT_ACCEL, MAX_ABS_LON_JERK, MAX_LON_ACCEL, MIN_LON_ACCEL,
-    ROLLING_RESISTANCE_COEFF,
+    MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL, ROLLING_RESISTANCE_COEFF,
 };
 
 /// Signed passive resistance term from rolling resistance and air drag.
@@ -57,26 +56,6 @@ pub(crate) fn clamp_control(u: Control, speed: f64) -> Control {
     Control {
         acceleration: u.acceleration.clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
         curvature: clamp_curvature(u.curvature, speed),
-    }
-}
-
-pub(super) fn rate_limit_control(
-    prev: Control,
-    requested: Control,
-    dt: f64,
-    speed: f64,
-) -> Control {
-    let prev = clamp_control(prev, speed);
-    let target = clamp_control(requested, speed);
-    Control {
-        acceleration: target.acceleration.clamp(
-            prev.acceleration - MAX_ABS_LON_JERK * dt,
-            prev.acceleration + MAX_ABS_LON_JERK * dt,
-        ),
-        curvature: target.curvature.clamp(
-            prev.curvature - MAX_ABS_CURVATURE_RATE * dt,
-            prev.curvature + MAX_ABS_CURVATURE_RATE * dt,
-        ),
     }
 }
 
