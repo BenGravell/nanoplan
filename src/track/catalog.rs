@@ -177,13 +177,11 @@ pub(super) fn install_track_data(data: &[String]) -> Result<(), String> {
                 .map_err(|error| format!("{}: {error}", track.id))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let training = circuits
-        .iter()
-        .map(|circuit| circuit.training_track())
-        .collect::<Vec<_>>();
-    let model = TrackModel::train(&training)?;
     LOADED_CATALOG
-        .set(LoadedCatalog { circuits, model })
+        .set(LoadedCatalog {
+            circuits,
+            model: TrackModel::pretrained(),
+        })
         .map_err(|_| "track catalog already loaded".to_owned())
 }
 

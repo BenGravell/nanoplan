@@ -55,6 +55,8 @@ web-time = "1" # std::time::Instant shim that works on wasm
 # spatial index R*-tree (wasm-compatible) for near(est)-neighbour queries, with incremental insertion
 rstar = "0.12"
 egui_extras = { version = "0.35", default-features = false, features = ["svg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ureq = "3.3"

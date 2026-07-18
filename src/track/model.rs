@@ -1,11 +1,16 @@
-//! Runtime-trained spectral model for generated closed circuits.
+//! Pretrained spectral model for generated closed circuits.
 
 use std::f64::consts::TAU;
 
 use crate::common::rng::Rng;
+use serde::{Deserialize, Serialize};
+
+use super::loader::{REVISION, SOURCE};
 
 pub(crate) const SAMPLE_COUNT: usize = 256;
 const MAX_ATTEMPTS: usize = 64;
+const COEFFICIENT_COUNT: usize = SAMPLE_COUNT / 2 + 1;
+const MODEL: &str = include_str!("trained_model.json");
 
 pub(crate) struct TrainingTrack {
     pub(crate) length: f64,
@@ -24,6 +29,7 @@ pub(crate) struct TrackModel {
     profiles: Vec<Profile>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Profile {
     length: f64,
     turning: Vec<Coeff>,
@@ -31,13 +37,53 @@ struct Profile {
     left: Vec<Coeff>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 struct Coeff {
     re: f64,
     im: f64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct StoredModel {
+    format_version: u32,
+    source: String,
+    revision: String,
+    sample_count: usize,
+    profiles: Vec<Profile>,
+}
+
 impl TrackModel {
+    pub(crate) fn pretrained() -> Self {
+        Self::from_json(MODEL).expect("invalid bundled track model")
+    }
+
+    fn from_json(json: &str) -> Result<Self, String> {
+        let stored: StoredModel = serde_json::from_str(json).map_err(|error| error.to_string())?;
+        if stored.format_version != 1
+            || stored.source != SOURCE
+            || stored.revision != REVISION
+            || stored.sample_count != SAMPLE_COUNT
+            || stored.profiles.len() != 24
+            || stored.profiles.iter().any(|profile| {
+                !profile.length.is_finite()
+                    || profile.length <= 0.0
+                    || [&profile.turning, &profile.right, &profile.left]
+                        .into_iter()
+                        .any(|coefficients| {
+                            coefficients.len() != COEFFICIENT_COUNT
+                                || coefficients.iter().any(|coefficient| {
+                                    !coefficient.re.is_finite() || !coefficient.im.is_finite()
+                                })
+                        })
+            })
+        {
+            return Err("invalid spectral model value".to_owned());
+        }
+        Ok(Self {
+            profiles: stored.profiles,
+        })
+    }
+
     pub(crate) fn train(tracks: &[TrainingTrack]) -> Result<Self, String> {
         let profiles = tracks
             .iter()
@@ -75,6 +121,18 @@ impl TrackModel {
             return Err("track model needs training data".to_owned());
         }
         Ok(Self { profiles })
+    }
+
+    #[cfg(test)]
+    fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&StoredModel {
+            format_version: 1,
+            source: SOURCE.to_owned(),
+            revision: REVISION.to_owned(),
+            sample_count: SAMPLE_COUNT,
+            profiles: self.profiles.clone(),
+        })
+        .unwrap()
     }
 
     pub(crate) fn generate(&self, seed: u64) -> Option<GeneratedTrack> {
@@ -292,6 +350,33 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_model_is_valid() {
+        let model = TrackModel::pretrained();
+        assert_eq!(model.profiles.len(), 24);
+        assert!(model.generate(1).is_some());
+        assert!(TrackModel::from_json(&model.to_json()).is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    #[ignore = "maintenance command: downloads training data and rewrites the model"]
+    fn regenerate_bundled_model() {
+        use crate::track::{circuit::Circuit, loader::download_tracks};
+
+        let tracks = download_tracks()
+            .unwrap()
+            .iter()
+            .map(|csv| Circuit::parse(csv).unwrap().training_track())
+            .collect::<Vec<_>>();
+        let json = TrackModel::train(&tracks).unwrap().to_json() + "\n";
+        std::fs::write(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/track/trained_model.json"),
+            json,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn a_common_phase_preserves_power_and_cross_spectrum() {

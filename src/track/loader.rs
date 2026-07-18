@@ -2,7 +2,8 @@
 
 use super::catalog::{TRACK_CATALOG, install_track_data, track_catalog_loaded};
 
-const REVISION: &str = "e59595d1f3573b30d1ded6a08984935b957688e0";
+pub(super) const SOURCE: &str = "https://github.com/TUMFTM/racetrack-database";
+pub(super) const REVISION: &str = "e59595d1f3573b30d1ded6a08984935b957688e0";
 const BASE_URL: &str = "https://raw.githubusercontent.com/TUMFTM/racetrack-database";
 const SEPARATOR: &str = "\n--NANOPLAN-TRACK--\n";
 
@@ -21,6 +22,24 @@ fn pack(tracks: &[String]) -> String {
 fn unpack(data: &str) -> Option<Vec<String>> {
     let tracks = data.split(SEPARATOR).map(str::to_owned).collect::<Vec<_>>();
     (tracks.len() == TRACK_CATALOG.len()).then_some(tracks)
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub(super) fn download_tracks() -> Result<Vec<String>, String> {
+    let agent = ureq::agent();
+    TRACK_CATALOG
+        .iter()
+        .map(|track| {
+            let file = track.file;
+            agent
+                .get(&url(file))
+                .call()
+                .map_err(|error| format!("download {file}: {error}"))?
+                .body_mut()
+                .read_to_string()
+                .map_err(|error| format!("read {file}: {error}"))
+        })
+        .collect()
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -43,20 +62,7 @@ pub(crate) fn load() -> Result<(), String> {
         return Ok(());
     }
 
-    let agent = ureq::agent();
-    let tracks = TRACK_CATALOG
-        .iter()
-        .map(|track| {
-            let file = track.file;
-            agent
-                .get(&url(file))
-                .call()
-                .map_err(|error| format!("download {file}: {error}"))?
-                .body_mut()
-                .read_to_string()
-                .map_err(|error| format!("read {file}: {error}"))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let tracks = download_tracks()?;
     install_track_data(&tracks)?;
     if let Some(parent) = cache.parent() {
         std::fs::create_dir_all(parent).map_err(|error| format!("create track cache: {error}"))?;
