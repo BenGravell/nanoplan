@@ -1,10 +1,12 @@
-//! Basic centerline-return planner using the shared cubic steering curve.
+//! Small exhaustive search over centerline-following poly-cubic trajectories.
 
-use crate::common::math::{smoothstep, wrap_angle};
-use crate::planning::search_tree::{centerline_follow_controls, stop_controls};
+use crate::common::math::wrap_angle;
+use crate::geometry::barrier::collide_with_road_barriers;
+use crate::planning::cost::{HardConstraints, Sample};
+use crate::planning::search_tree::{brake_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
@@ -12,113 +14,156 @@ pub(crate) struct BasicPlanner;
 
 impl Planner for BasicPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let (path, s0, d0, lane_speed) = ctx.time("route", || {
+        let (path, s0, lane_speed) = ctx.time("route", || {
             let path = Path::new(&ctx.road.centerline);
-            let (s0, d0) = path.project(ego.position());
+            let (s0, _) = path.project(ego.position());
             let (_, lane_yaw) = path.pose_at(s0);
             let heading_err = wrap_angle(ego.yaw - lane_yaw);
             let lane_speed = (ego.speed * heading_err.cos()).max(0.0);
-            (path, s0, d0, lane_speed)
+            (path, s0, lane_speed)
         });
-        let (steer, duration, stop_at_goal) = ctx.time("fit", || {
-            let duration = settle_time(ego, ctx, d0);
-            let preview_m = 0.5 * (lane_speed + ctx.road.target_speed) * duration;
-            let remaining_m = (path.length() - s0).max(0.0);
-            let stopping_m = lane_speed * lane_speed / (-2.0 * MIN_LON_ACCEL);
-            let plan_time = ctx.horizon as f64 * ctx.road.dt;
-            let plan_reach_m = lane_speed * plan_time + 0.5 * MAX_LON_ACCEL * plan_time * plan_time;
-            let stop_at_goal = remaining_m <= plan_reach_m + preview_m + stopping_m
-                || s0 + preview_m >= path.length();
-            let duration = if stop_at_goal {
-                goal_duration(ego, ctx, d0, lane_speed, remaining_m)
-            } else {
-                duration
-            };
-            let target_s = if stop_at_goal {
-                path.length()
-            } else {
-                s0 + preview_m
-            };
-            let target = if stop_at_goal {
-                route_goal_state(&path)
-            } else {
-                cruise_goal_state(&path, target_s.min(path.length()), ctx.road.target_speed)
-            };
-            (
-                CubicSteer::from_states(&ego, &target, duration),
-                duration,
-                stop_at_goal,
-            )
-        });
-        ctx.time("extract", || {
-            let ticks = ctx
-                .horizon
-                .min((duration / ctx.road.dt + 0.5).floor() as usize);
-            let (mut controls, x) = steer_controls(ego, &steer, ctx.road.dt, ticks, 1.0);
-            let rest = ctx.horizon - controls.len();
-            if rest > 0 {
-                if stop_at_goal {
-                    controls.extend(stop_controls(x, ctx, rest));
-                } else {
-                    controls.extend(centerline_follow_controls(x, &path, ctx, rest));
+        ctx.time("fit", || {
+            let mut best: Option<(f64, Vec<Control>)> = None;
+            for distance in FIRST_TARGETS_M {
+                for factor in DURATION_FACTORS {
+                    let Some(controls) =
+                        candidate(ego, &path, ctx, s0, lane_speed, distance, factor)
+                    else {
+                        continue;
+                    };
+                    let Some(cost) = candidate_cost(ego, &controls, &path, ctx) else {
+                        continue;
+                    };
+                    if best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
+                        best = Some((cost, controls));
+                    }
                 }
             }
-            if !stop_at_goal {
-                controls
-                    .iter_mut()
-                    .for_each(|u| u.acceleration = MAX_LON_ACCEL);
-            }
-            controls
+            best.map(|(_, controls)| controls)
+                .unwrap_or_else(|| brake_controls(ego, ctx, MIN_LON_ACCEL))
         })
     }
 }
 
-const STOPPED_LOOKAHEAD_M: f64 = 4.0;
-const MAX_LOOKAHEAD_M: f64 = 60.0;
-const LOOKAHEAD_ROLLOFF_SPEED: f64 = 5.0;
+const FIRST_TARGETS_M: [f64; 3] = [10.0, 25.0, 40.0];
+const DURATION_FACTORS: [f64; 3] = [1.0, 1.5, 2.0];
+const CENTERLINE_SEGMENT_M: f64 = 15.0;
+const GOAL_BUFFER_M: f64 = 1.0;
 
-fn settle_time(ego: State, ctx: &Context, d0: f64) -> f64 {
-    let limit = ctx.road.target_speed.max(1.0);
-    let speed = ego.speed.max(0.0);
-    let lookahead_m = lookahead_m(speed, limit, d0);
-    let avg_speed = ((speed + limit) * 0.5).max(2.0);
-    (lookahead_m / avg_speed).clamp(1.0, 6.0)
-}
-
-fn lookahead_m(speed: f64, limit: f64, d0: f64) -> f64 {
-    let far = (1.2 * limit + 0.8 * speed + 2.0 * d0.abs())
-        .min(MAX_LOOKAHEAD_M)
-        .max(STOPPED_LOOKAHEAD_M);
-    let ratio = smoothstep(speed / LOOKAHEAD_ROLLOFF_SPEED);
-    STOPPED_LOOKAHEAD_M + (far - STOPPED_LOOKAHEAD_M) * ratio
-}
-
-fn goal_duration(ego: State, ctx: &Context, d0: f64, lane_speed: f64, remaining_m: f64) -> f64 {
-    let cruise = ctx.road.target_speed.max(1.0);
-    let brake_t = lane_speed.max(ctx.road.target_speed) / -MIN_LON_ACCEL;
-    settle_time(ego, ctx, d0)
-        .max(remaining_m / cruise + brake_t)
-        .max(2.0 * remaining_m / lane_speed.max(cruise))
-}
-
-fn route_goal_state(path: &Path) -> State {
-    let ([x, y], yaw) = path.pose_at(path.length());
-    State {
-        x,
-        y,
-        yaw,
-        speed: 0.0,
+fn candidate(
+    ego: State,
+    path: &Path,
+    ctx: &Context,
+    s0: f64,
+    lane_speed: f64,
+    first_distance: f64,
+    duration_factor: f64,
+) -> Option<Vec<Control>> {
+    let first_distance = first_distance.min(path.length() - s0);
+    if first_distance <= 0.0 {
+        return None;
     }
+    let fastest_speed = (lane_speed * lane_speed + 2.0 * MAX_LON_ACCEL * first_distance)
+        .sqrt()
+        .min(ctx.road.target_speed);
+    let fastest_duration = 2.0 * first_distance / (lane_speed + fastest_speed).max(1.0);
+    let mut duration = fastest_duration * duration_factor;
+    let mut cruise_speed =
+        (2.0 * first_distance / duration - lane_speed).clamp(0.0, ctx.road.target_speed);
+    let mut target_s = s0 + first_distance;
+    let mut x = ego;
+    let mut controls = Vec::with_capacity(ctx.horizon);
+
+    loop {
+        let at_end = target_s >= path.length() - 1e-6;
+        if at_end {
+            cruise_speed = 0.0;
+            duration = duration.max(x.speed.max(0.0) / -MIN_LON_ACCEL);
+        }
+        let goal_s = if at_end {
+            (target_s - GOAL_BUFFER_M).max(s0)
+        } else {
+            target_s
+        };
+        append_segment(
+            &mut controls,
+            &mut x,
+            path_state(path, goal_s, cruise_speed),
+            duration,
+            ctx,
+        );
+        if controls.len() >= ctx.horizon {
+            break;
+        }
+        if at_end || cruise_speed <= 0.01 {
+            controls.extend(stop_controls(x, ctx, ctx.horizon - controls.len()));
+            break;
+        }
+        let next_s = (target_s + CENTERLINE_SEGMENT_M).min(path.length());
+        duration = (next_s - target_s) / cruise_speed;
+        target_s = next_s;
+    }
+    Some(controls)
 }
 
-fn cruise_goal_state(path: &Path, s: f64, target_speed: f64) -> State {
+fn append_segment(
+    controls: &mut Vec<Control>,
+    x: &mut State,
+    target: State,
+    duration: f64,
+    ctx: &Context,
+) {
+    let remaining = ctx.horizon - controls.len();
+    let ticks = remaining.min((duration / ctx.road.dt).round().max(1.0) as usize);
+    let duration = ticks as f64 * ctx.road.dt;
+    let steer = CubicSteer::from_states(x, &target, duration);
+    let (segment, end) = steer_controls(*x, &steer, ctx.road.dt, ticks, 1.0);
+    controls.extend(segment);
+    *x = end;
+}
+
+fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<f64> {
+    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
+    let mut x = ego;
+    let mut total = 0.0;
+    let mut feasible = true;
+    let mut trajectory = ctx.diagnostics.map(|_| vec![ego.position().into()]);
+    for (tick, &u) in controls.iter().enumerate() {
+        let prev = x;
+        x = world_step(x, u, ctx.road.dt);
+        if collide_with_road_barriers(prev, x, ctx.road) != x {
+            feasible = false;
+        }
+        if let Some(points) = &mut trajectory {
+            points.push(x.position().into());
+        }
+        let (s, lateral) = path.project(x.position());
+        let (_, lane_yaw) = path.pose_at(s);
+        let sample = Sample {
+            xy: x.position().into(),
+            lateral,
+            heading_err: wrap_angle(x.yaw - lane_yaw),
+            speed: x.speed,
+            curvature: u.curvature,
+            accel: u.acceleration,
+            t: (tick + 1) as f64 * ctx.road.dt,
+        };
+        let cost = ctx.time("cost", || constraints.point_cost(&sample));
+        if !cost.is_finite() {
+            feasible = false;
+        } else {
+            total += cost;
+        }
+    }
+    if let (Some(diag), Some(trajectory)) = (ctx.diagnostics, trajectory) {
+        diag.record_trajectory(trajectory);
+    }
+    feasible.then_some(total)
+}
+
+fn path_state(path: &Path, s: f64, speed: f64) -> State {
     let ([x, y], yaw) = path.pose_at(s);
-    State {
-        x,
-        y,
-        yaw,
-        speed: target_speed,
-    }
+    State { x, y, yaw, speed }
 }
 
 #[cfg(test)]
@@ -161,13 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn cruises_at_maximum_longitudinal_acceleration() {
+    fn accelerates_on_a_clear_straight() {
         let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
         let controls = BasicPlanner.plan(State::default(), &test_ctx(&road, &[]));
-        assert!(
-            controls.iter().all(|u| u.acceleration == MAX_LON_ACCEL),
-            "accelerations {controls:?}"
-        );
+        assert_eq!(controls[0].acceleration, MAX_LON_ACCEL);
+        assert!(controls.iter().all(|u| u.curvature == 0.0));
     }
 
     #[test]
@@ -207,29 +250,9 @@ mod tests {
     }
 
     #[test]
-    fn lookahead_rolls_from_short_stop_to_long_moving_target() {
-        let limit = 10.0;
-        assert_eq!(lookahead_m(0.0, limit, 0.0), STOPPED_LOOKAHEAD_M);
-        let fast = lookahead_m(LOOKAHEAD_ROLLOFF_SPEED, limit, 0.0);
-        assert!((fast - (1.2 * limit + 0.8 * LOOKAHEAD_ROLLOFF_SPEED)).abs() < 1e-9);
-        let mid = lookahead_m(LOOKAHEAD_ROLLOFF_SPEED * 0.5, limit, 0.0);
-        assert!(mid > STOPPED_LOOKAHEAD_M && mid < fast);
-    }
-
-    #[test]
-    fn stopped_far_route_gets_short_positive_preview_target() {
-        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let ctx = test_ctx(&road, &[]);
-        let ego = State::default();
-        let preview_m = 0.5 * ctx.road.target_speed * settle_time(ego, &ctx, 0.0);
-        assert!(preview_m >= STOPPED_LOOKAHEAD_M, "preview {preview_m}");
-        assert!(preview_m < 10.0, "preview {preview_m}");
-    }
-
-    #[test]
     fn route_goal_state_has_full_stop_boundary() {
         let path = Path::new(&[[-5.0, 0.0], [20.0, 5.0]]);
-        let goal = route_goal_state(&path);
+        let goal = path_state(&path, path.length(), 0.0);
         let ([x, y], yaw) = path.pose_at(path.length());
         assert_eq!((goal.x, goal.y, goal.yaw), (x, y, yaw));
         assert_eq!(goal.speed, 0.0);
@@ -248,5 +271,74 @@ mod tests {
             &ctx,
         );
         assert_eq!(plan.len(), ctx.horizon);
+    }
+
+    #[test]
+    fn records_every_candidate_trajectory_when_requested() {
+        use crate::planning::Diagnostics;
+
+        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let diagnostics = Diagnostics::default();
+        let ctx = Context {
+            diagnostics: Some(&diagnostics),
+            ..test_ctx(&road, &[])
+        };
+        BasicPlanner.plan(State::default(), &ctx);
+        let data = diagnostics.take();
+
+        assert_eq!(
+            data.trajectories.len(),
+            FIRST_TARGETS_M.len() * DURATION_FACTORS.len()
+        );
+        assert!(
+            data.trajectories
+                .iter()
+                .all(|trajectory| trajectory.len() == ctx.horizon + 1)
+        );
+    }
+
+    #[test]
+    fn generated_track_predictions_stay_inside_road_for_full_horizon() {
+        use crate::geometry::barrier::collides_with_road_barrier;
+        use crate::track::Road;
+
+        for seed in 0..10 {
+            let track = Track::new(seed);
+            let lap = track.lap_length().unwrap();
+            for n in 0..20 {
+                let progress = lap * n as f64 / 20.0;
+                let centerline = track.centerline(progress - 50.0, progress + 250.0, 15.0);
+                let road = Road::new(
+                    centerline,
+                    *MAX_TERMINAL_SPEED_MPS,
+                    track.half_width(progress),
+                    0.1,
+                );
+                let (p, yaw) = track.pose(progress);
+                let ego = State {
+                    x: p[0],
+                    y: p[1],
+                    yaw,
+                    speed: 20.0,
+                };
+                let ctx = Context {
+                    road: &road,
+                    actors: &[],
+                    horizon: 100,
+                    latency: None,
+                    diagnostics: None,
+                };
+                let mut state = ego;
+                for (tick, control) in BasicPlanner.plan(ego, &ctx).into_iter().enumerate() {
+                    state = world_step(state, control, road.dt);
+                    let (_, d) = Path::new(&road.centerline).project(state.position());
+                    assert!(
+                        !collides_with_road_barrier(state, &road),
+                        "seed {seed} progress {progress} width {} tick {tick} d {d} state {state:?}",
+                        road.half_width
+                    );
+                }
+            }
+        }
     }
 }

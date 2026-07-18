@@ -39,7 +39,7 @@ impl Default for UiState {
         Self {
             started: false,
             track: 0,
-            planner: PlannerKind::BezierToppra,
+            planner: PlannerKind::Basic,
             preview_s: 3.0,
             show_grid: true,
             show_stations: true,

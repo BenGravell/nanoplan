@@ -19,9 +19,9 @@ Taxonomy of planners
 - Tree search (RRT)
 - Local optimization (iLQR)
 
-## basic planner
+## bezier+TOPP-RA planner
 
-Fix the basic planners. Why do they fail to plan inside the road boundaries over the entire prediction horizon?
+Fix: Why does it fail to plan inside the road boundaries over the entire prediction horizon?
 
 ## Actor planning
 
@@ -53,7 +53,6 @@ Start menu
 Put all shaded rectangle around the buttons on hover, and also on selection.
 
 On selection, wiat just a short moment, perhaps 200ms, before proceeding, so that we get a visual indicator the button was pushed. Add an additional splash animation around the button to show it was selected.
-
 
 --
 Enforce minimum screen width and aspect ratio such that corner bkgd graphics never collide. add unit tests for that.

@@ -126,7 +126,7 @@ const SPECS: [PlannerSpec; 12] = [
         kind: PlannerKind::Basic,
         name: "basic cubic",
         build: || Box::new(BasicPlanner),
-        has_diagnostics: false,
+        has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::BezierToppra,

@@ -8,7 +8,7 @@ use super::{
     ControlTab, UiState, compact_layout, compact_rail_widths, configure, landing, portrait_prompt,
     right_rail_width, viewer_layout,
 };
-use crate::planning::Latency;
+use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{CANVAS_RGB, live::Live};
 
 const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
@@ -44,6 +44,7 @@ impl Default for ViewerHarnessState {
 fn visualization_defaults_show_only_track_stations() {
     let state = UiState::default();
     assert!(!state.started);
+    assert_eq!(state.planner, PlannerKind::Basic);
     assert!(state.show_stations);
     assert!(!state.show_centerline);
     assert!(!state.show_plan);

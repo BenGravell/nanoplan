@@ -86,7 +86,7 @@ impl Default for Live {
     fn default() -> Self {
         #[cfg(test)]
         crate::track::loader::install_test_catalog();
-        let world = LiveWorld::with_track(0, 1, PlannerKind::BezierToppra, MAX_ACTORS, DT);
+        let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, MAX_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {
@@ -99,7 +99,7 @@ impl Default for Live {
             latency: LatencyStats::default(),
             friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
             previous,
-            planner: PlannerKind::BezierToppra,
+            planner: PlannerKind::Basic,
             recorder: Latency::default(),
             acc: 0.0,
         }
