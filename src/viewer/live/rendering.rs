@@ -7,9 +7,10 @@ use super::Live;
 use super::camera::{CameraTarget, followed_camera_center, smooth_angle};
 use super::drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
-    carpet, diagnostics, grid, plan, track, vehicles,
+    RoadSurfaceGizmos, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::{ppx, px};
+use crate::viewer::ui::controls::metrics::preview_metrics;
 use crate::viewer::{DT, UiState};
 
 const CAMERA_SMOOTH_DURATION_S: f32 = 0.5;
@@ -34,6 +35,7 @@ impl RenderSnapshot {
 
 pub(crate) fn draw(
     mut gizmos: Gizmos,
+    mut road_surface: Gizmos<RoadSurfaceGizmos>,
     mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
     mut planned_trajectory: Gizmos<PlannedTrajectoryGizmos>,
     mut diagnostic_trajectories: Gizmos<DiagnosticTrajectoryGizmos>,
@@ -90,17 +92,29 @@ pub(crate) fn draw(
         grid::draw(&mut gizmos, live.camera, &window);
     }
 
+    let carpet_metrics = state
+        .carpet_visualization
+        .is_metric()
+        .then(|| preview_metrics(&live));
     let world = &live.world;
-    if state.show_carpet && !world.plan.is_empty() {
-        carpet::draw(&mut carpet_gizmos, ego, &world.plan, world.dt());
-    }
     track::draw(
         &mut gizmos,
+        &mut road_surface,
         &world.track,
         world.track_progress,
         state.show_stations,
         state.show_centerline,
     );
+    if state.show_carpet && !world.plan.is_empty() {
+        carpet::draw(
+            &mut carpet_gizmos,
+            ego,
+            &world.plan,
+            world.dt(),
+            state.carpet_visualization,
+            carpet_metrics.as_ref(),
+        );
+    }
     diagnostics::draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,

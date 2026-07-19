@@ -7,7 +7,7 @@ use crate::viewer::UiState;
 use crate::viewer::live::Live;
 
 mod camera;
-pub(super) mod metrics;
+pub(crate) mod metrics;
 mod planner;
 mod visibility;
 

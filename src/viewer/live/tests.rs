@@ -1,15 +1,48 @@
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
+use bevy::gizmos::GizmoHandles;
 use bevy::prelude::*;
+use std::any::TypeId;
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, CameraTarget, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
-    followed_camera_center, smooth_angle,
+    followed_camera_center, pinch_scale, smooth_angle,
 };
 use super::rendering::interpolate_state;
 use super::screen::PX_PER_M;
 use super::*;
+
+#[test]
+fn viewer_camera_prefers_msaa_and_can_disable_it() {
+    let mut world = World::new();
+    let camera = world
+        .spawn((Camera::default(), crate::viewer::VIEW_MSAA))
+        .id();
+
+    assert_eq!(crate::viewer::VIEW_MSAA.samples(), 4);
+    assert!(crate::viewer::disable_msaa(&mut world));
+    let msaa = world.query::<&Msaa>().get(&world, camera).unwrap();
+    assert_eq!(*msaa, Msaa::Off);
+}
+
+#[test]
+fn road_surface_group_is_registered_before_scene_gizmos() {
+    let mut app = App::new();
+    app.init_gizmo_group::<RoadSurfaceGizmos>()
+        .add_plugins(bevy::asset::AssetPlugin::default())
+        .add_plugins(bevy::gizmos::GizmoPlugin);
+    let groups: Vec<_> = app
+        .world()
+        .resource::<GizmoHandles>()
+        .handles()
+        .keys()
+        .copied()
+        .collect();
+
+    assert_eq!(groups[0], TypeId::of::<RoadSurfaceGizmos>());
+    assert_eq!(groups[1], TypeId::of::<DefaultGizmoConfigGroup>());
+}
 
 #[test]
 fn planner_change_resets_latency_stats() {
@@ -47,6 +80,12 @@ fn camera_smoothing_takes_the_short_way_across_pi() {
     let almost_pi = std::f32::consts::PI - 0.1;
     let almost_negative_pi = -std::f32::consts::PI + 0.1;
     assert!(smooth_angle(almost_pi, almost_negative_pi, 0.5) > almost_pi);
+}
+
+#[test]
+fn pinch_distance_controls_zoom_without_dividing_by_zero() {
+    assert_eq!(pinch_scale(100.0, 150.0), 1.5);
+    assert_eq!(pinch_scale(0.0, 150.0), 1.0);
 }
 
 #[test]

@@ -7,6 +7,13 @@ const TITLE_ASPECT_RATIO: f32 = 146.65262 / 23.909071;
 const MENU_ITEMS: [&str; 2] = ["Start", "Exit"];
 const MENU_INACTIVE: egui::Color32 = egui::Color32::from_rgb(171, 180, 193);
 const MENU_ROW_SPACING: f32 = 0.1;
+const ACTIVATION_DELAY_S: f64 = 0.2;
+
+#[derive(Clone, Copy)]
+struct MenuActivation {
+    index: usize,
+    started_at: f64,
+}
 
 pub(super) fn show(root: &mut egui::Ui, started: &mut bool) -> bool {
     background_graphics(root);
@@ -31,7 +38,9 @@ pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
 fn start_menu(root: &mut egui::Ui, started: &mut bool) -> bool {
     let screen = root.max_rect();
     let selection_id = egui::Id::new("landing_menu_selection");
+    let activation_id = egui::Id::new("landing_menu_activation");
     let mut selected = root.data_mut(|data| data.get_temp::<usize>(selection_id).unwrap_or(0));
+    let mut activation = root.data_mut(|data| data.get_temp::<MenuActivation>(activation_id));
 
     if root.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
         selected = (selected + 1) % MENU_ITEMS.len();
@@ -41,6 +50,7 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool) -> bool {
     }
 
     let mut clicked = None;
+    let now = root.input(|input| input.time);
     for (index, label) in MENU_ITEMS.iter().enumerate() {
         let response = root.interact(
             menu_row_rect(screen, index),
@@ -76,15 +86,9 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool) -> bool {
             ),
             color,
         );
-        painter.add(egui::Shape::line(
-            [
-                normalized_pos(screen, 0.063_541_666, center_y - 0.007_407_407_3),
-                normalized_pos(screen, 0.068_75, center_y),
-                normalized_pos(screen, 0.063_541_666, center_y + 0.007_407_407_3),
-            ]
-            .to_vec(),
-            egui::Stroke::new(screen.height() * 0.003_703_703_6, color),
-        ));
+        if index == selected {
+            paint_chevron(root, screen, center_y, now);
+        }
         let leader_y = (text_rect.bottom() - screen.top()) / screen.height() + 0.003_703_703_6;
         painter.add(egui::Shape::line(
             [
@@ -93,22 +97,65 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool) -> bool {
                 normalized_pos(screen, 0.279_166_67, leader_y + 0.012_962_963),
             ]
             .to_vec(),
-            egui::Stroke::new(screen.height() * 0.001_851_851_8, color),
+            egui::Stroke::new(screen.height() * 0.003, color),
         ));
     }
 
-    let activate = clicked.or_else(|| {
-        root.input(|input| input.key_pressed(egui::Key::Enter))
-            .then_some(selected)
-    });
-    if activate == Some(0) {
-        *started = true;
+    let activate = clicked
+        .or_else(|| {
+            root.input(|input| input.key_pressed(egui::Key::Enter))
+                .then_some(selected)
+        })
+        .or_else(|| {
+            root.input(|input| input.key_pressed(egui::Key::Space))
+                .then_some(0)
+        });
+    if let Some(index) = activate {
+        activation = Some(MenuActivation {
+            index,
+            started_at: now,
+        });
     }
-    if root.input(|input| input.key_pressed(egui::Key::Space)) {
-        *started = true;
+    if let Some(active) = activation {
+        if activation_ready(now - active.started_at) {
+            root.data_mut(|data| data.remove::<MenuActivation>(activation_id));
+            if active.index == 0 {
+                *started = true;
+            }
+            return active.index == MENU_ITEMS.len() - 1;
+        }
     }
     root.data_mut(|data| data.insert_temp(selection_id, selected));
-    matches!(activate, Some(index) if index == MENU_ITEMS.len() - 1)
+    if let Some(active) = activation {
+        root.data_mut(|data| data.insert_temp(activation_id, active));
+    }
+    false
+}
+
+fn paint_chevron(ui: &egui::Ui, screen: egui::Rect, center_y: f32, time: f64) {
+    let (offset, scale) = chevron_animation(time);
+    let center_x = 0.066_145_83 + offset;
+    let half_width = 0.002_604_167 * scale;
+    let half_height = 0.007_407_407_3 * scale;
+    ui.painter().add(egui::Shape::line(
+        [
+            normalized_pos(screen, center_x - half_width, center_y - half_height),
+            normalized_pos(screen, center_x + half_width, center_y),
+            normalized_pos(screen, center_x - half_width, center_y + half_height),
+        ]
+        .to_vec(),
+        egui::Stroke::new(screen.height() * 0.003_703_703_6 * scale, ORANGE),
+    ));
+}
+
+pub(super) fn chevron_animation(time: f64) -> (f32, f32) {
+    let sine = (time as f32 * std::f32::consts::TAU * 0.75).sin();
+    let pulse = sine.signum() * (1.0 - (1.0 - sine.abs()).powi(2));
+    (pulse * 0.003_5, 1.0 + pulse * 0.12)
+}
+
+pub(super) fn activation_ready(elapsed_s: f64) -> bool {
+    elapsed_s >= ACTIVATION_DELAY_S
 }
 
 pub(super) fn background_rect(screen: egui::Rect, anchor: egui::Align2) -> egui::Rect {

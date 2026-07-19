@@ -9,7 +9,10 @@ use super::{
     right_rail_width, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
-use crate::viewer::{CANVAS_RGB, live::Live};
+use crate::viewer::{
+    CANVAS_RGB, MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH, ResizeDebounce, live::Live,
+    viewport_supported,
+};
 
 const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
     ("phone-iphone-se-3", egui::vec2(667.0, 375.0)),
@@ -63,7 +66,7 @@ fn landing_starts_with_the_keyboard() {
                     ctx.request_repaint();
                     return;
                 }
-                state.exit_requested = landing::show(ui, &mut state.ui.started);
+                state.exit_requested |= landing::show(ui, &mut state.ui.started);
             },
             ViewerHarnessState::default(),
         );
@@ -71,7 +74,7 @@ fn landing_starts_with_the_keyboard() {
 
     assert!(harness.query_by_label("Start").is_some());
     harness.key_press(egui::Key::Enter);
-    harness.step();
+    harness.run_steps(20);
     assert!(harness.state().ui.started);
 }
 
@@ -88,15 +91,33 @@ fn landing_exit_selection_requests_app_shutdown() {
                     ctx.request_repaint();
                     return;
                 }
-                state.exit_requested = landing::show(ui, &mut state.ui.started);
+                state.exit_requested |= landing::show(ui, &mut state.ui.started);
             },
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
 
     harness.get_by_label("Exit").click();
-    harness.step();
+    harness.run_steps(30);
     assert!(harness.state().exit_requested);
+}
+
+#[test]
+fn landing_activation_waits_long_enough_to_show_feedback() {
+    assert!(!landing::activation_ready(0.199));
+    assert!(landing::activation_ready(0.2));
+}
+
+#[test]
+fn landing_chevron_pulses_and_bounces_horizontally() {
+    let (center, normal) = landing::chevron_animation(0.0);
+    let (shoulder, _) = landing::chevron_animation(1.0 / 6.0);
+    let (right, large) = landing::chevron_animation(1.0 / 3.0);
+    let (left, small) = landing::chevron_animation(1.0);
+
+    assert!(large > normal && small < normal);
+    assert!(right > center && left < center);
+    assert!(shoulder > right * 0.9);
 }
 
 #[test]
@@ -180,6 +201,106 @@ fn portrait_prompt_is_the_only_interactive_view() {
         }
         assert!(harness.query_by_label("PAUSE").is_none());
     }
+}
+
+#[test]
+fn undersized_landscape_shows_the_make_window_bigger_bumper() {
+    let size = egui::vec2(MIN_VIEWPORT_WIDTH - 1.0, 374.0);
+    assert!(!viewport_supported(size.x, size.y));
+    let mut harness = Harness::builder().with_size(size).build_ui_state(
+        |ui, configured: &mut bool| {
+            if !*configured {
+                configure(ui.ctx());
+                *configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            portrait_prompt::show(ui);
+        },
+        false,
+    );
+    harness.run();
+
+    assert!(harness.query_by_label("MAKE YOUR WINDOW BIGGER").is_some());
+    assert!(
+        harness
+            .query_by_label("Nanoplan requires a viewport at least 667 px wide.")
+            .is_some()
+    );
+    assert!(harness.query_by_label("PAUSE").is_none());
+}
+
+#[test]
+fn bumper_copy_matches_the_violated_viewport_constraint() {
+    assert_eq!(
+        portrait_prompt::prompt_copy(390.0, 844.0),
+        (
+            "TURN YOUR DEVICE SIDEWAYS",
+            "Nanoplan requires landscape orientation."
+        )
+    );
+    assert_eq!(
+        portrait_prompt::prompt_copy(666.0, 374.0),
+        (
+            "MAKE YOUR WINDOW BIGGER",
+            "Nanoplan requires a viewport at least 667 px wide."
+        )
+    );
+    assert_eq!(
+        portrait_prompt::prompt_copy(800.0, 500.0),
+        (
+            "MAKE YOUR WINDOW WIDER",
+            "Nanoplan requires a viewport with at least a 16:9 aspect ratio."
+        )
+    );
+}
+
+#[test]
+fn viewport_requires_minimum_width_and_safe_background_aspect_ratio() {
+    assert!(viewport_supported(
+        MIN_VIEWPORT_WIDTH,
+        MIN_VIEWPORT_WIDTH / MIN_VIEWPORT_ASPECT_RATIO
+    ));
+    assert!(!viewport_supported(
+        MIN_VIEWPORT_WIDTH - 1.0,
+        (MIN_VIEWPORT_WIDTH - 1.0) / MIN_VIEWPORT_ASPECT_RATIO
+    ));
+    assert!(!viewport_supported(MIN_VIEWPORT_WIDTH, 376.0));
+}
+
+#[test]
+fn resize_waits_for_a_quiet_period_then_accepts_native_4k() {
+    let mut resize = ResizeDebounce::default();
+    assert!(!resize.observe(bevy::math::UVec2::new(1280, 720), 0.0));
+    assert!(resize.observe(bevy::math::UVec2::new(3840, 2160), 0.0));
+    assert!(resize.observe(bevy::math::UVec2::new(3840, 2160), 0.19));
+    assert!(!resize.observe(bevy::math::UVec2::new(3840, 2160), 0.02));
+    assert_eq!(resize.displayed, bevy::math::UVec2::new(3840, 2160));
+    assert_eq!(resize.rollback(), Some(bevy::math::UVec2::new(1280, 720)));
+}
+
+#[test]
+fn ego_carpet_selector_lives_in_the_viz_menu() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+    harness.get_by_label("VIZ").click();
+    harness.run();
+
+    assert!(harness.get_by_label("Ego carpet color").rect().right() <= 440.0);
+    assert!(harness.query_by_label("EGO CARPET COLOR").is_none());
 }
 
 #[test]
@@ -282,10 +403,10 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             }
         }
         assert!(harness.query_by_label("NANOPLAN").is_none());
-        let rail = harness.get_by_label("Timeseries rail").rect();
+        let rail = harness.get_by_label("Visualization rail").rect();
         assert!(
             screen.contains_rect(rail) && rail.min.x >= (size.x - rail_width) * pixels_per_point,
-            "timeseries rail is clipped at {name}: {rail:?}"
+            "visualization rail is clipped at {name}: {rail:?}"
         );
         let hud = harness.get_by_label("Driving HUD").rect();
         assert!(

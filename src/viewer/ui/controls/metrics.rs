@@ -71,7 +71,7 @@ fn section_heading(ui: &mut egui::Ui, heading: &str) {
     );
 }
 
-pub(in crate::viewer::ui) fn preview_metrics(live: &Live) -> Metrics {
+pub(crate) fn preview_metrics(live: &Live) -> Metrics {
     let ego: Vec<State> = std::iter::once(live.world.ego())
         .chain(live.world.plan.iter().skip(1).copied())
         .collect();

@@ -6,8 +6,12 @@ use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use colorgrad::{BlendMode, Gradient};
 
+use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
+use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
+use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+use crate::viewer::CarpetVisualization;
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, px};
@@ -17,16 +21,18 @@ const ALPHA: f32 = 0.72;
 const FOOTPRINT_EPSILON_M: f64 = 1e-9;
 
 static GRADIENT: LazyLock<colorgrad::LinearGradient> = LazyLock::new(|| {
-    let blue: Srgba = Oklcha::new(0.72, 0.14, 255.0, 1.0).into();
-    let orange: Srgba = Oklcha::new(0.72, 0.14, 55.0, 1.0).into();
+    // Uniform samples from CMasher's diverging Guppy colormap.
     colorgrad::GradientBuilder::new()
-        .colors(&[
-            colorgrad::Color::new(blue.red, blue.green, blue.blue, 1.0),
-            colorgrad::Color::new(orange.red, orange.green, orange.blue, 1.0),
+        .html_colors(&[
+            "#fa914f", "#fc7e3d", "#fe6b2c", "#fe541c", "#fd3913", "#f8181c", "#ec022e", "#dd083d",
+            "#cc1349", "#bc1a53", "#ac1e5a", "#9c1f61", "#8c1f65", "#7e1d69", "#701a6c", "#63136f",
+            "#580874", "#5d108a", "#6116a2", "#641dbc", "#6427d4", "#5f35e8", "#5449f1", "#445def",
+            "#356fe7", "#297ede", "#228ad6", "#2296d0", "#25a1cb", "#29abc7", "#2ab6c4", "#27c2c2",
+            "#1eccbf",
         ])
-        .mode(BlendMode::Oklab)
+        .mode(BlendMode::Rgb)
         .build()
-        .expect("two colors form a valid gradient")
+        .expect("Guppy colors form a valid gradient")
 });
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -43,13 +49,21 @@ pub(crate) fn configure(live: NonSend<Live>, mut configs: ResMut<GizmoConfigStor
         BAND_M as f32 * PX_PER_M * live.camera.zoom * 1.05;
 }
 
-pub(crate) fn draw(gizmos: &mut Gizmos<EgoCarpetGizmos>, ego: State, plan: &[State], dt: f64) {
+pub(crate) fn draw(
+    gizmos: &mut Gizmos<EgoCarpetGizmos>,
+    ego: State,
+    plan: &[State],
+    dt: f64,
+    visualization: CarpetVisualization,
+    metrics: Option<&Metrics>,
+) {
     let footprints = sample_footprints(ego, plan, dt);
     let bands = carpet_bands(&footprints);
-    let horizon = footprints.last().map_or(1.0, |s| s.time).max(f64::EPSILON);
+    let values = visualization_values(ego, plan, dt, visualization, metrics);
 
     for band in bands {
-        let color = GRADIENT.at((band.time / horizon) as f32);
+        let index = (band.time / dt).round() as usize;
+        let color = GRADIENT.at(values[index.min(values.len() - 1)] as f32);
         let [red, green, blue, _] = color.to_rgba8();
         let color = Color::Srgba(Srgba::new(
             red as f32 / 255.0,
@@ -67,6 +81,70 @@ pub(crate) fn draw(gizmos: &mut Gizmos<EgoCarpetGizmos>, ego: State, plan: &[Sta
             color,
         );
     }
+}
+
+fn visualization_values(
+    ego: State,
+    plan: &[State],
+    dt: f64,
+    visualization: CarpetVisualization,
+    metrics: Option<&Metrics>,
+) -> Vec<f64> {
+    if let Some(metrics) = metrics {
+        let values = match visualization {
+            CarpetVisualization::Safety => metrics.per_tick.iter().map(|v| v[0]).collect(),
+            CarpetVisualization::Progress => metrics.per_tick.iter().map(|v| v[1]).collect(),
+            CarpetVisualization::Comfort => metrics.per_tick.iter().map(|v| v[2]).collect(),
+            CarpetVisualization::Overall => metrics.score_per_tick.clone(),
+            _ => vec![],
+        };
+        if !values.is_empty() {
+            return values;
+        }
+    }
+
+    let states: Vec<_> = std::iter::once(ego)
+        .chain(plan.iter().skip(1).copied())
+        .collect();
+    let raw = match visualization {
+        CarpetVisualization::Speed => states.iter().map(|state| state.speed).collect(),
+        CarpetVisualization::Time => (0..states.len()).map(|i| i as f64 * dt).collect(),
+        CarpetVisualization::LongitudinalAcceleration => {
+            padded_forward(&states, |a, b| (b.speed - a.speed) / dt)
+        }
+        CarpetVisualization::LateralAcceleration => padded_forward(&states, |a, b| {
+            let dvx = (b.speed * b.yaw.cos() - a.speed * a.yaw.cos()) / dt;
+            let dvy = (b.speed * b.yaw.sin() - a.speed * a.yaw.sin()) / dt;
+            -a.yaw.sin() * dvx + a.yaw.cos() * dvy
+        }),
+        CarpetVisualization::Curvature => padded_forward(&states, |a, b| {
+            wrap_angle(b.yaw - a.yaw) / (a.speed.abs().max(0.1) * dt)
+        }),
+        _ => vec![0.0; states.len()],
+    };
+    let range = match visualization {
+        CarpetVisualization::Speed => (0.0, *MAX_TERMINAL_SPEED_MPS),
+        CarpetVisualization::Time => (
+            0.0,
+            (states.len().saturating_sub(1) as f64 * dt).max(f64::EPSILON),
+        ),
+        CarpetVisualization::LongitudinalAcceleration => (MIN_LON_ACCEL, MAX_LON_ACCEL),
+        CarpetVisualization::LateralAcceleration => (-MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
+        CarpetVisualization::Curvature => (-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE),
+        _ => (0.0, 1.0),
+    };
+    raw.into_iter()
+        .map(|value| ((value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0))
+        .collect()
+}
+
+fn padded_forward(states: &[State], f: impl Fn(&State, &State) -> f64) -> Vec<f64> {
+    let mut result: Vec<_> = states
+        .windows(2)
+        .map(|pair| f(&pair[0], &pair[1]))
+        .collect();
+    result.push(result.last().copied().unwrap_or(0.0));
+    result
 }
 
 fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
@@ -228,5 +306,32 @@ mod tests {
             mean_occupancy_time(nose.state, &[TimedState { state, time: 0.0 }]),
             Some(0.0)
         );
+    }
+
+    #[test]
+    fn every_signal_visualization_is_normalized_for_each_planned_tick() {
+        let ego = State::default();
+        let plan = [State { speed: 2.0, ..ego }, State { speed: 3.0, ..ego }];
+        for visualization in [
+            CarpetVisualization::Speed,
+            CarpetVisualization::Time,
+            CarpetVisualization::LongitudinalAcceleration,
+            CarpetVisualization::LateralAcceleration,
+            CarpetVisualization::Curvature,
+        ] {
+            let values = visualization_values(ego, &plan, DT, visualization, None);
+            assert_eq!(values.len(), plan.len());
+            assert!(values.iter().all(|value| (0.0..=1.0).contains(value)));
+        }
+        assert_eq!(
+            visualization_values(ego, &plan, DT, CarpetVisualization::Time, None),
+            [0.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn metric_extremes_run_from_redorange_to_blue() {
+        assert_eq!(GRADIENT.at(0.0).to_rgba8()[..3], [250, 145, 79]);
+        assert_eq!(GRADIENT.at(1.0).to_rgba8()[..3], [30, 204, 191]);
     }
 }

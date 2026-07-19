@@ -2,6 +2,7 @@ use crate::common::math::smoothstep;
 use bevy_egui::egui;
 
 use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
+use super::super::{MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH};
 use super::style::{brand_header, caps_font};
 
 // Below a conventional 320 px phone width, tighten the card for narrow windows and foldables.
@@ -38,6 +39,7 @@ pub(super) fn show(root: &mut egui::Ui) {
     root.painter().rect_filled(root.max_rect(), 0.0, PANEL);
     brand_header(root, false);
     let compact = root.max_rect().width() < COMPACT_BREAKPOINT;
+    let (title, reason) = prompt_copy(root.max_rect().width(), root.max_rect().height());
     let margin = if compact {
         COMPACT_CARD_MARGIN
     } else {
@@ -66,7 +68,7 @@ pub(super) fn show(root: &mut egui::Ui) {
                         );
                         rotation_arrow(ui, rect);
                         ui.label(
-                            egui::RichText::new("TURN YOUR DEVICE SIDEWAYS")
+                            egui::RichText::new(title)
                                 .font(caps_font(if compact {
                                     COMPACT_TITLE_FONT_SIZE
                                 } else {
@@ -76,7 +78,7 @@ pub(super) fn show(root: &mut egui::Ui) {
                         );
                         ui.add_space(TITLE_BODY_GAP);
                         ui.label(
-                            egui::RichText::new("Nanoplan requires landscape orientation.")
+                            egui::RichText::new(reason)
                                 .size(if compact {
                                     COMPACT_BODY_FONT_SIZE
                                 } else {
@@ -87,6 +89,26 @@ pub(super) fn show(root: &mut egui::Ui) {
                     });
                 });
         });
+}
+
+pub(super) fn prompt_copy(width: f32, height: f32) -> (&'static str, &'static str) {
+    if height > width {
+        (
+            "TURN YOUR DEVICE SIDEWAYS",
+            "Nanoplan requires landscape orientation.",
+        )
+    } else if width < MIN_VIEWPORT_WIDTH {
+        (
+            "MAKE YOUR WINDOW BIGGER",
+            "Nanoplan requires a viewport at least 667 px wide.",
+        )
+    } else {
+        debug_assert!(width / height < MIN_VIEWPORT_ASPECT_RATIO);
+        (
+            "MAKE YOUR WINDOW WIDER",
+            "Nanoplan requires a viewport with at least a 16:9 aspect ratio.",
+        )
+    }
 }
 
 fn rotation_arrow(ui: &egui::Ui, rect: egui::Rect) {

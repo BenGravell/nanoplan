@@ -2,21 +2,21 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
 use super::live::Live;
-use super::{UiState, is_portrait};
+use super::{UiState, viewport_supported};
 
-mod controls;
+pub(crate) mod controls;
 mod hud;
 mod landing;
 mod portrait_prompt;
 mod style;
-mod timeseries;
+mod visualization;
 mod widgets;
 
 use super::colors::PANEL;
 pub(crate) use controls::ControlTab;
 use controls::control_deck;
 use style::configure;
-use timeseries::timeseries_rail;
+use visualization::visualization_rail;
 pub(crate) use widgets::friction_box::FrictionBox;
 
 pub(crate) fn ui(
@@ -39,18 +39,26 @@ pub(crate) fn ui(
         "viewer_ui".into(),
         egui::UiBuilder::new().max_rect(ctx.content_rect()),
     );
-    if is_portrait(root.max_rect().width(), root.max_rect().height()) {
+    if !viewport_supported(root.max_rect().width(), root.max_rect().height()) {
         portrait_prompt::show(&mut root);
         ctx.request_repaint();
         return;
     }
     if !state.started {
         if landing::show(&mut root, &mut state.started) {
-            app_exit.write(AppExit::Success);
+            request_exit(&mut app_exit);
         }
         return;
     }
     viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
+}
+
+fn request_exit(app_exit: &mut MessageWriter<AppExit>) {
+    #[cfg(target_family = "wasm")]
+    if let Some(window) = web_sys::window() {
+        let _ = window.close();
+    }
+    app_exit.write(AppExit::Success);
 }
 
 fn viewer_layout(
@@ -61,13 +69,7 @@ fn viewer_layout(
 ) {
     let viewport = root.max_rect().size();
     let compact = compact_layout(viewport);
-    timeseries_rail(
-        root,
-        state,
-        live,
-        right_rail_width(viewport, compact),
-        compact,
-    );
+    visualization_rail(root, live, right_rail_width(viewport, compact), compact);
     let frame = egui::Frame::new()
         .fill(PANEL)
         .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
@@ -89,7 +91,7 @@ fn right_rail_width(viewport: egui::Vec2, compact: bool) -> f32 {
     if compact {
         compact_rail_widths(viewport).1
     } else {
-        (viewport.x * 0.17).clamp(280.0, 340.0)
+        (viewport.x * 0.12).clamp(220.0, 260.0)
     }
 }
 

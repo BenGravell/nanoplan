@@ -297,7 +297,11 @@ mod tests {
         let trace = test_run(&mut BezierToppraPlanner, ego, &[actor], 300);
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
-        assert!(end.x < 45.0, "x {}", end.x);
+        assert!(
+            end.x <= actor.x - crate::geometry::EGO_FOOTPRINT.length + 1e-9,
+            "x {}",
+            end.x
+        );
     }
 
     #[test]

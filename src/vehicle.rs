@@ -4,6 +4,19 @@
 //! track-focused road car.
 //! c.f. <https://fastestlaps.com/models/ford-gt-2017>
 
+/// 2017 Ford GT exterior dimensions, m.
+pub(crate) const BODY_LENGTH_M: f64 = 4.779;
+pub(crate) const BODY_WIDTH_M: f64 = 2.003;
+pub(crate) const WHEELBASE_M: f32 = 2.710;
+pub(crate) const FRONT_TRACK_M: f32 = 1.694;
+pub(crate) const REAR_TRACK_M: f32 = 1.662;
+
+/// 245/35 R20 front and 325/30 R20 rear tire dimensions, m.
+pub(crate) const FRONT_TIRE_DIAMETER_M: f32 = 0.6795;
+pub(crate) const FRONT_TIRE_WIDTH_M: f32 = 0.245;
+pub(crate) const REAR_TIRE_DIAMETER_M: f32 = 0.703;
+pub(crate) const REAR_TIRE_WIDTH_M: f32 = 0.325;
+
 /// Strongest requested forward acceleration before rolling/aero losses, m/s2.
 pub(crate) const MAX_LON_ACCEL: f64 = 6.5;
 /// Hardest braking deceleration, m/s2.

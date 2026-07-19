@@ -60,7 +60,13 @@
     <button id="fullscreen" aria-label="Enter full screen" title="Full screen">&#x26F6;</button>
     <script>
       const button = document.querySelector("#fullscreen");
-      button.addEventListener("click", () => document.documentElement.requestFullscreen());
+      const enterFullscreen = () => {
+        if (!document.fullscreenElement)
+          document.documentElement.requestFullscreen?.().catch(() => {});
+      };
+      button.addEventListener("click", enterFullscreen);
+      document.addEventListener("pointerdown", enterFullscreen, { once: true });
+      document.addEventListener("keydown", enterFullscreen, { once: true });
       document.addEventListener("fullscreenchange", () => {
         button.hidden = Boolean(document.fullscreenElement);
       });

@@ -60,6 +60,7 @@ impl Default for CameraState {
 pub(crate) fn camera_input(
     mut live: NonSendMut<Live>,
     mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
@@ -72,6 +73,16 @@ pub(crate) fn camera_input(
             MouseScrollUnit::Pixel => scroll.delta.y / 50.0,
         };
         live.camera.zoom = (live.camera.zoom * 1.1f32.powf(scroll_steps)).clamp(MIN_ZOOM, MAX_ZOOM);
+
+        let touches: Vec<_> = touches.iter().take(2).collect();
+        if let [first, second] = touches.as_slice() {
+            let previous = first
+                .previous_position()
+                .distance(second.previous_position());
+            let current = first.position().distance(second.position());
+            live.camera.zoom =
+                (live.camera.zoom * pinch_scale(previous, current)).clamp(MIN_ZOOM, MAX_ZOOM);
+        }
 
         if mouse.pressed(MouseButton::Middle) && motion.delta != Vec2::ZERO {
             let drag = Rot2::radians(live.camera.rotation)
@@ -122,6 +133,14 @@ pub(crate) fn camera_input(
     if rotation_input != 0 {
         live.camera.rotation += rotation_input as f32 * time.delta_secs();
         live.camera.align_heading = false;
+    }
+}
+
+pub(super) fn pinch_scale(previous_distance: f32, current_distance: f32) -> f32 {
+    if previous_distance > f32::EPSILON {
+        current_distance / previous_distance
+    } else {
+        1.0
     }
 }
 

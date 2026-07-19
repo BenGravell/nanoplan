@@ -6,16 +6,17 @@ mod polygon;
 
 use crate::common::measure::dot;
 use crate::simulation::{Pose, State};
+use crate::vehicle::{BODY_LENGTH_M, BODY_WIDTH_M};
 
 pub(crate) use footprint::Footprint;
 pub(crate) use polygon::{polygons_overlap, segments_intersect};
 
-/// Representative passenger-car footprint.
-pub(crate) const EGO_FOOTPRINT: Footprint = Footprint::new(5.176, 2.297);
+/// 2017 Ford GT body footprint.
+pub(crate) const EGO_FOOTPRINT: Footprint = Footprint::new(BODY_LENGTH_M, BODY_WIDTH_M);
 pub(crate) const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
 
 /// Circumscribed ego radius for callers that need a scalar bound.
-pub(crate) const EGO_COLLISION_RADIUS_M: f64 = 2.8313947534739836;
+pub(crate) const EGO_COLLISION_RADIUS_M: f64 = 2.5908902910003735;
 pub(crate) const CAR_COLLISION_RADIUS_M: f64 = EGO_COLLISION_RADIUS_M;
 
 /// Constant-speed, constant-heading projection.

@@ -1,7 +1,10 @@
 use crate::common::math::wrap_angle;
 use crate::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::simulation::State;
-use crate::vehicle::MAX_ABS_CURVATURE;
+use crate::vehicle::{
+    FRONT_TIRE_DIAMETER_M, FRONT_TIRE_WIDTH_M, FRONT_TRACK_M, MAX_ABS_CURVATURE,
+    REAR_TIRE_DIAMETER_M, REAR_TIRE_WIDTH_M, REAR_TRACK_M, WHEELBASE_M,
+};
 use crate::world::SmartActor;
 use bevy::prelude::*;
 
@@ -9,8 +12,6 @@ use super::super::rendering::interpolate_state;
 use super::super::screen::{PX_PER_M, px};
 
 const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
-const TIRE_LENGTH_M: f32 = 0.75;
-const TIRE_WIDTH_M: f32 = 0.24;
 const TIRE_COLOR: Color = Color::srgb(0.02, 0.02, 0.02);
 
 pub(in crate::viewer::live) fn draw(
@@ -68,16 +69,30 @@ fn draw_vehicle(
         iso * Vec2::new(size.x * PX_PER_M / 2.0, 0.0),
         color,
     );
-    let tire_size = Vec2::new(TIRE_LENGTH_M, TIRE_WIDTH_M) * PX_PER_M;
     let steering = (curvature * footprint.length).atan() as f32;
-    for (x, angle) in [(-size.x / 2.0, 0.0), (size.x / 2.0, steering)] {
-        for y in [-size.y / 2.0, size.y / 2.0] {
+    for (x, track, diameter, width, angle) in [
+        (
+            -WHEELBASE_M / 2.0,
+            REAR_TRACK_M,
+            REAR_TIRE_DIAMETER_M,
+            REAR_TIRE_WIDTH_M,
+            0.0,
+        ),
+        (
+            WHEELBASE_M / 2.0,
+            FRONT_TRACK_M,
+            FRONT_TIRE_DIAMETER_M,
+            FRONT_TIRE_WIDTH_M,
+            steering,
+        ),
+    ] {
+        for y in [-track / 2.0, track / 2.0] {
             gizmos.rect_2d(
                 Isometry2d::new(
                     iso * (Vec2::new(x, y) * PX_PER_M),
                     Rot2::radians(state.yaw as f32 + angle),
                 ),
-                tire_size,
+                Vec2::new(diameter, width) * PX_PER_M,
                 TIRE_COLOR,
             );
         }
