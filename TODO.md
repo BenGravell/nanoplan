@@ -12,17 +12,6 @@ Taxonomy of planners
 - Local optimization (iLQR)
 
 --
-src/prediction.rs
-Notion of lane and lane association are irrelevant on a race track. Remove lane association logic.
-
---
-src/prediction.rs
-Prediction model should assume that actors will initially follow the track at the actors current lateral offset from centerline, then return to track centerline over time.
-Basically use a Frenet motion decomposition.
-Longitudinal motion: maintain current speed
-Lateral motion: smooth return to centerline
-
---
 Focus on getting planners performing well when no other actors are present.
 We should see racelines (setting up outside of a corner and hitting the apex of the turn) emerge naturally. 
 
@@ -33,7 +22,7 @@ We should see racelines (setting up outside of a corner and hitting the apex of 
 Fix the actors. They should run a basic planner instead of using magic unphysical motion.
 
 --
-Add options for the non- ego racers.
+Add a left-menu tab with options for the non- ego racers.
 1. Slider for the count. Should range from zero to eight.
 2. Planner to use for actors.
 3. Personality characteristics. 
@@ -61,15 +50,12 @@ This works for static obstacles.
 
 ## UX
 
-
 --
-
 Make the speed readout widget on the right rail use a fun speedometer gauge.
 
-Use a Wipeout videogame style 45 degree chamfer gauge (bent angle in lower right corner) with perimeter ring fill based on current speed.
+Use a Wipeout videogame style 45 degree chamfer gauge (bent angle in lower right corner) with perimeter ring fill based on current speed. Color gradient fill by guppy colormap (blue at low speed end, orange at high speed end)
 
 Use terminal speed limit as the upper bound. Use zero as lower bound. Use absolute value of velocity to get non negative speed value to handle reversing. 
-
 
 --
 ego carpet

@@ -202,11 +202,10 @@ struct Node {
 /// same points, doubling the hot-loop work; merging them halves it with no
 /// change to which edges are feasible or what they cost.
 ///
-/// Feasible means every point clears every actor's lane-aware predicted
-/// position ([`crate::prediction::predict`], with this planner's own
+/// Feasible means every point clears every actor's predicted position
+/// ([`crate::prediction::predict`], with this planner's own
 /// `COLLISION_MARGIN_M` headroom on top of the metric objective's hard-collision
-/// check — an actor driving the route is predicted along its curve), stays on
-/// the drivable
+/// check), stays on the drivable
 /// road, and keeps the curve's curvature within what's actually drivable.
 /// The edge cost is the composite-metric objective sampled along the curve
 /// (timed under the `cost` seam). Curvature
@@ -226,7 +225,7 @@ fn steer_cost(
     [sa, sb]: [f64; 2],
 ) -> Option<f64> {
     let mut total = 0.0;
-    let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
+    let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
@@ -251,7 +250,7 @@ fn steer_cost(
         }
         let t = (s - s0) / v;
         for a in ctx.actors {
-            let predicted = predict(a, Some(path), t);
+            let predicted = predict(a, path, t);
             if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
                 return None;
             }

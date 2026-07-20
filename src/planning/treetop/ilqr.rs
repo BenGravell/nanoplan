@@ -166,7 +166,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
         .ctx
         .actors
         .iter()
-        .map(|a| predict(a, Some(ocp.path), t_s))
+        .map(|a| predict(a, ocp.path, t_s))
         .collect();
     let eval = |z: [f64; 6]| {
         ocp.stage_cost_with_predicted_actors(
@@ -680,7 +680,7 @@ mod tests {
             curvature: 0.02,
         };
         let t = 3;
-        let predicted = [predict(&actor, Some(&path), t as f64 * road.dt)];
+        let predicted = [predict(&actor, &path, t as f64 * road.dt)];
 
         let regular = tc.stage(&x, u, t, None);
         let reused = tc.stage_with_predicted_actors(&x, u, t, None, &predicted);

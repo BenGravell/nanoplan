@@ -3,7 +3,7 @@
 //! Every planner prices a feasible sample with the complement of the
 //! production metrics composite: safety gates the candidate, then progress
 //! and comfort determine its cost. Actor states are projected with the shared
-//! lane-aware predictor before applying the safety gate. Optimizers that
+//! kinematic predictor before applying the safety gate. Optimizers that
 //! cannot carry infinity use the same boundary with a finite escape slope.
 
 pub(crate) use crate::planning::constraints::{HardConstraints, Sample};
@@ -34,8 +34,9 @@ mod tests {
 
     const HALF_WIDTH_M: f64 = 5.5;
 
-    fn point_cost(sample: &Sample, actors: &[State], lane: Option<&Path>) -> f64 {
-        HardConstraints::new(HALF_WIDTH_M, actors, lane).point_cost(sample)
+    fn point_cost(sample: &Sample, actors: &[State]) -> f64 {
+        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        HardConstraints::new(HALF_WIDTH_M, actors, &track).point_cost(sample)
     }
 
     #[test]
@@ -52,7 +53,7 @@ mod tests {
             comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
         ];
         assert_eq!(
-            point_cost(&sample, &[], None),
+            point_cost(&sample, &[]),
             1.0 - aggregation::composite(&METRICS, &scores)
         );
     }
@@ -63,15 +64,14 @@ mod tests {
             x: 1.0,
             ..Default::default()
         };
-        assert!(point_cost(&Sample::default(), &[actor], None).is_infinite());
+        assert!(point_cost(&Sample::default(), &[actor]).is_infinite());
         assert!(
             point_cost(
                 &Sample {
                     lateral: 10.0,
                     ..Default::default()
                 },
-                &[],
-                None
+                &[]
             )
             .is_infinite()
         );
@@ -86,7 +86,6 @@ mod tests {
                     ..Default::default()
                 },
                 &[],
-                None,
             )
         };
         assert!(cost(20.0) < cost(10.0));
@@ -94,7 +93,8 @@ mod tests {
 
     #[test]
     fn soft_violation_cost_has_an_escape_slope() {
-        let constraints = HardConstraints::new(HALF_WIDTH_M, &[], None);
+        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        let constraints = HardConstraints::new(HALF_WIDTH_M, &[], &track);
         let near = Sample {
             lateral: HALF_WIDTH_M + 0.5,
             ..Default::default()
@@ -104,23 +104,6 @@ mod tests {
             ..Default::default()
         };
         assert!(constraints.soft_point_cost(&far) > constraints.soft_point_cost(&near));
-    }
-
-    #[test]
-    fn lane_association_predicts_actors_around_a_bend() {
-        let lane = Path::new(&[[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]);
-        let actor = State {
-            x: 40.0,
-            speed: 10.0,
-            ..Default::default()
-        };
-        let sample = Sample {
-            xy: [50.0, 10.0],
-            t: 2.0,
-            ..Default::default()
-        };
-        assert!(point_cost(&sample, &[actor], None).is_finite());
-        assert!(point_cost(&sample, &[actor], Some(&lane)).is_infinite());
     }
 
     #[test]

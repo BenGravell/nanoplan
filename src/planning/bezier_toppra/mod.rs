@@ -59,7 +59,7 @@ impl Planner for BezierToppraPlanner {
                     let d = i as f64 * ds;
                     let xy = planned_position(&b, &path, s0, lookahead, d);
                     if ctx.actors.iter().any(|actor| {
-                        let p = predict(actor, Some(&path), time);
+                        let p = predict(actor, &path, time);
                         (xy[0] - p.x).hypot(xy[1] - p.y)
                             < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
                     }) {

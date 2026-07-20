@@ -45,8 +45,8 @@ impl Path {
         self.project_range(p.into(), 0, self.pts.len() - 1)
     }
 
-    /// Projection and track heading cached for the handful of unchanged
-    /// actor states repeatedly predicted during one planner call.
+    /// Projection and track heading cached for unchanged actor states that
+    /// are predicted repeatedly during one planner call.
     pub(crate) fn actor_projection(&self, state: State) -> (f64, f64, f64) {
         if let Some((_, projection)) = self
             .actor_projections

@@ -5,7 +5,7 @@ mod footprint;
 mod polygon;
 
 use crate::common::measure::dot;
-use crate::simulation::{Pose, State};
+use crate::simulation::Pose;
 use crate::vehicle::{BODY_LENGTH_M, BODY_WIDTH_M};
 
 pub(crate) use footprint::Footprint;
@@ -18,15 +18,6 @@ pub(crate) const CAR_FOOTPRINT: Footprint = EGO_FOOTPRINT;
 /// Circumscribed ego radius for callers that need a scalar bound.
 pub(crate) const EGO_COLLISION_RADIUS_M: f64 = 2.5908902910003735;
 pub(crate) const CAR_COLLISION_RADIUS_M: f64 = EGO_COLLISION_RADIUS_M;
-
-/// Constant-speed, constant-heading projection.
-pub(crate) fn project(s: &State, t: f64) -> State {
-    State {
-        x: s.x + s.speed * s.yaw.cos() * t,
-        y: s.y + s.speed * s.yaw.sin() * t,
-        ..*s
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Overlap {

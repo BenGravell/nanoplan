@@ -78,7 +78,7 @@ impl Planner for LatticePlanner {
             speed: v,
             horizon_m,
         } = ctx.time("route", || RoadFrame::new(ego, ctx));
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(&path));
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, &path);
         let lateral_bound = (ctx.road.half_width - EGO_FOOTPRINT.width / 2.0).max(0.0);
         let horizon_m = horizon_m.min((path.length() - s0).max(1.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full

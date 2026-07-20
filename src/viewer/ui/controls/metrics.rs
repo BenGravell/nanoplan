@@ -75,14 +75,14 @@ pub(crate) fn preview_metrics(live: &Live) -> Metrics {
     let ego: Vec<State> = std::iter::once(live.world.ego())
         .chain(live.world.plan.iter().skip(1).copied())
         .collect();
-    let path = Path::new(&live.world.road.centerline);
+    let track = Path::new(&live.world.road.centerline);
     let actors: Vec<Vec<State>> = live
         .world
         .actors
         .iter()
         .map(|actor| {
             (0..ego.len())
-                .map(|i| predict(&actor.state, Some(&path), i as f64 * live.world.dt()))
+                .map(|i| predict(&actor.state, &track, i as f64 * live.world.dt()))
                 .collect()
         })
         .collect();

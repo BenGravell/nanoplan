@@ -123,7 +123,7 @@ fn append_segment(
 }
 
 fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<f64> {
-    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
+    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path);
     let mut x = ego;
     let mut total = 0.0;
     let mut feasible = true;

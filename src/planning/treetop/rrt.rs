@@ -147,7 +147,7 @@ impl Tree {
             layers: std::array::from_fn(|_| Vec::new()),
         };
         let g = Grower { path, ctx };
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
 
         // Root node.
         tree.nodes.push(Node {
@@ -443,7 +443,7 @@ impl Grower<'_, '_> {
         let mut total = 0.0;
         let mut collides = false;
         let constraints =
-            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, Some(self.path));
+            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, self.path);
         for i in 0..us.len() {
             let x = &xs[i + 1];
             let (_, mut sample) =

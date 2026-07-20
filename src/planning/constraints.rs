@@ -57,13 +57,13 @@ impl HardConstraint for DrivableArea {
 
 struct CollisionFree<'a> {
     actors: &'a [State],
-    lane: Option<&'a Path>,
+    track: &'a Path,
 }
 
 impl HardConstraint for CollisionFree<'_> {
     fn is_violated(&self, sample: &Sample) -> bool {
         self.actors.iter().any(|a| {
-            let predicted = predict(a, self.lane, sample.t);
+            let predicted = predict(a, self.track, sample.t);
             (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y) < COLLISION_DIAMETER_M
         })
     }
@@ -72,7 +72,7 @@ impl HardConstraint for CollisionFree<'_> {
         self.actors
             .iter()
             .map(|a| {
-                let p = predict(a, self.lane, sample.t);
+                let p = predict(a, self.track, sample.t);
                 let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
                 (COLLISION_DIAMETER_M - gap).max(0.0)
             })
@@ -91,12 +91,12 @@ pub(crate) struct HardConstraints<'a> {
 }
 
 impl<'a> HardConstraints<'a> {
-    pub(crate) fn new(road_half_width: f64, actors: &'a [State], lane: Option<&'a Path>) -> Self {
+    pub(crate) fn new(road_half_width: f64, actors: &'a [State], track: &'a Path) -> Self {
         HardConstraints {
             drivable: DrivableArea {
                 half_width: road_half_width,
             },
-            collision: CollisionFree { actors, lane },
+            collision: CollisionFree { actors, track },
         }
     }
 

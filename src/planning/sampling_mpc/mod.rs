@@ -292,7 +292,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             accel: u.acceleration,
             t: t as f64 * ctx.road.dt,
         };
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, Some(path));
+        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
         // The metric objective with hard violations made finite by a depth-scaled
         // escape slope (`soft_point_cost`): a flat penalty plateau leaves
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
