@@ -3,7 +3,7 @@ use bevy_egui::egui;
 
 use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
 use super::super::{MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH};
-use super::style::{brand_header, caps_font};
+use super::style::caps_font;
 
 // Below a conventional 320 px phone width, tighten the card for narrow windows and foldables.
 const COMPACT_BREAKPOINT: f32 = 320.0;
@@ -37,7 +37,6 @@ const MIN_MITER_DOT: f32 = 0.25;
 
 pub(super) fn show(root: &mut egui::Ui) {
     root.painter().rect_filled(root.max_rect(), 0.0, PANEL);
-    brand_header(root, false);
     let compact = root.max_rect().width() < COMPACT_BREAKPOINT;
     let (title, reason) = prompt_copy(root.max_rect().width(), root.max_rect().height());
     let margin = if compact {

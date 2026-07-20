@@ -193,12 +193,12 @@ fn portrait_prompt_is_the_only_interactive_view() {
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
         for label in [
-            "NANOPLAN",
             "TURN YOUR DEVICE SIDEWAYS",
             "Nanoplan requires landscape orientation.",
         ] {
             assert!(screen.contains_rect(harness.get_by_label(label).rect()));
         }
+        assert!(harness.query_by_label("NANOPLAN").is_none());
         assert!(harness.query_by_label("PAUSE").is_none());
     }
 }

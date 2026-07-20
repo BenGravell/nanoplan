@@ -101,20 +101,3 @@ pub(super) fn configure(ctx: &egui::Context) {
 pub(super) fn caps_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name("caps".into()))
 }
-
-pub(super) fn brand_header(ui: &mut egui::Ui, compact: bool) {
-    let width = ui.available_width();
-    egui::Frame::new()
-        .fill(ORANGE)
-        .inner_margin(egui::Margin::symmetric(8, 5))
-        .show(ui, |ui| {
-            ui.set_min_width(width - 16.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    egui::RichText::new("NANOPLAN")
-                        .font(caps_font(if compact { 20.0 } else { 24.0 }))
-                        .color(egui::Color32::WHITE),
-                );
-            });
-        });
-}
