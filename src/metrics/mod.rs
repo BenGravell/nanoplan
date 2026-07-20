@@ -110,7 +110,7 @@ pub(crate) fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Met
     if n == 0 {
         return Metrics::default();
     }
-    let path = Path::new(&road.centerline);
+    let path = Path::new(road.centerline());
     let station: Vec<f64> = ego.iter().map(|s| path.project(s.position()).0).collect();
     let actors_at: Vec<Vec<State>> = (0..n)
         .map(|i| actors.iter().map(|a| a[i]).collect())
@@ -256,16 +256,8 @@ mod tests {
         // fixed constant
         let mut ego = cruise(10.0, 200);
         ego[50].y = 4.0;
-        let wide = Road {
-            half_width: 5.5,
-            barriers: crate::geometry::barrier::road_side_barriers(&road().centerline, 5.5),
-            ..road()
-        };
-        let narrow = Road {
-            half_width: 3.5,
-            barriers: crate::geometry::barrier::road_side_barriers(&road().centerline, 3.5),
-            ..road()
-        };
+        let wide = Road::new(CENTERLINE.to_vec(), 10.0, 5.5, DT);
+        let narrow = Road::new(CENTERLINE.to_vec(), 10.0, 3.5, DT);
         assert_eq!(evaluate(&ego, &[], &wide).aggregate[0], 1.0);
         assert_eq!(evaluate(&ego, &[], &narrow).aggregate[0], 0.0);
     }

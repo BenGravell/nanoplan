@@ -425,11 +425,7 @@ mod tests {
         // A one-lane-wide road (3.5 m half-width) has just enough room to
         // detour around a stopped car (needs ~2.5 m of clearance): the
         // lattice passes it while never crossing the road edge.
-        let narrow = Road {
-            half_width: 3.5,
-            barriers: crate::geometry::barrier::road_side_barriers(&base.centerline, 3.5),
-            ..base.clone()
-        };
+        let narrow = Road::new(base.centerline().to_vec(), base.target_speed, 3.5, base.dt);
         let trace = test_run_on(&mut LatticePlanner, &narrow, ego, &[obstacle], 150);
         assert!(peak(&trace) <= 3.5, "left the road, peak {}", peak(&trace));
         assert!(
@@ -440,11 +436,7 @@ mod tests {
         // A road too tight to fit the detour: rather than plan off the
         // surface to get around, the planner holds inside the road edge
         // (and brakes short of the obstacle).
-        let too_tight = Road {
-            half_width: 2.0,
-            barriers: crate::geometry::barrier::road_side_barriers(&base.centerline, 2.0),
-            ..base
-        };
+        let too_tight = Road::new(base.centerline().to_vec(), base.target_speed, 2.0, base.dt);
         let trace = test_run_on(&mut LatticePlanner, &too_tight, ego, &[obstacle], 150);
         assert!(
             peak(&trace) <= 2.0,

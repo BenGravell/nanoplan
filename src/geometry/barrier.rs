@@ -1,6 +1,7 @@
 //! Physical road-side barrier segments and ego collision response.
 
 use super::EGO_FOOTPRINT;
+use super::RoadPolygon;
 use crate::simulation::{Position, State};
 use crate::track::Road;
 
@@ -130,56 +131,17 @@ impl Barrier {
     }
 }
 
-pub(crate) fn road_side_barriers(centerline: &[[f64; 2]], half_width: f64) -> Vec<Barrier> {
-    if centerline.len() < 2 {
-        return vec![];
-    }
-    let normals: Vec<_> = centerline
-        .windows(2)
-        .map(|w| {
-            let len = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]).max(1e-9);
-            [-(w[1][1] - w[0][1]) / len, (w[1][0] - w[0][0]) / len]
-        })
-        .collect();
-    let offset: Vec<_> = centerline
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let (miter, denominator) = if i == 0 {
-                (normals[0], 1.0)
-            } else if i == centerline.len() - 1 {
-                (normals[i - 1], 1.0)
-            } else {
-                let prev = normals[i - 1];
-                let next = normals[i];
-                (
-                    [prev[0] + next[0], prev[1] + next[1]],
-                    1.0 + prev[0] * next[0] + prev[1] * next[1],
-                )
-            };
+pub(crate) fn road_side_barriers(road: &RoadPolygon) -> Vec<Barrier> {
+    (0..road.segment_count())
+        .flat_map(|i| {
+            let next = (i + 1) % road.centerline().len();
+            let (left_a, left_b) = (road.left_boundary()[i], road.left_boundary()[next]);
+            let (right_a, right_b) = (road.right_boundary()[i], road.right_boundary()[next]);
+            let left_tangent = [left_b[0] - left_a[0], left_b[1] - left_a[1]];
+            let right_tangent = [right_b[0] - right_a[0], right_b[1] - right_a[1]];
             [
-                half_width * miter[0] / denominator.max(1e-9),
-                half_width * miter[1] / denominator.max(1e-9),
-            ]
-        })
-        .collect();
-
-    centerline
-        .windows(2)
-        .enumerate()
-        .flat_map(|(i, w)| {
-            let (a, b, left) = (w[0], w[1], normals[i]);
-            [
-                Barrier::new(
-                    [a[0] + offset[i][0], a[1] + offset[i][1]],
-                    [b[0] + offset[i + 1][0], b[1] + offset[i + 1][1]],
-                    left,
-                ),
-                Barrier::new(
-                    [a[0] - offset[i][0], a[1] - offset[i][1]],
-                    [b[0] - offset[i + 1][0], b[1] - offset[i + 1][1]],
-                    [-left[0], -left[1]],
-                ),
+                Barrier::new(left_a, left_b, [-left_tangent[1], left_tangent[0]]),
+                Barrier::new(right_a, right_b, [right_tangent[1], -right_tangent[0]]),
             ]
         })
         .collect()
@@ -232,13 +194,13 @@ fn collide_centers_with_barriers(
 
 /// Clamp the ego to the road sides and reflect its outward velocity component.
 pub(crate) fn collide_with_road_barriers(prev: State, state: State, road: &Road) -> State {
-    let Some(i) = closest_centerline_segment(&road.centerline, center_state(state).position())
-    else {
+    let centerline = road.polygon().centerline();
+    let Some(i) = closest_centerline_segment(centerline, center_state(state).position()) else {
         return state;
     };
     let start = 2 * i.saturating_sub(1);
-    let end = 2 * (i + 2).min(road.centerline.len() - 1);
-    let Some(barriers) = road.barriers.get(start..end) else {
+    let end = 2 * (i + 2).min(centerline.len() - 1);
+    let Some(barriers) = road.barriers().get(start..end) else {
         return state;
     };
     collide_with_barriers(prev, state, barriers.iter().copied())
@@ -370,10 +332,30 @@ mod tests {
 
     #[test]
     fn road_barriers_are_continuous_through_polyline_joints() {
-        let barriers = road_side_barriers(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 3.5);
+        let road = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 3.5).unwrap();
+        let barriers = road_side_barriers(&road);
 
         assert_eq!(barriers[0].b, barriers[2].a);
         assert_eq!(barriers[1].b, barriers[3].a);
+    }
+
+    #[test]
+    fn barriers_are_the_polygon_boundary_segments() {
+        let road = RoadPolygon::new(
+            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            vec![1.0, 2.0, 3.0],
+            vec![4.0, 5.0, 6.0],
+            false,
+        )
+        .unwrap();
+        let barriers = road_side_barriers(&road);
+
+        for i in 0..road.segment_count() {
+            assert_eq!(barriers[2 * i].a, road.left_boundary()[i].into());
+            assert_eq!(barriers[2 * i].b, road.left_boundary()[i + 1].into());
+            assert_eq!(barriers[2 * i + 1].a, road.right_boundary()[i].into());
+            assert_eq!(barriers[2 * i + 1].b, road.right_boundary()[i + 1].into());
+        }
     }
 
     #[test]

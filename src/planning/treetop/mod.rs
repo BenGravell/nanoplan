@@ -206,7 +206,7 @@ pub(crate) fn take_warm(
 
 impl Planner for TreetopPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
         let goal = goal_state(&path, ego, ctx);
         let warm = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
@@ -281,7 +281,7 @@ mod tests {
     fn goal_state_sits_on_the_centerline_at_target_speed() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let ego = State {
             speed: 10.0,
             ..Default::default()

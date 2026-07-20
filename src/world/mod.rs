@@ -3,19 +3,18 @@
 use web_time::Instant;
 
 use crate::common::rng::Rng;
-use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT};
+use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
 use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Control, Simulator, State};
-use crate::track::{Road, Track};
+use crate::track::{ROAD_SAMPLE_STEP_M, Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
 
 const DEFAULT_PREVIEW_TICKS: usize = 30;
 const ROAD_BEHIND_M: f64 = 50.0;
 const ROAD_AHEAD_M: f64 = 250.0;
-const ROAD_SAMPLE_M: f64 = 15.0;
 const ACTOR_MARGIN_M: f64 = 25.0;
 
 /// A car following the same single track as the ego.
@@ -277,11 +276,15 @@ fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64
 }
 
 fn road_window(track: &Track, x: f64, dt: f64) -> Road {
-    let centerline = track.centerline(x - ROAD_BEHIND_M, x + ROAD_AHEAD_M, ROAD_SAMPLE_M);
-    // The planners currently accept one width per horizon; curvature and the
-    // rendered track remain continuously varying.
-    let half_width = track.half_width(x).max(EGO_FOOTPRINT.width / 2.0 + 0.5);
-    Road::new(centerline, *MAX_TERMINAL_SPEED_MPS, half_width, dt)
+    let polygon = track
+        .road_polygon(
+            x - ROAD_BEHIND_M,
+            x + ROAD_AHEAD_M,
+            ROAD_SAMPLE_STEP_M,
+            false,
+        )
+        .expect("track road window must form a valid polygon");
+    Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt)
 }
 
 fn timed<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T) -> T {
@@ -294,6 +297,7 @@ fn timed<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::EGO_FOOTPRINT;
 
     #[test]
     fn world_keeps_driving_without_a_route_or_goal() {
@@ -302,7 +306,7 @@ mod tests {
             world.tick_with_latency(None);
         }
         assert!(world.track_progress > 5.0);
-        assert!(world.road.centerline.len() > 10);
+        assert!(world.road.centerline().len() > 10);
     }
 
     #[test]

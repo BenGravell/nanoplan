@@ -326,7 +326,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let cfg = self.opt.config();
         let num_nodes = cfg.num_nodes;
-        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
 
         // Warm start: reuse last tick's nominal knot-deviations when the ego
         // followed the plan (they still describe a good maneuver to refine),
@@ -419,7 +419,7 @@ mod tests {
     fn base_policy_steers_toward_the_lane() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         // from y = +2 (left of the lane), the base policy steers right
         // (negative curvature). The nominal throttle keeps weighted-average
         // optimizers stable; progress, not a speed-tracking cost, pays for it.

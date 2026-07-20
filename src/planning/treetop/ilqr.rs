@@ -528,7 +528,7 @@ const SOLO_ITERS: usize = 12;
 
 impl Planner for IlqrPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
         let init = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
                 .unwrap_or_else(|| centerline_follow_controls(ego, &path, ctx, TICKS))
@@ -613,7 +613,7 @@ mod tests {
     fn solve_improves_on_a_poor_initial_guess() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let ego = State {
             y: 2.0,
             speed: 6.0,
@@ -637,7 +637,7 @@ mod tests {
     fn stage_derivs_include_composite_comfort() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let ego = State {
             speed: 8.0,
             ..Default::default()
@@ -668,7 +668,7 @@ mod tests {
         let actors = [actor];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let tc = TrajectoryCost::new(&path, &ctx);
         let x = State {
             x: 5.0,

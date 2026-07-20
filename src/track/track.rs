@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::catalog::loaded_catalog;
 use super::circuit::Circuit;
+use crate::geometry::RoadPolygon;
 
 pub(crate) const GENERATED_TRACK_NAME: &str = "Generated Circuit";
 
@@ -70,12 +71,35 @@ impl Track {
         right.min(left)
     }
 
+    #[cfg(test)]
     pub(crate) fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<[f64; 2]> {
         let first = (from / step).floor() as i64;
         let last = (to / step).ceil() as i64;
         (first..=last)
             .map(|i| self.point(i as f64 * step))
             .collect()
+    }
+
+    pub(crate) fn road_polygon(
+        &self,
+        from: f64,
+        to: f64,
+        step: f64,
+        closed: bool,
+    ) -> Option<RoadPolygon> {
+        let progress = if closed {
+            let count = ((to - from) / step).ceil().max(2.0) as usize;
+            (0..count)
+                .map(|i| from + i as f64 * step)
+                .collect::<Vec<_>>()
+        } else {
+            let first = (from / step).floor() as i64;
+            let last = (to / step).ceil() as i64;
+            (first..=last).map(|i| i as f64 * step).collect::<Vec<_>>()
+        };
+        let centerline = progress.iter().map(|&s| self.point(s)).collect();
+        let (right_widths, left_widths) = progress.iter().map(|&s| self.widths(s)).unzip();
+        RoadPolygon::new(centerline, right_widths, left_widths, closed)
     }
 
     pub(crate) fn lap_length(&self) -> Option<f64> {

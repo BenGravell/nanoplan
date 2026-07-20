@@ -19,7 +19,7 @@ pub(crate) struct BezierToppraPlanner;
 impl Planner for BezierToppraPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0) = ctx.time("route", || {
-            let path = Path::new(&ctx.road.centerline);
+            let path = Path::new(ctx.road.centerline());
             let (s0, _) = path.project(ego.position());
             (path, s0)
         });
@@ -363,7 +363,7 @@ mod tests {
                     latency: None,
                     diagnostics: None,
                 };
-                let path = Path::new(&road.centerline);
+                let path = Path::new(road.centerline());
                 let mut state = ego;
                 for (tick, control) in BezierToppraPlanner.plan(ego, &ctx).into_iter().enumerate() {
                     state = world_step(state, control, road.dt);

@@ -3,6 +3,7 @@
 pub(crate) mod barrier;
 mod footprint;
 mod polygon;
+mod road_polygon;
 
 use crate::common::measure::dot;
 use crate::simulation::Pose;
@@ -10,6 +11,7 @@ use crate::vehicle::{BODY_LENGTH_M, BODY_WIDTH_M};
 
 pub(crate) use footprint::Footprint;
 pub(crate) use polygon::{polygons_overlap, segments_intersect};
+pub(crate) use road_polygon::RoadPolygon;
 
 /// 2017 Ford GT body footprint.
 pub(crate) const EGO_FOOTPRINT: Footprint = Footprint::new(BODY_LENGTH_M, BODY_WIDTH_M);

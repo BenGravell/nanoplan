@@ -88,7 +88,6 @@ impl Default for UiState {
 
 pub(crate) fn run() {
     App::new()
-        .init_gizmo_group::<live::RoadSurfaceGizmos>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "nanoplan".into(),
@@ -113,16 +112,21 @@ pub(crate) fn run() {
         )))
         .init_resource::<UiState>()
         .init_non_send::<live::Live>()
-        .add_systems(Startup, |mut commands: Commands| {
-            commands.spawn((Camera2d, VIEW_MSAA));
-        })
+        .add_systems(
+            Startup,
+            (
+                |mut commands: Commands| {
+                    commands.spawn((Camera2d, VIEW_MSAA));
+                },
+                live::setup_road_surface,
+            ),
+        )
         .add_systems(EguiPrimaryContextPass, ui::ui)
         .add_systems(
             Update,
             (
                 live::camera_input,
                 live::update,
-                live::configure_road_surface,
                 live::configure_carpet,
                 live::configure_diagnostics,
                 live::configure_plan,

@@ -26,7 +26,7 @@ pub(crate) struct RoadFrame {
 
 impl RoadFrame {
     pub(crate) fn new(ego: State, ctx: &Context) -> Self {
-        let path = Path::new(&ctx.road.centerline);
+        let path = Path::new(ctx.road.centerline());
         let (s0, d0) = path.project(ego.position());
         let speed = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         RoadFrame {

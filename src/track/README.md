@@ -17,6 +17,11 @@ the curvature/width cross-spectra and characteristic balance of straights and
 corners. A harmonic solve closes each candidate, and segment-intersection checks
 reject non-simple shapes.
 
+Centerline samples plus their right/left widths are converted once into the
+shared `geometry::RoadPolygon`: source stations, continuous mitered boundary
+polylines, and strip quads. The viewer triangulates that polygon for the road
+surface, while simulation barriers use the exact same boundary segments.
+
 ```text
 track/
 ├── catalog.rs canonical metadata and atomically loaded runtime state

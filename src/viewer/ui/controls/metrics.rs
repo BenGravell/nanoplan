@@ -75,7 +75,7 @@ pub(crate) fn preview_metrics(live: &Live) -> Metrics {
     let ego: Vec<State> = std::iter::once(live.world.ego())
         .chain(live.world.plan.iter().skip(1).copied())
         .collect();
-    let track = Path::new(&live.world.road.centerline);
+    let track = Path::new(live.world.road.centerline());
     let actors: Vec<Vec<State>> = live
         .world
         .actors

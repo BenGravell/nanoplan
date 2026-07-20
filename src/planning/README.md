@@ -59,7 +59,7 @@ Everything a planner needs besides its own state and the ego pose. Notably:
 - **`road` is the current planning window** — the `track::Road`
   parameter object bundling the track centerline, the desired cruise speed,
   and the tick length of the returned controls. Planners read
-  `ctx.road.centerline`, `ctx.road.target_speed`, and `ctx.road.dt`.
+  `ctx.road.centerline()`, `ctx.road.target_speed`, and `ctx.road.dt`.
 - **`actors` is current-tick only.** Planners see no future information
   about other vehicles — if they want a prediction, they compute one
   themselves. They all go through the shared `prediction::predict`: an actor
@@ -71,7 +71,7 @@ Everything a planner needs besides its own state and the ego pose. Notably:
   fewer controls; the simulator only ever consumes the first one during
   closed-loop simulation. The viewer's future-preview feature asks for a
   larger horizon (up to 100 ticks, `PLANNING_HORIZON_S`) to draw a longer plan.
-- **`road.centerline` is a raw polyline**, not a `Path`. Every planner that
+- **`road.centerline()` is a raw polyline**, not a `Path`. Every planner that
   needs Frenet operations (arc length, projection, curvature-following)
   builds its own `track::Path` from it.
 

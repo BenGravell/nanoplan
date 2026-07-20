@@ -1,43 +1,58 @@
-use crate::track::{Track, road_edges};
-use bevy::gizmos::config::GizmoConfigStore;
+use crate::geometry::RoadPolygon;
+use crate::track::{ROAD_SAMPLE_STEP_M, Track};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::Indices;
 use bevy::prelude::*;
+use bevy::render::render_resource::PrimitiveTopology;
 
 use super::super::Live;
-use super::super::screen::{PX_PER_M, ppx};
+use super::super::screen::ppx;
 use crate::viewer::CANVAS_RGB;
 
-const SAMPLE_STEP_M: f64 = 5.0;
 const EDGE: Color = Color::srgb(0.6, 0.6, 0.6);
 const CENTERLINE: Color = Color::srgb(0.25, 0.5, 0.35);
 const SUBDUED_EDGE: Color = Color::srgba(0.6, 0.6, 0.6, 0.18);
 const SUBDUED_CENTERLINE: Color = Color::srgba(0.25, 0.5, 0.35, 0.14);
 
-type TrackSample = ([f64; 2], f64, f64);
+#[derive(Resource)]
+pub(crate) struct RoadSurfaceMesh {
+    handle: Handle<Mesh>,
+    polygon: RoadPolygon,
+}
 
-#[derive(Default, Reflect, GizmoConfigGroup)]
-pub(crate) struct RoadSurfaceGizmos;
-
-pub(crate) fn configure(live: NonSend<Live>, mut configs: ResMut<GizmoConfigStore>) {
-    configs.config_mut::<RoadSurfaceGizmos>().0.line.width =
-        SAMPLE_STEP_M as f32 * PX_PER_M * live.camera.zoom * 1.1;
+pub(crate) fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    live: NonSend<Live>,
+) {
+    let polygon = surface_polygon(&live.world.track, live.world.track_progress);
+    let handle = meshes.add(surface_mesh(&polygon));
+    commands.spawn((
+        Mesh2d(handle.clone()),
+        MeshMaterial2d(materials.add(Color::srgb_u8(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2))),
+        Transform::from_xyz(0.0, 0.0, -1.0),
+    ));
+    commands.insert_resource(RoadSurfaceMesh { handle, polygon });
 }
 
 pub(in crate::viewer::live) fn draw(
     gizmos: &mut Gizmos,
-    surface: &mut Gizmos<RoadSurfaceGizmos>,
+    meshes: &mut Assets<Mesh>,
+    surface: &mut RoadSurfaceMesh,
     track: &Track,
     progress: f64,
     show_stations: bool,
     show_centerline: bool,
 ) {
     if let Some(length) = track.lap_length() {
-        let samples: Vec<_> = (0..(length / SAMPLE_STEP_M).ceil() as usize)
-            .map(|i| sample(track, i as f64 * SAMPLE_STEP_M))
-            .collect();
-        draw_surface(surface, &samples, true);
+        let polygon = track
+            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
+            .expect("track must form a valid road polygon");
+        update_surface(meshes, surface, &polygon);
         draw_lines(
             gizmos,
-            &samples,
+            &polygon,
             true,
             show_centerline,
             SUBDUED_EDGE,
@@ -45,79 +60,150 @@ pub(in crate::viewer::live) fn draw(
         );
     }
 
-    let samples: Vec<_> = (((progress - 250.0) / SAMPLE_STEP_M).floor() as i64
-        ..=((progress + 750.0) / SAMPLE_STEP_M).ceil() as i64)
-        .map(|i| sample(track, i as f64 * SAMPLE_STEP_M))
-        .collect();
+    let polygon = track
+        .road_polygon(
+            progress - 250.0,
+            progress + 750.0,
+            ROAD_SAMPLE_STEP_M,
+            false,
+        )
+        .expect("visible track must form a valid road polygon");
 
     if track.lap_length().is_none() {
-        draw_surface(surface, &samples, false);
+        update_surface(meshes, surface, &polygon);
     }
-    draw_lines(gizmos, &samples, false, show_centerline, EDGE, CENTERLINE);
+    draw_lines(gizmos, &polygon, false, show_centerline, EDGE, CENTERLINE);
 
     if show_stations {
-        if let Some(edges) = edges(&samples, false) {
-            for (right, left) in edges {
-                gizmos.line_2d(ppx(right), ppx(left), Color::srgba(0.6, 0.6, 0.6, 0.2));
-            }
+        for (&right, &left) in polygon.right_boundary().iter().zip(polygon.left_boundary()) {
+            gizmos.line_2d(ppx(right), ppx(left), Color::srgba(0.6, 0.6, 0.6, 0.2));
         }
     }
 }
 
-fn draw_surface(gizmos: &mut Gizmos<RoadSurfaceGizmos>, samples: &[TrackSample], closed: bool) {
-    let Some(edges) = edges(samples, closed) else {
-        return;
-    };
-    let color = Color::srgb_u8(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2);
-    for (right, left) in edges {
-        gizmos.line_2d(ppx(right), ppx(left), color);
+fn surface_polygon(track: &Track, progress: f64) -> RoadPolygon {
+    if let Some(length) = track.lap_length() {
+        track
+            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
+            .expect("track must form a valid road polygon")
+    } else {
+        track
+            .road_polygon(
+                progress - 250.0,
+                progress + 750.0,
+                ROAD_SAMPLE_STEP_M,
+                false,
+            )
+            .expect("visible track must form a valid road polygon")
     }
 }
 
-fn sample(track: &Track, progress: f64) -> TrackSample {
-    let position = track.point(progress);
-    let (right, left) = track.widths(progress);
-    (position, right, left)
+fn update_surface(meshes: &mut Assets<Mesh>, surface: &mut RoadSurfaceMesh, polygon: &RoadPolygon) {
+    if !surface_needs_update(surface, polygon) {
+        return;
+    }
+    if let Some(mut mesh) = meshes.get_mut(&surface.handle) {
+        *mesh = surface_mesh(polygon);
+        surface.polygon = polygon.clone();
+    }
 }
 
-fn edges(samples: &[TrackSample], closed: bool) -> Option<Vec<([f64; 2], [f64; 2])>> {
-    road_edges(
-        &samples.iter().map(|sample| sample.0).collect::<Vec<_>>(),
-        &samples.iter().map(|sample| sample.1).collect::<Vec<_>>(),
-        &samples.iter().map(|sample| sample.2).collect::<Vec<_>>(),
-        closed,
+fn surface_needs_update(surface: &RoadSurfaceMesh, polygon: &RoadPolygon) -> bool {
+    surface.polygon != *polygon
+}
+
+fn empty_surface_mesh() -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+fn surface_mesh(road: &RoadPolygon) -> Mesh {
+    let mut mesh = empty_surface_mesh();
+    let positions = road
+        .right_boundary()
+        .iter()
+        .zip(road.left_boundary())
+        .flat_map(|(&right, &left)| {
+            let right = ppx(right);
+            let left = ppx(left);
+            [[right.x, right.y, 0.0], [left.x, left.y, 0.0]]
+        })
+        .collect::<Vec<_>>();
+    let indices = (0..road.segment_count())
+        .flat_map(|i| {
+            let next = (i + 1) % road.centerline().len();
+            let (right, left) = (2 * i as u32, 2 * i as u32 + 1);
+            let (next_right, next_left) = (2 * next as u32, 2 * next as u32 + 1);
+            [right, next_right, next_left, right, next_left, left]
+        })
+        .collect::<Vec<_>>();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
 fn draw_lines(
     gizmos: &mut Gizmos,
-    samples: &[TrackSample],
+    road: &RoadPolygon,
     closed: bool,
     show_centerline: bool,
     edge: Color,
     centerline: Color,
 ) {
-    let Some(edges) = edges(samples, closed) else {
-        return;
-    };
-    for side in 0..2 {
-        let mut line = edges
-            .iter()
-            .map(|edge| ppx(if side == 0 { edge.0 } else { edge.1 }))
-            .collect::<Vec<_>>();
+    for boundary in [road.right_boundary(), road.left_boundary()] {
+        let line = boundary.iter().map(|&point| ppx(point));
         if closed {
-            line.push(line[0]);
+            gizmos.lineloop_2d(line, edge);
+        } else {
+            gizmos.linestrip_2d(line, edge);
         }
-        gizmos.linestrip_2d(line, edge);
     }
     if show_centerline {
-        let mut line = samples
-            .iter()
-            .map(|sample| ppx(sample.0))
-            .collect::<Vec<_>>();
+        let line = road.centerline().iter().map(|&point| ppx(point));
         if closed {
-            line.push(line[0]);
+            gizmos.lineloop_2d(line, centerline);
+        } else {
+            gizmos.linestrip_2d(line, centerline);
         }
-        gizmos.linestrip_2d(line, centerline);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn surface_is_a_triangle_strip_over_the_shared_polygon() {
+        let road = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).unwrap();
+
+        let mesh = surface_mesh(&road);
+        let VertexAttributeValues::Float32x3(vertices) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+        else {
+            panic!("surface positions have the wrong format");
+        };
+        let Indices::U32(indices) = mesh.indices().unwrap() else {
+            panic!("surface indices have the wrong format");
+        };
+
+        assert_eq!(vertices.len(), 2 * road.centerline().len());
+        assert_eq!(indices.len(), 6 * road.segment_count());
+        assert_eq!(indices, &[0, 2, 3, 0, 3, 1, 2, 4, 5, 2, 5, 3]);
+    }
+
+    #[test]
+    fn surface_updates_only_when_the_polygon_changes() {
+        let polygon = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0]], 2.0).unwrap();
+        let surface = RoadSurfaceMesh {
+            handle: Handle::default(),
+            polygon: polygon.clone(),
+        };
+        let changed = RoadPolygon::uniform(vec![[0.0, 0.0], [20.0, 0.0]], 2.0).unwrap();
+
+        assert!(!surface_needs_update(&surface, &polygon));
+        assert!(surface_needs_update(&surface, &changed));
     }
 }

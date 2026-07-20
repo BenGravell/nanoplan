@@ -15,7 +15,7 @@ pub(crate) struct BasicPlanner;
 impl Planner for BasicPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0, lane_speed) = ctx.time("route", || {
-            let path = Path::new(&ctx.road.centerline);
+            let path = Path::new(ctx.road.centerline());
             let (s0, _) = path.project(ego.position());
             let (_, lane_yaw) = path.pose_at(s0);
             let heading_err = wrap_angle(ego.yaw - lane_yaw);
@@ -191,7 +191,7 @@ mod tests {
         let track = Track::new(1);
         let mut road = test_road(&track.centerline(-50.0, 250.0, 15.0));
         road.target_speed = *MAX_TERMINAL_SPEED_MPS;
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let (p, yaw) = path.pose_at(50.0);
         let ego = State {
             x: p[0] - 3.0 * yaw.sin(),
@@ -331,7 +331,7 @@ mod tests {
                 let mut state = ego;
                 for (tick, control) in BasicPlanner.plan(ego, &ctx).into_iter().enumerate() {
                     state = world_step(state, control, road.dt);
-                    let (_, d) = Path::new(&road.centerline).project(state.position());
+                    let (_, d) = Path::new(road.centerline()).project(state.position());
                     assert!(
                         !collides_with_road_barrier(state, &road),
                         "seed {seed} progress {progress} width {} tick {tick} d {d} state {state:?}",

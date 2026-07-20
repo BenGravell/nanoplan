@@ -1,9 +1,7 @@
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
-use bevy::gizmos::GizmoHandles;
 use bevy::prelude::*;
-use std::any::TypeId;
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
@@ -24,24 +22,6 @@ fn viewer_camera_prefers_msaa_and_can_disable_it() {
     assert!(crate::viewer::disable_msaa(&mut world));
     let msaa = world.query::<&Msaa>().get(&world, camera).unwrap();
     assert_eq!(*msaa, Msaa::Off);
-}
-
-#[test]
-fn road_surface_group_is_registered_before_scene_gizmos() {
-    let mut app = App::new();
-    app.init_gizmo_group::<RoadSurfaceGizmos>()
-        .add_plugins(bevy::asset::AssetPlugin::default())
-        .add_plugins(bevy::gizmos::GizmoPlugin);
-    let groups: Vec<_> = app
-        .world()
-        .resource::<GizmoHandles>()
-        .handles()
-        .keys()
-        .copied()
-        .collect();
-
-    assert_eq!(groups[0], TypeId::of::<RoadSurfaceGizmos>());
-    assert_eq!(groups[1], TypeId::of::<DefaultGizmoConfigGroup>());
 }
 
 #[test]

@@ -497,7 +497,7 @@ const SAMPLES: usize = 150;
 
 impl Planner for RrtPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
         let goal = goal_state(&path, ego, ctx);
         let warm = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
@@ -602,7 +602,7 @@ mod tests {
             })
             .collect();
         let ctx = crate::planning::test_ctx(&road, &actors);
-        let path = Path::new(&road.centerline);
+        let path = Path::new(road.centerline());
         let ego = State {
             speed: 8.0,
             ..Default::default()

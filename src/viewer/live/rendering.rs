@@ -6,7 +6,7 @@ use super::Live;
 use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
-    RoadSurfaceGizmos, carpet, diagnostics, grid, plan, track, vehicles,
+    RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
 use crate::viewer::ui::controls::metrics::preview_metrics;
@@ -34,7 +34,8 @@ impl RenderSnapshot {
 
 pub(crate) fn draw(
     mut gizmos: Gizmos,
-    mut road_surface: Gizmos<RoadSurfaceGizmos>,
+    mut road_surface: ResMut<RoadSurfaceMesh>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
     mut planned_trajectory: Gizmos<PlannedTrajectoryGizmos>,
     mut diagnostic_trajectories: Gizmos<DiagnosticTrajectoryGizmos>,
@@ -89,6 +90,7 @@ pub(crate) fn draw(
     let world = &live.world;
     track::draw(
         &mut gizmos,
+        &mut meshes,
         &mut road_surface,
         &world.track,
         world.track_progress,

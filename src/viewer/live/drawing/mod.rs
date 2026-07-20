@@ -10,4 +10,4 @@ pub(crate) use diagnostics::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, configure as configure_diagnostics,
 };
 pub(crate) use plan::{PlannedTrajectoryGizmos, configure as configure_plan};
-pub(crate) use track::{RoadSurfaceGizmos, configure as configure_road_surface};
+pub(crate) use track::{RoadSurfaceMesh, setup as setup_road_surface};

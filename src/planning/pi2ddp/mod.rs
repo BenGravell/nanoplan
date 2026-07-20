@@ -136,7 +136,7 @@ impl Pi2DdpPlanner {
 
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(&ctx.road.centerline));
+        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)

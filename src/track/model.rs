@@ -3,7 +3,7 @@
 use std::f64::consts::TAU;
 
 use crate::common::rng::Rng;
-use crate::geometry::{polygons_overlap, segments_intersect};
+use crate::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
 use serde::{Deserialize, Serialize};
 
 use super::loader::{REVISION, SOURCE};
@@ -356,74 +356,16 @@ pub(super) fn road_is_simple(points: &[[f64; 2]], right: &[f64], left: &[f64]) -
         return false;
     }
     let n = points.len();
-    let Some(strips) = road_edges(points, right, left, true) else {
+    let Some(road) = RoadPolygon::new(points.to_vec(), right.to_vec(), left.to_vec(), true) else {
         return false;
     };
-    let quads = (0..n)
-        .map(|i| {
-            let next = (i + 1) % n;
-            [strips[i].0, strips[next].0, strips[next].1, strips[i].1]
-        })
-        .collect::<Vec<_>>();
+    let quads = road.quads().collect::<Vec<_>>();
     quads.iter().all(|quad| is_simple(quad))
         && (0..n).all(|i| {
             (i + 1..n).all(|j| {
                 j == i + 1 || (i == 0 && j == n - 1) || !polygons_overlap(&quads[i], &quads[j])
             })
         })
-}
-
-pub(crate) fn road_edges(
-    points: &[[f64; 2]],
-    right: &[f64],
-    left: &[f64],
-    closed: bool,
-) -> Option<Vec<([f64; 2], [f64; 2])>> {
-    if points.len() != right.len() || points.len() != left.len() || points.len() < 2 {
-        return None;
-    }
-    let segment_count = if closed {
-        points.len()
-    } else {
-        points.len() - 1
-    };
-    let normals = (0..segment_count)
-        .map(|i| {
-            let next = (i + 1) % points.len();
-            let tangent = [
-                points[next][0] - points[i][0],
-                points[next][1] - points[i][1],
-            ];
-            let length = tangent[0].hypot(tangent[1]);
-            (length >= 1e-9).then_some([-tangent[1] / length, tangent[0] / length])
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (0..points.len())
-        .map(|i| {
-            let (miter, denominator) = if !closed && i == 0 {
-                (normals[0], 1.0)
-            } else if !closed && i == points.len() - 1 {
-                (normals[i - 1], 1.0)
-            } else {
-                let previous = normals[(i + normals.len() - 1) % normals.len()];
-                let next = normals[i % normals.len()];
-                (
-                    [previous[0] + next[0], previous[1] + next[1]],
-                    1.0 + previous[0] * next[0] + previous[1] * next[1],
-                )
-            };
-            (denominator > 1e-9).then_some((
-                [
-                    points[i][0] - right[i] * miter[0] / denominator,
-                    points[i][1] - right[i] * miter[1] / denominator,
-                ],
-                [
-                    points[i][0] + left[i] * miter[0] / denominator,
-                    points[i][1] + left[i] * miter[1] / denominator,
-                ],
-            ))
-        })
-        .collect()
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -511,18 +453,5 @@ mod tests {
         assert!(is_simple(&points));
         assert!(!road_is_simple(&points, &[0.75; 6], &[0.75; 6]));
         assert!(road_is_simple(&points, &[0.1; 6], &[0.1; 6]));
-    }
-
-    #[test]
-    fn road_edges_miter_polyline_corners() {
-        let edges = road_edges(
-            &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
-            &[0.2; 3],
-            &[0.2; 3],
-            false,
-        )
-        .unwrap();
-
-        assert_eq!(edges[1], ([1.2, -0.2], [0.8, 0.2]));
     }
 }
