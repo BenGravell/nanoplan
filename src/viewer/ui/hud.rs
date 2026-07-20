@@ -1,18 +1,11 @@
 use bevy_egui::egui;
 
-use super::super::colors::{DIM, TEXT};
-use super::style::caps_font;
-use super::widgets::friction_box;
+use super::widgets::{friction_box, speedometer};
 use crate::viewer::live::Live;
 
 pub(super) fn draw(ui: &mut egui::Ui, live: &Live, compact: bool) {
-    let height = if compact {
-        145.0
-    } else {
-        (ui.available_height() * 0.6).clamp(360.0, 560.0)
-    };
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height),
+        egui::vec2(ui.available_width(), ui.available_height()),
         egui::Sense::hover(),
     );
     if compact {
@@ -26,20 +19,18 @@ pub(super) fn draw(ui: &mut egui::Ui, live: &Live, compact: bool) {
 
 fn draw_compact(ui: &egui::Ui, rect: egui::Rect, live: &Live) {
     let painter = ui.painter_at(rect);
-    painter.text(
-        rect.center_top(),
-        egui::Align2::CENTER_TOP,
-        format!("SPEED  {:.1} m/s", live.world.ego().speed),
-        egui::FontId::monospace(9.0),
-        TEXT,
-    );
     friction_box::draw(
         &painter,
-        egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + 18.0),
-            rect.right_bottom(),
-        ),
+        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 110.0)),
         &live.friction_box,
+        live.world.ego().speed,
+    );
+    speedometer::draw(
+        &painter,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.bottom() - 74.0),
+            egui::vec2(rect.width(), 74.0),
+        ),
         live.world.ego().speed,
     );
 }
@@ -47,29 +38,7 @@ fn draw_compact(ui: &egui::Ui, rect: egui::Rect, live: &Live) {
 fn draw_full(ui: &egui::Ui, rect: egui::Rect, live: &Live) {
     let speed = live.world.ego().speed;
     let painter = ui.painter_at(rect);
-    let center_x = rect.center().x;
-    painter.text(
-        egui::pos2(center_x, rect.top()),
-        egui::Align2::CENTER_TOP,
-        "SPEED",
-        caps_font(10.0),
-        DIM,
-    );
-    painter.text(
-        egui::pos2(center_x, rect.top() + 10.0),
-        egui::Align2::CENTER_TOP,
-        format!("{:04.1}", speed),
-        egui::FontId::monospace(28.0),
-        TEXT,
-    );
-    painter.text(
-        egui::pos2(center_x, rect.top() + 40.0),
-        egui::Align2::CENTER_TOP,
-        "m/s",
-        egui::FontId::monospace(9.0),
-        DIM,
-    );
-    let friction_top = egui::lerp(rect.top() + 60.0..=rect.bottom() - 184.0, 0.5);
+    let friction_top = egui::lerp(rect.top()..=rect.bottom() - 300.0, 0.5);
     friction_box::draw(
         &painter,
         egui::Rect::from_min_size(
@@ -77,6 +46,14 @@ fn draw_full(ui: &egui::Ui, rect: egui::Rect, live: &Live) {
             egui::vec2(rect.width(), 184.0),
         ),
         &live.friction_box,
+        speed,
+    );
+    speedometer::draw(
+        &painter,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.bottom() - 116.0),
+            egui::vec2(rect.width(), 116.0),
+        ),
         speed,
     );
 }

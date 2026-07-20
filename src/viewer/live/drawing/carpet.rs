@@ -1,17 +1,15 @@
 //! Time-colored swept ego footprint.
 
-use std::sync::LazyLock;
-
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
-use colorgrad::{BlendMode, Gradient};
+use colorgrad::Gradient;
 
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
-use crate::viewer::CarpetVisualization;
+use crate::viewer::{CarpetVisualization, colors::GUPPY};
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, px};
@@ -19,21 +17,6 @@ use super::super::screen::{PX_PER_M, px};
 const BAND_M: f64 = 0.35;
 const ALPHA: f32 = 0.72;
 const FOOTPRINT_EPSILON_M: f64 = 1e-9;
-
-static GRADIENT: LazyLock<colorgrad::LinearGradient> = LazyLock::new(|| {
-    // Uniform samples from CMasher's diverging Guppy colormap.
-    colorgrad::GradientBuilder::new()
-        .html_colors(&[
-            "#fa914f", "#fc7e3d", "#fe6b2c", "#fe541c", "#fd3913", "#f8181c", "#ec022e", "#dd083d",
-            "#cc1349", "#bc1a53", "#ac1e5a", "#9c1f61", "#8c1f65", "#7e1d69", "#701a6c", "#63136f",
-            "#580874", "#5d108a", "#6116a2", "#641dbc", "#6427d4", "#5f35e8", "#5449f1", "#445def",
-            "#356fe7", "#297ede", "#228ad6", "#2296d0", "#25a1cb", "#29abc7", "#2ab6c4", "#27c2c2",
-            "#1eccbf",
-        ])
-        .mode(BlendMode::Rgb)
-        .build()
-        .expect("Guppy colors form a valid gradient")
-});
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub(crate) struct EgoCarpetGizmos;
@@ -63,7 +46,7 @@ pub(crate) fn draw(
 
     for band in bands {
         let index = (band.time / dt).round() as usize;
-        let color = GRADIENT.at(values[index.min(values.len() - 1)] as f32);
+        let color = GUPPY.at(values[index.min(values.len() - 1)] as f32);
         let [red, green, blue, _] = color.to_rgba8();
         let color = Color::Srgba(Srgba::new(
             red as f32 / 255.0,
@@ -331,7 +314,7 @@ mod tests {
 
     #[test]
     fn metric_extremes_run_from_redorange_to_blue() {
-        assert_eq!(GRADIENT.at(0.0).to_rgba8()[..3], [250, 145, 79]);
-        assert_eq!(GRADIENT.at(1.0).to_rgba8()[..3], [30, 204, 191]);
+        assert_eq!(GUPPY.at(0.0).to_rgba8()[..3], [250, 145, 79]);
+        assert_eq!(GUPPY.at(1.0).to_rgba8()[..3], [30, 204, 191]);
     }
 }

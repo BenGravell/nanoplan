@@ -25,7 +25,7 @@ Fix the actors. They should run a basic planner instead of using magic unphysica
 Add a left-menu tab with options for the non- ego racers.
 1. Slider for the count. Should range from zero to eight.
 2. Planner to use for actors.
-3. Personality characteristics. 
+3. Personality characteristics.
   - Assertiveness - progress weight
   - Recklessness - safety weight
 
@@ -49,13 +49,6 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 This works for static obstacles.
 
 ## UX
-
---
-Make the speed readout widget on the right rail use a fun speedometer gauge.
-
-Use a Wipeout videogame style 45 degree chamfer gauge (bent angle in lower right corner) with perimeter ring fill based on current speed. Color gradient fill by guppy colormap (blue at low speed end, orange at high speed end)
-
-Use terminal speed limit as the upper bound. Use zero as lower bound. Use absolute value of velocity to get non negative speed value to handle reversing. 
 
 --
 ego carpet
