@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::super::colors::{ORANGE, WHITE};
+use super::super::colors::{ORANGE, SURFACE, WHITE};
 
 const BACKGROUND_ASPECT_RATIO: f32 = 16.0 / 9.0;
 const TITLE_ASPECT_RATIO: f32 = 146.65262 / 23.909071;
@@ -16,6 +16,7 @@ struct MenuActivation {
 }
 
 pub(super) fn show(root: &mut egui::Ui, started: &mut bool) -> bool {
+    root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
     background_graphics(root);
     title_graphic(root);
     let exit_requested = start_menu(root, started);
