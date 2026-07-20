@@ -9,6 +9,7 @@ mod hud;
 mod landing;
 mod portrait_prompt;
 mod style;
+mod tutorial;
 mod visualization;
 mod widgets;
 
@@ -45,8 +46,15 @@ pub(crate) fn ui(
         return;
     }
     if !state.started {
-        if landing::show(&mut root, &mut state.started) {
-            request_exit(&mut app_exit);
+        if state.tutorial {
+            tutorial::show(&mut root, &mut state.tutorial);
+        } else {
+            let UiState {
+                started, tutorial, ..
+            } = &mut *state;
+            if landing::show(&mut root, started, tutorial) {
+                request_exit(&mut app_exit);
+            }
         }
         return;
     }

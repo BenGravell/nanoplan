@@ -5,11 +5,13 @@ mod circuit;
 pub(crate) mod loader;
 mod model;
 mod path;
+mod presets;
 mod road;
 mod track;
 
 pub(crate) use catalog::TRACK_CATALOG;
 pub(crate) use path::Path;
+pub(crate) use presets::TRACK_PRESETS;
 pub(crate) use road::Road;
 pub(crate) use track::{GENERATED_TRACK_NAME, Track};
 
@@ -42,7 +44,7 @@ mod tests {
     #[test]
     fn downloaded_track_wraps_and_projects_progress_across_the_finish_line() {
         install_test_catalog();
-        let track = Track::from_catalog(1, 0);
+        let track = Track::from_catalog(TRACK_PRESETS.len() + 1, 0);
         let length = track.lap_length().unwrap();
         assert!(dist(track.point(0.0), track.point(length)) < 1e-9);
         let progress = length + 10.0;
@@ -54,7 +56,7 @@ mod tests {
     fn every_catalog_track_has_finite_geometry_and_widths() {
         install_test_catalog();
         for index in 1..=TRACK_CATALOG.len() {
-            let track = Track::from_catalog(index, 0);
+            let track = Track::from_catalog(TRACK_PRESETS.len() + index, 0);
             let TrackGeometry::Circuit(circuit) = &track.geometry;
             let points = circuit
                 .samples
@@ -75,6 +77,33 @@ mod tests {
                     .all(f64::is_finite)
             );
             assert!(widths.0 > 0.0 && widths.1 > 0.0);
+        }
+    }
+
+    #[test]
+    fn every_preset_track_is_simple_closed_and_finite() {
+        for index in 1..=TRACK_PRESETS.len() {
+            let track = Track::from_catalog(index, 0);
+            let length = track.lap_length().unwrap();
+            assert!(dist(track.point(0.0), track.point(length)) < 1e-9);
+            let TrackGeometry::Circuit(circuit) = &track.geometry;
+            assert!(
+                circuit.is_simple(),
+                "{} intersects itself",
+                TRACK_PRESETS[index - 1].name
+            );
+            for i in 0..circuit.samples.len() {
+                let progress = length * i as f64 / circuit.samples.len() as f64;
+                let (point, yaw) = track.pose(progress);
+                let (right, left) = track.widths(progress);
+                assert!(
+                    point
+                        .into_iter()
+                        .chain([yaw, right, left])
+                        .all(f64::is_finite)
+                );
+                assert!(right > 0.0 && left > 0.0);
+            }
         }
     }
 }

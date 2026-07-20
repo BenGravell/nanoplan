@@ -53,7 +53,7 @@ mouse scrolling with mouse outside of the driving canvas should not zoom the can
 Make menu scale more proportionally with screen size, especially for large desktop screen sizes between 1440p and 2160p.
 
 --
-Speed gauge should always have a square bounding box with enough space for center number value text to not clip the gauge bar.
+Speed gauge should always be given a square free area with enough space for center number value text to not clip the gauge bar, at all screen sizes
 
 -- Friction box
 

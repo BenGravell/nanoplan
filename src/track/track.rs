@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::catalog::loaded_catalog;
 use super::circuit::Circuit;
+use super::presets::{self, TRACK_PRESETS};
 use crate::geometry::RoadPolygon;
 
 pub(crate) const GENERATED_TRACK_NAME: &str = "Generated Circuit";
@@ -38,12 +39,19 @@ impl Track {
         if index == 0 {
             return Self::new(seed);
         }
+        if index <= TRACK_PRESETS.len() {
+            return Self {
+                geometry: TrackGeometry::Circuit(Arc::new(Circuit::generated(presets::generate(
+                    index - 1,
+                )))),
+            };
+        }
         Self {
             geometry: TrackGeometry::Circuit(
                 loaded_catalog()
                     .expect("track catalog not loaded at startup")
                     .circuits
-                    .get(index - 1)
+                    .get(index - TRACK_PRESETS.len() - 1)
                     .expect("track catalog index out of bounds")
                     .clone(),
             ),

@@ -6,7 +6,7 @@ use egui_kittest::{Harness, kittest::Queryable};
 use super::controls::metrics::preview_metrics;
 use super::{
     ControlTab, UiState, compact_layout, compact_rail_widths, configure, landing, portrait_prompt,
-    right_rail_width, viewer_layout,
+    right_rail_width, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -66,7 +66,8 @@ fn landing_starts_with_the_keyboard() {
                     ctx.request_repaint();
                     return;
                 }
-                state.exit_requested |= landing::show(ui, &mut state.ui.started);
+                state.exit_requested |=
+                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
             },
             ViewerHarnessState::default(),
         );
@@ -91,7 +92,8 @@ fn landing_exit_selection_requests_app_shutdown() {
                     ctx.request_repaint();
                     return;
                 }
-                state.exit_requested |= landing::show(ui, &mut state.ui.started);
+                state.exit_requested |=
+                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
             },
             ViewerHarnessState::default(),
         );
@@ -100,6 +102,84 @@ fn landing_exit_selection_requests_app_shutdown() {
     harness.get_by_label("Exit").click();
     harness.run_steps(30);
     assert!(harness.state().exit_requested);
+}
+
+#[test]
+fn landing_tutorial_opens_the_camera_keymap_and_returns() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                let ctx = ui.ctx().clone();
+                if !state.configured {
+                    configure(&ctx);
+                    state.configured = true;
+                    ctx.request_repaint();
+                    return;
+                }
+                if state.ui.tutorial {
+                    tutorial::show(ui, &mut state.ui.tutorial);
+                } else {
+                    state.exit_requested |=
+                        landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+                }
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    harness.get_by_label("Tutorial").click();
+    harness.run_steps(30);
+    for label in [
+        "TUTORIAL",
+        "CAMERA CONTROLS",
+        "MMB / WASD",
+        "PAN",
+        "RMB / Q E",
+        "ROTATE",
+        "WHEEL",
+        "ZOOM",
+        "F",
+        "FOLLOW",
+        "R",
+        "RESET",
+    ] {
+        assert!(
+            harness.query_by_label(label).is_some(),
+            "{label:?} missing from the Tutorial page"
+        );
+    }
+
+    harness.get_by_label("BACK").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Start").is_some());
+    assert!(harness.query_by_label("CAMERA CONTROLS").is_none());
+}
+
+#[test]
+fn tutorial_keymap_fits_supported_phone_viewports() {
+    for (_, size) in PHONE_LANDSCAPE_SIZES {
+        let mut harness = Harness::builder().with_size(size).build_ui_state(
+            |ui, configured: &mut bool| {
+                if !*configured {
+                    configure(ui.ctx());
+                    *configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let mut open = true;
+                tutorial::show(ui, &mut open);
+            },
+            false,
+        );
+        harness.run_steps(2);
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        for label in ["TUTORIAL", "CAMERA CONTROLS", "MMB / WASD", "RESET", "BACK"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(screen.contains_rect(rect), "{label:?} at {rect:?} is clipped at {size:?}");
+        }
+    }
 }
 
 #[test]

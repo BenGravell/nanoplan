@@ -74,50 +74,51 @@ fn ribbon_mesh(
     if fraction <= 0.0 || path.len() < 2 {
         return None;
     }
-    let lengths: Vec<_> = path.windows(2).map(|p| p[0].distance(p[1])).collect();
-    let total: f32 = lengths.iter().sum();
-    if total <= f32::EPSILON {
-        return None;
-    }
-    let bottom_length = lengths[0];
-    let filled = total * fraction.clamp(0.0, 1.0);
-    let distances: Vec<_> = lengths
+    let outer_lengths: Vec<_> = path.windows(2).map(|p| p[0].distance(p[1])).collect();
+    let bottom_length = outer_lengths[0];
+    let outer_distances: Vec<_> = outer_lengths
         .iter()
         .scan(0.0, |distance, &length| {
             let start = *distance;
             *distance += length;
             Some(start)
         })
-        .chain(std::iter::once(total))
+        .chain(std::iter::once(outer_lengths.iter().sum()))
         .collect();
     let inner: Vec<_> = path
         .iter()
         .enumerate()
         .map(|(index, &point)| {
-            point + inward_miter(path, index) * thickness(distances[index], bottom_length)
+            point + inward_miter(path, index) * thickness(outer_distances[index], bottom_length)
         })
         .collect();
-    let mut samples = vec![(path[0], inner[0], 0.0)];
+    let sections = ribbon_sections(path, &inner);
+    let lengths: Vec<_> = sections
+        .windows(2)
+        .map(|section| section_center(section[0]).distance(section_center(section[1])))
+        .collect();
+    let total: f32 = lengths.iter().sum();
+    if total <= f32::EPSILON {
+        return None;
+    }
+    let filled = total * fraction.clamp(0.0, 1.0);
+    let mut samples = vec![(sections[0].0, sections[0].1, 0.0)];
+    let mut distance = 0.0;
 
-    for (index, (segment, &length)) in path.windows(2).zip(&lengths).enumerate() {
-        let segment_fraction =
-            ((filled - distances[index]) / length.max(f32::EPSILON)).clamp(0.0, 1.0);
-        if segment_fraction <= 0.0 {
+    for (section, &length) in sections.windows(2).zip(&lengths) {
+        let section_fraction = ((filled - distance) / length.max(f32::EPSILON)).clamp(0.0, 1.0);
+        if section_fraction <= 0.0 {
             break;
         }
-
-        let direction = (segment[1] - segment[0]).normalized();
-        let outer = segment[0].lerp(segment[1], segment_fraction);
-        let inner = normal_intersection(outer, direction, inner[index], inner[index + 1]);
         samples.push((
-            outer,
-            inner,
-            egui::lerp(distances[index]..=distances[index + 1], segment_fraction),
+            section[0].0.lerp(section[1].0, section_fraction),
+            section[0].1.lerp(section[1].1, section_fraction),
+            distance + length * section_fraction,
         ));
-
-        if segment_fraction < 1.0 {
+        if section_fraction < 1.0 {
             break;
         }
+        distance += length;
     }
 
     let mut mesh = egui::Mesh::default();
@@ -134,15 +135,70 @@ fn ribbon_mesh(
     Some(mesh)
 }
 
-fn normal_intersection(
-    outer: egui::Pos2,
-    direction: egui::Vec2,
-    inner_start: egui::Pos2,
-    inner_end: egui::Pos2,
-) -> egui::Pos2 {
-    let inner_direction = inner_end - inner_start;
-    let t = direction.dot(outer - inner_start) / direction.dot(inner_direction).max(f32::EPSILON);
-    inner_start.lerp(inner_end, t.clamp(0.0, 1.0))
+fn ribbon_sections(outer: &[egui::Pos2], inner: &[egui::Pos2]) -> Vec<(egui::Pos2, egui::Pos2)> {
+    let mut sections = vec![(outer[0], inner[0])];
+    for index in 1..outer.len() - 1 {
+        let blend = outer[index]
+            .distance(inner[index])
+            .min(outer[index - 1].distance(outer[index]) * 0.45)
+            .min(outer[index].distance(outer[index + 1]) * 0.45)
+            .min(inner[index - 1].distance(inner[index]) * 0.45)
+            .min(inner[index].distance(inner[index + 1]) * 0.45);
+        let inner_before = point_before(inner[index], inner[index - 1], blend);
+        let outer_before = project_onto_segment(inner_before, outer[index - 1], outer[index]);
+        let outer_after = point_before(outer[index], outer[index + 1], blend);
+        let inner_after = project_onto_segment(outer_after, inner[index], inner[index + 1]);
+
+        // The edge is perpendicular on either side of the corner. Within the
+        // blend, both boundary tracers advance at constant rates; their
+        // different corner times rotate the connecting edge without a pause.
+        let outer_transition = [outer_before, outer[index], outer_after];
+        let inner_transition = [inner_before, inner[index], inner_after];
+        sections.push((outer_before, inner_before));
+        let mut stops = vec![0.0, 1.0];
+        stops.push(path_corner_fraction(&outer_transition));
+        stops.push(path_corner_fraction(&inner_transition));
+        stops.sort_by(f32::total_cmp);
+        stops.dedup_by(|a, b| (*a - *b).abs() < 1e-5);
+        sections.extend(stops.into_iter().skip(1).map(|fraction| {
+            (
+                trace_path(&outer_transition, fraction),
+                trace_path(&inner_transition, fraction),
+            )
+        }));
+    }
+    sections.push((*outer.last().unwrap(), *inner.last().unwrap()));
+    sections
+}
+
+fn point_before(start: egui::Pos2, toward: egui::Pos2, distance: f32) -> egui::Pos2 {
+    start + (toward - start).normalized() * distance
+}
+
+fn path_corner_fraction(path: &[egui::Pos2; 3]) -> f32 {
+    let first = path[0].distance(path[1]);
+    first / (first + path[1].distance(path[2])).max(f32::EPSILON)
+}
+
+fn trace_path(path: &[egui::Pos2; 3], fraction: f32) -> egui::Pos2 {
+    let first = path[0].distance(path[1]);
+    let second = path[1].distance(path[2]);
+    let distance = (first + second) * fraction.clamp(0.0, 1.0);
+    if distance <= first {
+        path[0].lerp(path[1], distance / first.max(f32::EPSILON))
+    } else {
+        path[1].lerp(path[2], (distance - first) / second.max(f32::EPSILON))
+    }
+}
+
+fn project_onto_segment(point: egui::Pos2, start: egui::Pos2, end: egui::Pos2) -> egui::Pos2 {
+    let segment = end - start;
+    let t = segment.dot(point - start) / segment.length_sq().max(f32::EPSILON);
+    start.lerp(end, t.clamp(0.0, 1.0))
+}
+
+fn section_center(section: (egui::Pos2, egui::Pos2)) -> egui::Pos2 {
+    section.0.lerp(section.1, 0.5)
 }
 
 fn inward_miter(path: &[egui::Pos2], index: usize) -> egui::Vec2 {
@@ -208,45 +264,91 @@ mod tests {
             egui::pos2(100.0, 100.0),
             egui::pos2(130.0, 70.0),
         ];
-        let total = 100.0 + 30.0 * 2.0_f32.sqrt();
-        let at_corner = ribbon_mesh(&path, 100.0 / total, |_| egui::Color32::WHITE).unwrap();
-        let past_corner = ribbon_mesh(&path, 101.0 / total, |_| egui::Color32::WHITE).unwrap();
+        let outer_distances = [0.0, 100.0, 100.0 + 30.0 * 2.0_f32.sqrt()];
+        let inner: Vec<_> = path
+            .iter()
+            .enumerate()
+            .map(|(index, &point)| {
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+            })
+            .collect();
+        let sections = ribbon_sections(&path, &inner);
+        let lengths: Vec<_> = sections
+            .windows(2)
+            .map(|section| section_center(section[0]).distance(section_center(section[1])))
+            .collect();
+        let total: f32 = lengths.iter().sum();
+        let at_corner = ribbon_mesh(&path, lengths[0] / total, |_| egui::Color32::WHITE).unwrap();
+        let past_corner =
+            ribbon_mesh(&path, (lengths[0] + 1.0) / total, |_| egui::Color32::WHITE).unwrap();
 
         assert_eq!(at_corner.vertices, past_corner.vertices[..4]);
         assert_eq!(at_corner.indices, past_corner.indices[..6]);
     }
 
     #[test]
-    fn fill_edge_pivots_around_the_inner_corner() {
+    fn fill_edge_stays_square_on_arms_and_blends_across_the_corner() {
         let path = [
             egui::pos2(0.0, 100.0),
             egui::pos2(100.0, 100.0),
             egui::pos2(130.0, 70.0),
         ];
-        let corner = path[1] + inward_miter(&path, 1) * HIGH_THICKNESS;
-        let middle_outer = egui::pos2(50.0, 100.0);
-        let middle = normal_intersection(
-            middle_outer,
-            egui::Vec2::X,
-            path[0] + inward_miter(&path, 0) * LOW_THICKNESS,
-            corner,
-        );
-        let before = normal_intersection(
-            egui::pos2(99.0, 100.0),
-            egui::Vec2::X,
-            path[0] + inward_miter(&path, 0) * LOW_THICKNESS,
-            corner,
-        );
-        let diagonal = (path[2] - path[1]).normalized();
-        let after = normal_intersection(
-            path[1] + diagonal,
-            diagonal,
-            corner,
-            path[2] + inward_miter(&path, 2) * HIGH_THICKNESS,
-        );
+        let outer_distances = [0.0, 100.0, 100.0 + 30.0 * 2.0_f32.sqrt()];
+        let inner: Vec<_> = path
+            .iter()
+            .enumerate()
+            .map(|(index, &point)| {
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+            })
+            .collect();
+        let sections = ribbon_sections(&path, &inner);
 
-        assert!(egui::Vec2::X.dot(middle - middle_outer).abs() < 1e-5);
-        assert_eq!(before, corner);
-        assert_eq!(after, corner);
+        assert!(sections.len() >= 5);
+        assert!((sections[0].0.x - sections[0].1.x).abs() < 1e-5);
+        assert!((sections[1].0.x - sections[1].1.x).abs() < 1e-5);
+        let diagonal = (path[2] - path[1]).normalized();
+        assert!(
+            diagonal
+                .dot(sections[sections.len() - 2].0 - sections[sections.len() - 2].1)
+                .abs()
+                < 1e-5
+        );
+        assert!(
+            diagonal
+                .dot(sections[sections.len() - 1].0 - sections[sections.len() - 1].1)
+                .abs()
+                < 1e-5
+        );
+        assert!(sections[2].0.distance(sections[1].0) > 0.0);
+        assert!(sections[2].1.distance(sections[1].1) > 0.0);
+    }
+
+    #[test]
+    fn gauge_starts_vertical_and_finishes_horizontal() {
+        let path = [
+            egui::pos2(0.0, 100.0),
+            egui::pos2(100.0, 100.0),
+            egui::pos2(130.0, 70.0),
+            egui::pos2(130.0, 0.0),
+        ];
+        let outer_distances = [
+            0.0,
+            100.0,
+            100.0 + 30.0 * 2.0_f32.sqrt(),
+            170.0 + 30.0 * 2.0_f32.sqrt(),
+        ];
+        let inner: Vec<_> = path
+            .iter()
+            .enumerate()
+            .map(|(index, &point)| {
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+            })
+            .collect();
+        let sections = ribbon_sections(&path, &inner);
+
+        assert!((sections[0].0.x - sections[0].1.x).abs() < 1e-5);
+        assert!((sections[1].0.x - sections[1].1.x).abs() < 1e-5);
+        assert!((sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs() < 1e-5);
+        assert!((sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs() < 1e-5);
     }
 }

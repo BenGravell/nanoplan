@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::super::super::colors::{DIM, TEXT};
+use super::super::super::colors::DIM;
 use super::super::style::caps_font;
 use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
@@ -37,27 +37,4 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live) {
             live.reset_camera();
         }
     });
-    section_heading(ui, "CONTROLS");
-    egui::Grid::new("camera_controls").show(ui, |ui| {
-        for (input, action) in [
-            ("MMB / WASD", "PAN"),
-            ("RMB / Q E", "ROTATE"),
-            ("WHEEL", "ZOOM"),
-            ("F", "FOLLOW"),
-            ("R", "RESET"),
-        ] {
-            ui.label(egui::RichText::new(input).font(caps_font(11.0)).color(DIM));
-            ui.monospace(action);
-            ui.end_row();
-        }
-    });
-}
-
-fn section_heading(ui: &mut egui::Ui, heading: &str) {
-    ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(heading)
-            .font(caps_font(12.0))
-            .color(TEXT),
-    );
 }
