@@ -1,11 +1,11 @@
-use crate::planning::{PLANNING_HORIZON_S, PlannerKind};
+use crate::planning::PlannerKind;
 use bevy_egui::egui;
 
 use super::super::super::colors::DIM;
 use super::super::style::caps_font;
 use crate::viewer::UiState;
 
-pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool) {
+pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
     ui.label(
         egui::RichText::new("ACTIVE PLANNER")
             .font(caps_font(11.0))
@@ -19,15 +19,4 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool) {
                 ui.selectable_value(&mut state.planner, kind, kind.name());
             }
         });
-    ui.add_space(6.0);
-    ui.add(
-        egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
-            .step_by(0.5)
-            .text(if compact {
-                "preview"
-            } else {
-                "future preview [s]"
-            })
-            .trailing_fill(true),
-    );
 }

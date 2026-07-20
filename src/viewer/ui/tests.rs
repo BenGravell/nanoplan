@@ -304,6 +304,43 @@ fn ego_carpet_selector_lives_in_the_viz_menu() {
 }
 
 #[test]
+fn future_controls_live_together_in_the_viz_menu() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    assert!(harness.query_by_label("future preview [s]").is_none());
+    harness.get_by_label("VIZ").click();
+    harness.run();
+
+    for label in [
+        "FUTURE",
+        "future preview [s]",
+        "Ego carpet",
+        "Planned path",
+        "Search points",
+        "Candidate trajectories",
+    ] {
+        assert!(
+            harness.get_all_by_label(label).next().is_some(),
+            "{label:?} missing from the Viz menu"
+        );
+    }
+}
+
+#[test]
 fn layout_only_compacts_for_phone_sized_viewports() {
     for (_, phone) in PHONE_LANDSCAPE_SIZES {
         assert!(compact_layout(phone));
@@ -377,11 +414,6 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "VIZ",
             "METRICS",
             "ACTIVE PLANNER",
-            if compact {
-                "preview"
-            } else {
-                "future preview [s]"
-            },
         ] {
             let nodes: Vec<_> = harness
                 .get_all_by_label(label)

@@ -161,15 +161,18 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
 }
 
 fn carpet_bands(footprints: &[TimedState]) -> Vec<TimedState> {
-    let Some(&first) = footprints.first() else {
+    let front_edges: Vec<_> = footprints
+        .iter()
+        .map(|&footprint| offset_state(footprint, EGO_FOOTPRINT.length))
+        .collect();
+    let Some(&first) = front_edges.first() else {
         return vec![];
     };
     let mut centers = Vec::new();
-    let extensions = (EGO_FOOTPRINT.length / BAND_M).ceil() as usize;
     centers.push(first);
     let mut traversed = 0.0;
     let mut next_band = BAND_M;
-    for pair in footprints.windows(2) {
+    for pair in front_edges.windows(2) {
         let distance = (pair[1].state.x - pair[0].state.x).hypot(pair[1].state.y - pair[0].state.y);
         while distance > f64::EPSILON && next_band <= traversed + distance {
             let alpha = (next_band - traversed) / distance;
@@ -181,15 +184,9 @@ fn carpet_bands(footprints: &[TimedState]) -> Vec<TimedState> {
         }
         traversed += distance;
     }
-    let last = *footprints.last().unwrap();
+    let last = *front_edges.last().unwrap();
     if traversed > 0.0 && next_band - traversed < BAND_M * 0.5 {
         centers.push(last);
-    }
-    for i in 1..=extensions {
-        centers.push(offset_state(
-            last,
-            (i as f64 * BAND_M).min(EGO_FOOTPRINT.length),
-        ));
     }
 
     centers
@@ -296,6 +293,32 @@ mod tests {
         assert_eq!(
             mean_occupancy_time(nose.state, &[TimedState { state, time: 0.0 }]),
             Some(0.0)
+        );
+    }
+
+    #[test]
+    fn carpet_starts_at_the_current_front_edge() {
+        let footprints = [
+            TimedState {
+                state: State::default(),
+                time: 0.0,
+            },
+            TimedState {
+                state: State {
+                    x: EGO_FOOTPRINT.length * 2.0,
+                    ..Default::default()
+                },
+                time: 1.0,
+            },
+        ];
+
+        let bands = carpet_bands(&footprints);
+
+        assert!(!bands.is_empty());
+        assert!(
+            bands
+                .iter()
+                .all(|band| band.state.x >= EGO_FOOTPRINT.length)
         );
     }
 

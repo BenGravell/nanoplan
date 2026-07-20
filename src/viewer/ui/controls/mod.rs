@@ -62,9 +62,9 @@ pub(super) fn control_deck(
     ui.add_space(if compact { 3.0 } else { 9.0 });
 
     egui::ScrollArea::vertical().show(ui, |ui| match *active_tab {
-        ControlTab::Planner => planner::show(ui, state, compact),
+        ControlTab::Planner => planner::show(ui, state),
         ControlTab::Camera => camera::show(ui, live),
-        ControlTab::Visibility => visibility::show(ui, state),
+        ControlTab::Visibility => visibility::show(ui, state, compact),
         ControlTab::Metrics => metrics::show(ui, live),
     });
 }

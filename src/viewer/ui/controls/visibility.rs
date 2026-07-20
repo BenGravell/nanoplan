@@ -1,12 +1,32 @@
 use bevy_egui::egui;
 
-use super::super::super::colors::ORANGE;
+use crate::planning::PLANNING_HORIZON_S;
+
+use super::super::super::colors::{DIM, ORANGE};
+use super::super::style::caps_font;
 use crate::viewer::{CarpetVisualization, UiState};
 
-pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
+pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool) {
     ui.checkbox(&mut state.show_grid, "Grid");
     ui.checkbox(&mut state.show_stations, "Track stations");
     ui.checkbox(&mut state.show_centerline, "Track centerline");
+
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new("FUTURE")
+            .font(caps_font(11.0))
+            .color(DIM),
+    );
+    ui.add(
+        egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
+            .step_by(0.5)
+            .text(if compact {
+                "preview"
+            } else {
+                "future preview [s]"
+            })
+            .trailing_fill(true),
+    );
     ui.checkbox(&mut state.show_carpet, "Ego carpet");
     let previous = state.carpet_visualization;
     ui.label("Ego carpet color");
