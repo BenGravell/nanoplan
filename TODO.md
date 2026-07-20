@@ -47,6 +47,48 @@ This works for static obstacles.
 ## UX
 
 --
+mouse scrolling with mouse outside of the driving canvas should not zoom the canvas
+
+--
+Make menu scale more proportionally with screen size, especially for large desktop screen sizes between 1440p and 2160p.
+
+--
+Speed gauge should always have a square bounding box with enough space for center number value text to not clip the gauge bar.
+
+-- Friction box
+
+Remove the +lon, +lat labels on grid.
+Remove the numeric readout for lat and lon accel.
+
+Put small accel bound values outside the grid next to axes lines. Express in gravity units i.e. +1.2g. Plus or minus for longitudinal bound limits, no sign for lateral bound units.
+
+-- Add track lap stats.
+Current elapsed time.
+Previous lap time.
+Best lap time so far.
+Number of laps completed so far.
+
+Display in the upper right corner.
+
+
+-- New flow for driving startup.
+
+Start -> Track Select
+
+Choose a track.
+Horizontal gallery of tracks.
+Each shown as a minimap thumbnail centered in square lockup with track name caption below.
+Gallery is at bottom of screen, about bottom 20 percent.
+Top 80 percent dedicated to track big map display preview and details / stats about the track:
+Length
+Number of turns/corners
+Average/min/max curvature
+
+After selecting track then dive into the driving app mode.
+
+
+
+--
 ego carpet
 rendering issues
 1. flickering of one box about 4 boxes from the end
