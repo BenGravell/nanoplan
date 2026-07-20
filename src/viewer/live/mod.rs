@@ -21,7 +21,7 @@ use rendering::RenderSnapshot;
 pub(crate) use rendering::draw;
 use screen::px;
 
-const MAX_ACTORS: usize = 12;
+const DEFAULT_ACTORS: usize = 12;
 const MAX_TICKS_PER_FRAME: usize = 3;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
 
@@ -39,9 +39,15 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub(crate) fn regenerate(&mut self, seed: u64, planner: PlannerKind, track: usize) {
+    pub(crate) fn regenerate_with_actor_count(
+        &mut self,
+        seed: u64,
+        planner: PlannerKind,
+        track: usize,
+        actor_count: usize,
+    ) {
         self.seed = seed;
-        self.world = LiveWorld::with_track(track, seed, planner, MAX_ACTORS, DT);
+        self.world = LiveWorld::with_track(track, seed, planner, actor_count, DT);
         self.planner = planner;
         self.latency = LatencyStats::default();
         self.recorder.take();
@@ -86,7 +92,7 @@ impl Default for Live {
     fn default() -> Self {
         #[cfg(test)]
         crate::track::loader::install_test_catalog();
-        let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, MAX_ACTORS, DT);
+        let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         Self {
             camera: CameraState {

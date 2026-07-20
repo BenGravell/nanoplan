@@ -121,7 +121,7 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     let mut live = Live::default();
     live.acc = DT as f32 * 0.9;
 
-    live.regenerate(2, PlannerKind::BezierToppra, 0);
+    live.regenerate_with_actor_count(2, PlannerKind::BezierToppra, 0, DEFAULT_ACTORS);
 
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
     assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);

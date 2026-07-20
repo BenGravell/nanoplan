@@ -341,6 +341,45 @@ fn future_controls_live_together_in_the_viz_menu() {
 }
 
 #[test]
+fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+    harness.get_by_label("OPPONENTS").click();
+    harness.run();
+
+    assert!(harness.get_all_by_label("OPPONENTS").count() >= 2);
+    let slider = harness
+        .get_by_role(egui::accesskit::Role::SpinButton)
+        .rect();
+    let left = slider.left_center() + egui::vec2(1.0, 0.0);
+    let right = slider.right_center() - egui::vec2(1.0, 0.0);
+    harness.drag_at(left);
+    harness.hover_at(right);
+    harness.drop_at(right);
+    harness.run();
+    assert_eq!(harness.state().ui.opponents, 15);
+    assert_eq!(harness.state().live.world.actors.len(), 15);
+
+    harness.state_mut().ui.opponents = 0;
+    harness.run();
+    assert_eq!(harness.state().ui.opponents, 0);
+    assert!(harness.state().live.world.actors.is_empty());
+}
+
+#[test]
 fn layout_only_compacts_for_phone_sized_viewports() {
     for (_, phone) in PHONE_LANDSCAPE_SIZES {
         assert!(compact_layout(phone));

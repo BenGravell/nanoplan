@@ -72,7 +72,7 @@ impl LiveWorld {
         };
         let road = road_window(&track, 0.0, dt);
         let collision_road = full_circuit_road(&track, dt);
-        let actor_count = max_actors.min(16);
+        let actor_count = max_actors.min(15);
         let behind = if actor_count > 1 {
             (actor_count / 3).max(1)
         } else {
