@@ -1,15 +1,14 @@
 use crate::simulation::State;
-use crate::track::Path;
 use crate::world::LiveWorld;
 use bevy::prelude::*;
 
 use super::Live;
-use super::camera::{CameraTarget, followed_camera_center, smooth_angle};
+use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
     RoadSurfaceGizmos, carpet, diagnostics, grid, plan, track, vehicles,
 };
-use super::screen::{ppx, px};
+use super::screen::px;
 use crate::viewer::ui::controls::metrics::preview_metrics;
 use crate::viewer::{DT, UiState};
 
@@ -54,20 +53,11 @@ pub(crate) fn draw(
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
     let ego = interpolate_state(live.previous.ego, live.world.ego(), render_alpha);
-    let (position, yaw) = match live.camera.target {
-        CameraTarget::Ego => (px(&ego), ego.yaw),
-        CameraTarget::Track => {
-            let path = Path::new(&live.world.road.centerline);
-            let (s, _) = path.project(ego);
-            let (position, yaw) = path.pose_at(s);
-            (ppx(position), yaw)
-        }
-    };
-    let target_center = live.camera.follow.then_some(position);
+    let target_center = live.camera.follow.then_some(px(&ego));
     let target_rotation = live
         .camera
         .align_heading
-        .then_some(yaw as f32 - std::f32::consts::FRAC_PI_2);
+        .then_some(ego.yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = if live.camera.smooth {
         1.0 - (-time.delta_secs() / CAMERA_SMOOTH_DURATION_S).exp()
     } else {

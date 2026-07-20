@@ -2,28 +2,16 @@ use bevy_egui::egui;
 
 use super::super::super::colors::{DIM, TEXT};
 use super::super::style::caps_font;
-use crate::viewer::live::{CameraTarget, Live, MAX_ZOOM, MIN_ZOOM};
+use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
 pub(super) fn show(ui: &mut egui::Ui, live: &mut Live) {
     ui.label(
-        egui::RichText::new("FOLLOW TARGET")
+        egui::RichText::new("FOLLOW")
             .font(caps_font(11.0))
             .color(DIM),
     );
     ui.checkbox(&mut live.camera.follow, "Follow camera");
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut live.camera.target, CameraTarget::Ego, "Ego");
-        ui.selectable_value(
-            &mut live.camera.target,
-            CameraTarget::Track,
-            "Track centerline",
-        );
-    });
-    let heading = match live.camera.target {
-        CameraTarget::Ego => "Align to ego heading",
-        CameraTarget::Track => "Align to track heading",
-    };
-    ui.checkbox(&mut live.camera.align_heading, heading);
+    ui.checkbox(&mut live.camera.align_heading, "Align to ego heading");
     ui.checkbox(&mut live.camera.smooth, "Smooth motion");
     ui.add(
         egui::Slider::new(&mut live.camera.zoom, MIN_ZOOM..=MAX_ZOOM)

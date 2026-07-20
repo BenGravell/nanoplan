@@ -12,12 +12,6 @@ pub(crate) const MIN_ZOOM: f32 = 0.01;
 pub(crate) const MAX_ZOOM: f32 = 6.0;
 pub(super) const CAMERA_BOTTOM_PADDING_PX: f32 = 48.0;
 
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum CameraTarget {
-    Ego,
-    Track,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct CameraState {
     pub(crate) center: Vec2,
@@ -25,7 +19,6 @@ pub(crate) struct CameraState {
     pub(crate) rotation: f32,
     pub(crate) follow: bool,
     pub(crate) align_heading: bool,
-    pub(crate) target: CameraTarget,
     pub(crate) smooth: bool,
 }
 
@@ -37,7 +30,6 @@ impl CameraState {
             rotation: 0.0,
             follow: true,
             align_heading: true,
-            target: CameraTarget::Track,
             smooth: true,
         };
     }
@@ -51,7 +43,6 @@ impl Default for CameraState {
             rotation: 0.0,
             follow: true,
             align_heading: true,
-            target: CameraTarget::Track,
             smooth: true,
         }
     }

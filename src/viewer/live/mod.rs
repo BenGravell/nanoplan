@@ -12,7 +12,7 @@ mod drawing;
 mod rendering;
 mod screen;
 
-pub(crate) use camera::{CameraState, CameraTarget, MAX_ZOOM, MIN_ZOOM, camera_input};
+pub(crate) use camera::{CameraState, MAX_ZOOM, MIN_ZOOM, camera_input};
 pub(crate) use drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
     RoadSurfaceGizmos, configure_carpet, configure_diagnostics, configure_plan,

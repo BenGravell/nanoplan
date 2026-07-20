@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use std::any::TypeId;
 
 use super::camera::{
-    CAMERA_BOTTOM_PADDING_PX, CameraState, CameraTarget, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+    CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     followed_camera_center, pinch_scale, smooth_angle,
 };
 use super::rendering::interpolate_state;
@@ -53,14 +53,13 @@ fn planner_change_resets_latency_stats() {
 }
 
 #[test]
-fn camera_reset_restores_the_smooth_centerline_follow_view() {
+fn camera_reset_restores_the_smooth_ego_follow_view() {
     let mut camera = CameraState {
         center: Vec2::splat(99.0),
         zoom: 2.0,
         rotation: 1.0,
         follow: false,
         align_heading: false,
-        target: CameraTarget::Ego,
         smooth: false,
     };
 
@@ -71,7 +70,6 @@ fn camera_reset_restores_the_smooth_centerline_follow_view() {
     assert_eq!(camera.rotation, 0.0);
     assert!(camera.follow);
     assert!(camera.align_heading);
-    assert!(matches!(camera.target, CameraTarget::Track));
     assert!(camera.smooth);
 }
 
