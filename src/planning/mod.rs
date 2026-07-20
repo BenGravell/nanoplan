@@ -275,14 +275,40 @@ pub(crate) fn test_run_on(
                 .first()
                 .copied()
                 .unwrap_or_default();
-            sim.step(
-                command,
+            let previous = sim.state;
+            sim.step(command);
+            sim.state = crate::geometry::barrier::collide_with_road_barriers(
+                previous,
+                sim.state,
+                crate::geometry::EGO_FOOTPRINT,
                 road,
-                actors
-                    .iter()
-                    .copied()
-                    .map(|actor| (actor, crate::geometry::CAR_FOOTPRINT)),
-            )
+            );
+            // Planner fixtures describe prescribed obstacle trajectories, not
+            // live-world dynamic actors. Keep those fixtures fixed while the
+            // production world resolves all vehicles symmetrically.
+            sim.state = actors.iter().fold(sim.state, |state, actor| {
+                let Some(hit) = crate::geometry::overlap_mtv(
+                    state.pose(),
+                    crate::geometry::EGO_FOOTPRINT,
+                    actor.pose(),
+                    crate::geometry::CAR_FOOTPRINT,
+                ) else {
+                    return state;
+                };
+                let mut velocity = [state.speed * state.yaw.cos(), state.speed * state.yaw.sin()];
+                let normal_speed = velocity[0] * hit.normal[0] + velocity[1] * hit.normal[1];
+                if normal_speed < 0.0 {
+                    velocity[0] -= 1.1 * normal_speed * hit.normal[0];
+                    velocity[1] -= 1.1 * normal_speed * hit.normal[1];
+                }
+                State {
+                    x: state.x + hit.normal[0] * hit.depth,
+                    y: state.y + hit.normal[1] * hit.depth,
+                    speed: velocity[0].hypot(velocity[1]),
+                    ..state
+                }
+            });
+            sim.state
         })
         .collect()
 }

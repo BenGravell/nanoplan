@@ -86,7 +86,13 @@ impl Planner for BezierToppraPlanner {
                     let prev = state;
                     distance += state.speed.max(0.0) * ctx.road.dt;
                     state = world_step(state, u, ctx.road.dt);
-                    (collide_with_road_barriers(prev, state, ctx.road) != state).then_some(distance)
+                    (collide_with_road_barriers(
+                        prev,
+                        state,
+                        crate::geometry::EGO_FOOTPRINT,
+                        ctx.road,
+                    ) != state)
+                        .then_some(distance)
                 });
                 let Some(distance) = collision else { break };
                 let collision_index = ((distance / ds) as usize)

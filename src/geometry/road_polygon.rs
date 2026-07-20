@@ -117,6 +117,10 @@ impl RoadPolygon {
         self.centerline.len() - usize::from(!self.closed)
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     pub(crate) fn quads(&self) -> impl Iterator<Item = [[f64; 2]; 4]> + '_ {
         (0..self.segment_count()).map(|i| {
             let next = (i + 1) % self.centerline.len();

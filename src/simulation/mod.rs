@@ -5,13 +5,13 @@ mod integration;
 pub(crate) mod physics;
 mod state_control;
 
-pub(crate) use collision::collide_with_actors;
+pub(crate) use collision::{DynamicBody, collide_dynamic_bodies};
 pub(crate) use integration::CommandLimiter;
 pub(crate) use integration::world_step;
 pub(crate) use physics::{MAX_TERMINAL_SPEED_MPS, clamp_control, curvature_limit};
 pub(crate) use state_control::{Control, Pose, Position, State};
 
-/// The ego vehicle plant: state, actuator memory, and collision response.
+/// The ego vehicle plant: state and actuator memory.
 pub(crate) struct Simulator {
     pub(crate) state: State,
     pub(crate) dt: f64,
@@ -44,20 +44,8 @@ impl Simulator {
             .collect()
     }
 
-    pub(crate) fn step(
-        &mut self,
-        command: Control,
-        road: &crate::track::Road,
-        actors: impl IntoIterator<Item = (State, crate::geometry::Footprint)>,
-    ) -> State {
-        let prev = self.state;
-        let next = crate::geometry::barrier::collide_with_road_barriers(
-            prev,
-            self.limiter.step(self.state, command, self.dt),
-            road,
-        );
-        let next = collide_with_actors(next, actors);
-        self.state = crate::geometry::barrier::collide_with_road_barriers(prev, next, road);
+    pub(crate) fn step(&mut self, command: Control) -> State {
+        self.state = self.limiter.step(self.state, command, self.dt);
         self.state
     }
 }

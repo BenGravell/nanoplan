@@ -29,10 +29,6 @@ Add a left-menu tab with options for the non- ego racers.
   - Assertiveness - progress weight
   - Recklessness - safety weight
 
-## collision physics
-
-Fix the collision physics system. Actors and ego should bounce off each other, two way collisions. Treat every actor including ego as equal first class citizens in terms of collision physics. Road barriers are perfectly static and do not move, infinite inertia. 
-
 ## guidance mode
 
 Add guidance mode, human steers target for planner

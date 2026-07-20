@@ -3,8 +3,8 @@ use super::{Control, State};
 
 /// Advance the high-fidelity world plant by one Euler step of length `dt`,
 /// using an already-applied direct control. This includes passive
-/// longitudinal resistance. [`crate::simulation::Simulator`] owns collision
-/// response around it.
+/// longitudinal resistance. The live world resolves collisions after all
+/// dynamic bodies have advanced.
 pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
     let net_accel = u.acceleration - longitudinal_resistance_accel(s.speed);

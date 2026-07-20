@@ -131,7 +131,7 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
     for (tick, &u) in controls.iter().enumerate() {
         let prev = x;
         x = world_step(x, u, ctx.road.dt);
-        if collide_with_road_barriers(prev, x, ctx.road) != x {
+        if collide_with_road_barriers(prev, x, crate::geometry::EGO_FOOTPRINT, ctx.road) != x {
             feasible = false;
         }
         if let Some(points) = &mut trajectory {
