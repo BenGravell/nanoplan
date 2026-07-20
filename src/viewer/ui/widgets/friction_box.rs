@@ -3,12 +3,11 @@
 use std::collections::VecDeque;
 
 use crate::simulation::{State, curvature_limit};
-use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+use crate::vehicle::{GRAVITY_MS2, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
 use colorgrad::Gradient;
 
 use super::super::super::colors::{DIM, FAINT, GREY, GUPPY, SURFACE, TEXT};
-use super::super::style::caps_font;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
@@ -63,13 +62,6 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
     let plot = plot_rect(rect);
     let center = plot.center();
 
-    painter.text(
-        egui::pos2(rect.center().x, rect.top()),
-        egui::Align2::CENTER_TOP,
-        "FRICTION BOX",
-        caps_font(10.0),
-        DIM,
-    );
     painter.rect_filled(plot, 2.0, SURFACE);
     let feasible_half_width = attainable_lateral_fraction(speed) * plot.width() / 2.0;
     if feasible_half_width < plot.width() / 2.0 {
@@ -98,20 +90,13 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
         ],
         egui::Stroke::new(1.0, GREY),
     );
-    painter.text(
-        plot.left_top() + egui::vec2(4.0, 4.0),
-        egui::Align2::LEFT_TOP,
-        "+LON",
-        egui::FontId::monospace(9.0),
-        DIM,
+    painter.rect_stroke(
+        plot,
+        0.0,
+        egui::Stroke::new(1.0, GREY),
+        egui::StrokeKind::Inside,
     );
-    painter.text(
-        plot.right_center() - egui::vec2(4.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        "+LAT",
-        egui::FontId::monospace(9.0),
-        DIM,
-    );
+    draw_bound_labels(painter, plot);
 
     for sample in &friction.samples {
         let age = ((friction.time - sample.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
@@ -124,29 +109,69 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
         );
     }
 
-    let current = friction.current();
-    let ball = plot_position(plot, current);
-    let color = utilization_color(utilization(current));
+    let ball = plot_position(plot, friction.current());
+    let color = utilization_color(utilization(friction.current()));
     painter.line_segment([center, ball], egui::Stroke::new(5.0, color));
     painter.circle_filled(ball, 9.0, color);
     painter.circle_stroke(ball, 9.0, egui::Stroke::new(1.0, TEXT));
-    painter.text(
-        egui::pos2(rect.center().x, plot.bottom() + 7.0),
-        egui::Align2::CENTER_TOP,
-        format!("LON {:+.1}  LAT {:+.1}", current.lon, current.lat),
-        egui::FontId::monospace(9.0),
-        TEXT,
-    );
 }
 
 fn plot_rect(rect: egui::Rect) -> egui::Rect {
-    let size = (rect.width() - 12.0)
-        .min(rect.height() - 40.0)
+    let size = (rect.width() - 38.0)
+        .min(rect.height() - 16.0)
         .clamp(0.0, 144.0);
     egui::Rect::from_min_size(
-        egui::pos2(rect.center().x - size / 2.0, rect.top() + 16.0),
+        egui::pos2(rect.center().x - size / 2.0, rect.top() + 10.0),
         egui::vec2(size, size),
     )
+}
+
+fn draw_bound_labels(painter: &egui::Painter, plot: egui::Rect) {
+    let font = egui::FontId::monospace(8.0);
+    let center = plot.center();
+    for (position, align, value, signed) in [
+        (
+            egui::pos2(center.x, plot.top() - 2.0),
+            egui::Align2::CENTER_BOTTOM,
+            MAX_LON_ACCEL,
+            true,
+        ),
+        (
+            egui::pos2(center.x, plot.bottom() + 2.0),
+            egui::Align2::CENTER_TOP,
+            MIN_LON_ACCEL,
+            true,
+        ),
+        (
+            egui::pos2(plot.left() - 3.0, center.y),
+            egui::Align2::RIGHT_CENTER,
+            MAX_ABS_LAT_ACCEL,
+            false,
+        ),
+        (
+            egui::pos2(plot.right() + 3.0, center.y),
+            egui::Align2::LEFT_CENTER,
+            MAX_ABS_LAT_ACCEL,
+            false,
+        ),
+    ] {
+        painter.text(
+            position,
+            align,
+            gravity_label(value, signed),
+            font.clone(),
+            DIM,
+        );
+    }
+}
+
+fn gravity_label(acceleration: f64, signed: bool) -> String {
+    let gravity = acceleration / GRAVITY_MS2;
+    if signed {
+        format!("{gravity:+.1}g")
+    } else {
+        format!("{gravity:.1}g")
+    }
 }
 
 fn attainable_lateral_fraction(speed: f64) -> f32 {
@@ -245,6 +270,13 @@ mod tests {
             })[0],
             1.0
         );
+    }
+
+    #[test]
+    fn bounds_are_labeled_in_gravity_units() {
+        assert_eq!(gravity_label(MAX_LON_ACCEL, true), "+0.7g");
+        assert_eq!(gravity_label(MIN_LON_ACCEL, true), "-0.9g");
+        assert_eq!(gravity_label(MAX_ABS_LAT_ACCEL, false), "1.1g");
     }
 
     #[test]

@@ -46,31 +46,6 @@ This works for static obstacles.
 
 ## UX
 
---
-mouse scrolling with mouse outside of the driving canvas should not zoom the canvas
-
---
-Make menu scale more proportionally with screen size, especially for large desktop screen sizes between 1440p and 2160p.
-
---
-Speed gauge should always be given a square free area with enough space for center number value text to not clip the gauge bar, at all screen sizes
-
--- Friction box
-
-Remove the +lon, +lat labels on grid.
-Remove the numeric readout for lat and lon accel.
-
-Put small accel bound values outside the grid next to axes lines. Express in gravity units i.e. +1.2g. Plus or minus for longitudinal bound limits, no sign for lateral bound units.
-
--- Add track lap stats.
-Current elapsed time.
-Previous lap time.
-Best lap time so far.
-Number of laps completed so far.
-
-Display in the upper right corner.
-
-
 -- New flow for driving startup.
 
 Start -> Track Select
@@ -85,8 +60,6 @@ Number of turns/corners
 Average/min/max curvature
 
 After selecting track then dive into the driving app mode.
-
-
 
 --
 ego carpet

@@ -25,6 +25,42 @@ const DEFAULT_ACTORS: usize = 12;
 const MAX_TICKS_PER_FRAME: usize = 3;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LapStats {
+    pub(crate) current_s: f64,
+    pub(crate) previous_s: Option<f64>,
+    pub(crate) best_s: Option<f64>,
+    pub(crate) completed: u64,
+    next_finish_m: f64,
+}
+
+impl LapStats {
+    fn new(lap_length: Option<f64>) -> Self {
+        Self {
+            next_finish_m: lap_length.unwrap_or(f64::INFINITY),
+            ..Default::default()
+        }
+    }
+
+    fn tick(&mut self, dt: f64, progress: f64, lap_length: Option<f64>) {
+        self.current_s += dt;
+        let Some(lap_length) = lap_length.filter(|length| *length > 0.0) else {
+            return;
+        };
+        if !self.next_finish_m.is_finite() {
+            self.next_finish_m = lap_length;
+        }
+        while progress >= self.next_finish_m {
+            let lap_time = self.current_s;
+            self.previous_s = Some(lap_time);
+            self.best_s = Some(self.best_s.map_or(lap_time, |best| best.min(lap_time)));
+            self.completed += 1;
+            self.current_s = 0.0;
+            self.next_finish_m += lap_length;
+        }
+    }
+}
+
 pub(crate) struct Live {
     pub(crate) world: LiveWorld,
     pub(crate) seed: u64,
@@ -32,6 +68,7 @@ pub(crate) struct Live {
     pub(crate) camera: CameraState,
     pub(crate) latency: LatencyStats,
     pub(crate) friction_box: FrictionBox,
+    pub(crate) lap_stats: LapStats,
     previous: RenderSnapshot,
     planner: PlannerKind,
     recorder: Latency,
@@ -53,6 +90,7 @@ impl Live {
         self.recorder.take();
         self.acc = 0.0;
         self.friction_box.clear();
+        self.lap_stats = LapStats::new(self.world.track.lap_length());
         self.reset_render_history();
         self.reset_camera();
     }
@@ -84,6 +122,12 @@ impl Live {
         self.world.tick_recording_latency(&self.recorder);
         self.friction_box
             .record(self.previous.ego, self.world.ego(), self.world.dt());
+        let progress = self.world.track.project_progress(
+            [self.world.ego().x, self.world.ego().y],
+            self.world.track_progress,
+        );
+        self.lap_stats
+            .tick(self.world.dt(), progress, self.world.track.lap_length());
         self.latency.absorb(self.recorder.take());
     }
 }
@@ -94,6 +138,7 @@ impl Default for Live {
         crate::track::loader::install_test_catalog();
         let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
+        let lap_stats = LapStats::new(world.track.lap_length());
         Self {
             camera: CameraState {
                 center: px(&world.ego()),
@@ -104,6 +149,7 @@ impl Default for Live {
             paused: false,
             latency: LatencyStats::default(),
             friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
+            lap_stats,
             previous,
             planner: PlannerKind::Basic,
             recorder: Latency::default(),

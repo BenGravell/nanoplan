@@ -6,48 +6,54 @@ use colorgrad::Gradient;
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::viewer::colors::{DIM, FAINT, GUPPY, TEXT};
 
-use super::super::style::caps_font;
-
 const LOW_THICKNESS: f32 = 11.0;
 const HIGH_THICKNESS: f32 = 21.0;
 const CHAMFER: f32 = 30.0;
+const INSET: f32 = 3.0;
 
 pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
     let speed = velocity.abs();
     let fraction = speed_fraction(speed);
-    let inset = 3.0;
     let points = [
-        egui::pos2(rect.left() + inset, rect.bottom() - inset),
-        egui::pos2(rect.right() - CHAMFER - inset, rect.bottom() - inset),
-        egui::pos2(rect.right() - inset, rect.bottom() - CHAMFER - inset),
-        egui::pos2(rect.right() - inset, rect.top() + inset),
+        egui::pos2(rect.left() + INSET, rect.bottom() - INSET),
+        egui::pos2(rect.right() - CHAMFER - INSET, rect.bottom() - INSET),
+        egui::pos2(rect.right() - INSET, rect.bottom() - CHAMFER - INSET),
+        egui::pos2(rect.right() - INSET, rect.top() + INSET),
     ];
 
     draw_ribbon(painter, &points, 1.0, |_| FAINT);
     draw_ribbon(painter, &points, fraction, gauge_color);
 
-    let center = rect.center() - egui::vec2(3.0, 2.0);
+    // Center labels in the area left by the bottom and right gauge arms.
+    // Centering them in the outer rect pushes wide values into the right arm
+    // on narrow rails.
+    let free_area = free_area(rect);
+    let center = free_area.center();
+    let value = format!("{speed:04.1}");
+    let mut value_font = egui::FontId::monospace((rect.height() * 0.25).clamp(20.0, 30.0));
+    let value_width = painter
+        .layout_no_wrap(value.clone(), value_font.clone(), TEXT)
+        .size()
+        .x;
+    if value_width > free_area.width() {
+        value_font.size *= free_area.width() / value_width;
+    }
+    let value_bottom = center.y + value_font.size * 0.5;
+    painter.text(center, egui::Align2::CENTER_CENTER, value, value_font, TEXT);
     painter.text(
-        egui::pos2(center.x, rect.top() + 18.0),
-        egui::Align2::CENTER_TOP,
-        "SPEED",
-        caps_font(10.0),
-        DIM,
-    );
-    painter.text(
-        egui::pos2(center.x, rect.top() + 31.0),
-        egui::Align2::CENTER_TOP,
-        format!("{speed:04.1}"),
-        egui::FontId::monospace((rect.height() * 0.25).clamp(20.0, 30.0)),
-        TEXT,
-    );
-    painter.text(
-        egui::pos2(center.x, rect.top() + rect.height() * 0.66),
+        egui::pos2(center.x, value_bottom),
         egui::Align2::CENTER_TOP,
         "m/s",
-        egui::FontId::monospace(9.0),
+        egui::FontId::monospace(12.0),
         DIM,
     );
+}
+
+fn free_area(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        rect.min + egui::Vec2::splat(INSET),
+        rect.max - egui::Vec2::splat(INSET + HIGH_THICKNESS),
+    )
 }
 
 fn speed_fraction(speed: f64) -> f32 {
@@ -350,5 +356,15 @@ mod tests {
         assert!((sections[1].0.x - sections[1].1.x).abs() < 1e-5);
         assert!((sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs() < 1e-5);
         assert!((sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs() < 1e-5);
+    }
+
+    #[test]
+    fn gauge_keeps_its_content_area_clear_of_its_arms() {
+        let gauge =
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 120.0 * 3.0 / 5.0));
+        let free = free_area(gauge);
+
+        assert!(free.right() <= gauge.right() - INSET - HIGH_THICKNESS);
+        assert!(free.bottom() <= gauge.bottom() - INSET - HIGH_THICKNESS);
     }
 }

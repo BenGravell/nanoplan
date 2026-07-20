@@ -6,6 +6,7 @@ use bevy_egui::input::EguiWantsInput;
 
 use super::Live;
 use super::screen::{PX_PER_M, px};
+use crate::viewer::DrivingCanvas;
 
 pub(super) const DEFAULT_ZOOM: f32 = 1.0;
 pub(crate) const MIN_ZOOM: f32 = 0.01;
@@ -56,14 +57,19 @@ pub(crate) fn camera_input(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     egui_input: Res<EguiWantsInput>,
+    driving_canvas: Res<DrivingCanvas>,
+    window: Single<&Window>,
     time: Res<Time>,
 ) {
     if !egui_input.wants_any_pointer_input() {
-        let scroll_steps = match scroll.unit {
-            MouseScrollUnit::Line => scroll.delta.y,
-            MouseScrollUnit::Pixel => scroll.delta.y / 50.0,
-        };
-        live.camera.zoom = (live.camera.zoom * 1.1f32.powf(scroll_steps)).clamp(MIN_ZOOM, MAX_ZOOM);
+        if cursor_over_driving_canvas(window.cursor_position(), driving_canvas.rect) {
+            let scroll_steps = match scroll.unit {
+                MouseScrollUnit::Line => scroll.delta.y,
+                MouseScrollUnit::Pixel => scroll.delta.y / 50.0,
+            };
+            live.camera.zoom =
+                (live.camera.zoom * 1.1f32.powf(scroll_steps)).clamp(MIN_ZOOM, MAX_ZOOM);
+        }
 
         let touches: Vec<_> = touches.iter().take(2).collect();
         if let [first, second] = touches.as_slice() {
@@ -125,6 +131,12 @@ pub(crate) fn camera_input(
         live.camera.rotation += rotation_input as f32 * time.delta_secs();
         live.camera.align_heading = false;
     }
+}
+
+pub(super) fn cursor_over_driving_canvas(cursor: Option<Vec2>, canvas: Option<Rect>) -> bool {
+    cursor
+        .zip(canvas)
+        .is_some_and(|(cursor, canvas)| canvas.contains(cursor))
 }
 
 pub(super) fn pinch_scale(previous_distance: f32, current_distance: f32) -> f32 {

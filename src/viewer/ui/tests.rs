@@ -4,9 +4,10 @@ use bevy_egui::egui;
 use egui_kittest::{Harness, kittest::Queryable};
 
 use super::controls::metrics::preview_metrics;
+use super::style::desktop_zoom;
 use super::{
-    ControlTab, UiState, compact_layout, compact_rail_widths, configure, landing, portrait_prompt,
-    right_rail_width, tutorial, viewer_layout,
+    ControlTab, UiState, compact_layout, compact_rail_widths, configure, desktop_rail_widths,
+    landing, portrait_prompt, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -473,6 +474,32 @@ fn layout_only_compacts_for_phone_sized_viewports() {
 }
 
 #[test]
+fn desktop_menu_scales_with_display_height() {
+    let at_1080p = desktop_rail_widths(egui::vec2(1920.0, 1080.0));
+    let at_1440p = desktop_rail_widths(egui::vec2(2560.0, 1440.0));
+    let at_2160p = desktop_rail_widths(egui::vec2(3840.0, 2160.0));
+    let ultrawide = desktop_rail_widths(egui::vec2(3440.0, 1440.0));
+
+    let close = |actual: (f32, f32), expected: (f32, f32)| {
+        assert!((actual.0 - expected.0).abs() < 0.001);
+        assert!((actual.1 - expected.1).abs() < 0.001);
+    };
+    close(at_1080p, (384.0, 230.4));
+    close(at_1440p, (512.0, 307.2));
+    close(at_2160p, (768.0, 460.8));
+    assert_eq!(ultrawide, at_1440p);
+}
+
+#[test]
+fn desktop_ui_zoom_scales_smoothly_from_1080p_through_2160p() {
+    assert_eq!(desktop_zoom(720.0), 1.0);
+    assert_eq!(desktop_zoom(1080.0), 1.0);
+    assert!((desktop_zoom(1440.0) - 4.0 / 3.0).abs() < f32::EPSILON);
+    assert_eq!(desktop_zoom(2160.0), 2.0);
+    assert_eq!(desktop_zoom(2880.0), 2.0);
+}
+
+#[test]
 fn viewer_elements_fit_and_render_at_target_sizes() {
     let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("viewer-renders");
     std::fs::create_dir_all(&output_dir).unwrap();
@@ -520,10 +547,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         let (control_width, rail_width) = if compact {
             compact_rail_widths(size)
         } else {
-            (
-                (size.x * 0.2).clamp(372.0, 440.0),
-                right_rail_width(size, compact),
-            )
+            desktop_rail_widths(size)
         };
         for label in [
             "PAUSE",

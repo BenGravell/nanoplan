@@ -1,11 +1,13 @@
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
+use crate::viewer::{RESIZE_DEBOUNCE_SECONDS, ResizeDebounce, VIEW_MSAA, recover_failed_resize};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
-    followed_camera_center, pinch_scale, smooth_angle,
+    cursor_over_driving_canvas, followed_camera_center, pinch_scale, smooth_angle,
 };
 use super::rendering::interpolate_state;
 use super::screen::PX_PER_M;
@@ -22,6 +24,38 @@ fn viewer_camera_prefers_msaa_and_can_disable_it() {
     assert!(crate::viewer::disable_msaa(&mut world));
     let msaa = world.query::<&Msaa>().get(&world, camera).unwrap();
     assert_eq!(*msaa, Msaa::Off);
+}
+
+#[test]
+fn resize_oom_rolls_back_without_recreating_the_gpu_device() {
+    use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorPolicy};
+
+    let mut world = World::new();
+    let mut resize = ResizeDebounce::default();
+    resize.observe(UVec2::new(1280, 720), 0.0);
+    resize.observe(UVec2::new(3840, 2160), 0.0);
+    resize.observe(UVec2::new(3840, 2160), RESIZE_DEBOUNCE_SECONDS);
+    world.insert_resource(resize);
+    world.spawn((Window::default(), PrimaryWindow));
+    let camera = world.spawn((Camera::default(), VIEW_MSAA)).id();
+    let mut render_world = World::new();
+
+    let policy = recover_failed_resize(
+        &RenderError {
+            ty: ErrorType::OutOfMemory,
+            description: "resize allocation failed".into(),
+            source: None,
+        },
+        &mut world,
+        &mut render_world,
+    );
+
+    assert!(matches!(policy, RenderErrorPolicy::Ignore));
+    assert_eq!(
+        world.resource::<ResizeDebounce>().displayed,
+        UVec2::new(1280, 720)
+    );
+    assert_eq!(*world.get::<Msaa>(camera).unwrap(), Msaa::Off);
 }
 
 #[test]
@@ -64,6 +98,29 @@ fn camera_smoothing_takes_the_short_way_across_pi() {
 fn pinch_distance_controls_zoom_without_dividing_by_zero() {
     assert_eq!(pinch_scale(100.0, 150.0), 1.5);
     assert_eq!(pinch_scale(0.0, 150.0), 1.0);
+}
+
+#[test]
+fn mouse_wheel_zoom_requires_the_cursor_to_be_over_the_driving_canvas() {
+    let canvas = Rect::from_corners(Vec2::new(300.0, 0.0), Vec2::new(900.0, 600.0));
+
+    assert!(cursor_over_driving_canvas(
+        Some(Vec2::new(600.0, 300.0)),
+        Some(canvas)
+    ));
+    assert!(!cursor_over_driving_canvas(
+        Some(Vec2::new(100.0, 300.0)),
+        Some(canvas)
+    ));
+    assert!(!cursor_over_driving_canvas(
+        Some(Vec2::new(1000.0, 300.0)),
+        Some(canvas)
+    ));
+    assert!(!cursor_over_driving_canvas(None, Some(canvas)));
+    assert!(!cursor_over_driving_canvas(
+        Some(Vec2::new(600.0, 300.0)),
+        None
+    ));
 }
 
 #[test]
@@ -127,4 +184,29 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);
     assert_eq!(live.previous.ego.yaw, track_yaw);
     assert_eq!(live.acc, 0.0);
+}
+
+#[test]
+fn lap_stats_capture_previous_best_and_completed_laps() {
+    let mut stats = LapStats::new(Some(100.0));
+    stats.tick(60.0, 99.0, Some(100.0));
+    stats.tick(1.0, 101.0, Some(100.0));
+    stats.tick(58.0, 201.0, Some(100.0));
+
+    assert_eq!(stats.completed, 2);
+    assert_eq!(stats.previous_s, Some(58.0));
+    assert_eq!(stats.best_s, Some(58.0));
+    assert_eq!(stats.current_s, 0.0);
+}
+
+#[test]
+fn regenerating_resets_lap_stats() {
+    let mut live = Live::default();
+    live.lap_stats.current_s = 12.0;
+    live.lap_stats.completed = 3;
+
+    live.regenerate_with_actor_count(2, PlannerKind::Basic, 0, DEFAULT_ACTORS);
+
+    assert_eq!(live.lap_stats.current_s, 0.0);
+    assert_eq!(live.lap_stats.completed, 0);
 }

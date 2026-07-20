@@ -6,12 +6,9 @@ use crate::planning::PlannerKind;
 use bevy::camera::CameraOutputMode;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
+use bevy::render::error_handler::{RenderError, RenderErrorHandler, RenderErrorPolicy};
 use bevy::render::{
     Extract, ExtractSchedule, RenderApp, camera::extract_cameras, view::window::ExtractedWindows,
-};
-use bevy::render::{
-    error_handler::{RenderError, RenderErrorHandler, RenderErrorPolicy},
-    settings::WgpuSettings,
 };
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
@@ -27,6 +24,11 @@ const VIEW_MSAA: Msaa = Msaa::Sample4;
 const RESIZE_DEBOUNCE_SECONDS: f32 = 0.2;
 pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 667.0;
 pub(crate) const MIN_VIEWPORT_ASPECT_RATIO: f32 = 16.0 / 9.0;
+
+#[derive(Resource, Default)]
+pub(crate) struct DrivingCanvas {
+    pub(crate) rect: Option<Rect>,
+}
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) enum CarpetVisualization {
@@ -115,6 +117,7 @@ pub(crate) fn run() {
             NON_DRIVABLE_RGB.2,
         )))
         .init_resource::<UiState>()
+        .init_resource::<DrivingCanvas>()
         .init_non_send::<live::Live>()
         .add_systems(
             Startup,
@@ -231,35 +234,47 @@ fn recover_failed_resize(
     main_world: &mut World,
     _render_world: &mut World,
 ) -> RenderErrorPolicy {
-    if error.ty == bevy::render::error_handler::ErrorType::OutOfMemory && disable_msaa(main_world) {
-        warn!("GPU memory is too limited for MSAA; recovering without multisampling");
-        return RenderErrorPolicy::Recover(WgpuSettings::default().into());
-    }
-
     let fallback = main_world.resource_mut::<ResizeDebounce>().rollback();
-    let Some(fallback) = fallback else {
+    let disabled_msaa =
+        error.ty == bevy::render::error_handler::ErrorType::OutOfMemory && disable_msaa(main_world);
+    if fallback.is_none() && !disabled_msaa {
         error!(
             "Rendering stopped after unrecoverable {:?} error; the app will remain open",
             error.ty
         );
         return RenderErrorPolicy::StopRendering;
-    };
+    }
 
-    let mut windows = main_world.query_filtered::<&mut Window, With<PrimaryWindow>>();
-    if let Ok(mut window) = windows.single_mut(main_world) {
-        window
-            .resolution
-            .set_physical_resolution(fallback.x, fallback.y);
+    if let Some(fallback) = fallback {
+        let mut windows = main_world.query_filtered::<&mut Window, With<PrimaryWindow>>();
+        if let Ok(mut window) = windows.single_mut(main_world) {
+            window
+                .resolution
+                .set_physical_resolution(fallback.x, fallback.y);
+        }
     }
     let mut cameras = main_world.query::<&mut Camera>();
     for mut camera in cameras.iter_mut(main_world) {
         camera.is_active = true;
     }
-    warn!(
-        "Recovering from {:?} resize failure at the previous framebuffer size {}x{}",
-        error.ty, fallback.x, fallback.y
-    );
-    RenderErrorPolicy::Recover(WgpuSettings::default().into())
+    match fallback {
+        Some(fallback) => warn!(
+            "Discarding failed {:?} resize and restoring framebuffer size {}x{}{}",
+            error.ty,
+            fallback.x,
+            fallback.y,
+            if disabled_msaa {
+                " without multisampling"
+            } else {
+                ""
+            }
+        ),
+        None => warn!("GPU memory is too limited for MSAA; disabling multisampling"),
+    }
+
+    // The resize only invalidates allocations made for this frame. Recreating the
+    // whole renderer here briefly needs a second GPU device and can itself OOM.
+    RenderErrorPolicy::Ignore
 }
 
 fn disable_msaa(world: &mut World) -> bool {

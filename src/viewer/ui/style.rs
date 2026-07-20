@@ -2,6 +2,9 @@ use bevy_egui::egui;
 
 use crate::viewer::colors::{CONTROL, FAINT, HOVER, ORANGE, PANEL, SURFACE, TEXT};
 
+const DESKTOP_REFERENCE_HEIGHT: f32 = 1080.0;
+const MAX_DESKTOP_ZOOM: f32 = 2.0;
+
 pub(super) fn configure(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
     ctx.set_theme(egui::Theme::Light);
@@ -96,6 +99,18 @@ pub(super) fn configure(ctx: &egui::Context) {
     style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     style.visuals.widgets.active.corner_radius = 1.into();
     ctx.set_style_of(egui::Theme::Light, style);
+    scale_to_viewport(ctx);
+}
+
+pub(super) fn scale_to_viewport(ctx: &egui::Context) {
+    // Undo the current zoom before calculating the next one so resizing does
+    // not feed the scale back into itself across frames.
+    let height_at_default_zoom = ctx.content_rect().height() * ctx.zoom_factor();
+    ctx.set_zoom_factor(desktop_zoom(height_at_default_zoom));
+}
+
+pub(super) fn desktop_zoom(viewport_height: f32) -> f32 {
+    (viewport_height / DESKTOP_REFERENCE_HEIGHT).clamp(1.0, MAX_DESKTOP_ZOOM)
 }
 
 pub(super) fn caps_font(size: f32) -> egui::FontId {
