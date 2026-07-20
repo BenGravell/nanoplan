@@ -9,7 +9,10 @@ use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
-use crate::viewer::{CarpetVisualization, colors::GUPPY};
+use crate::viewer::{
+    CarpetVisualization,
+    colors::{GUPPY, GUPPY_BLUE, GUPPY_ORANGE},
+};
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, px};
@@ -43,10 +46,15 @@ pub(crate) fn draw(
     let footprints = sample_footprints(ego, plan, dt);
     let bands = carpet_bands(&footprints);
     let values = visualization_values(ego, plan, dt, visualization, metrics);
+    let colormap = match visualization {
+        CarpetVisualization::Time => &*GUPPY_BLUE,
+        CarpetVisualization::Speed => &*GUPPY_BLUE,
+        _ => &*GUPPY,
+    };
 
     for band in bands {
         let index = (band.time / dt).round() as usize;
-        let color = GUPPY.at(values[index.min(values.len() - 1)] as f32);
+        let color = colormap.at(values[index.min(values.len() - 1)] as f32);
         let [red, green, blue, _] = color.to_rgba8();
         let color = Color::Srgba(Srgba::new(
             red as f32 / 255.0,
@@ -313,8 +321,12 @@ mod tests {
     }
 
     #[test]
-    fn metric_extremes_run_from_redorange_to_blue() {
+    fn carpet_colormaps_match_metric_signedness() {
         assert_eq!(GUPPY.at(0.0).to_rgba8()[..3], [250, 145, 79]);
         assert_eq!(GUPPY.at(1.0).to_rgba8()[..3], [30, 204, 191]);
+        assert_eq!(GUPPY_ORANGE.at(0.0).to_rgba8()[..3], [250, 145, 79]);
+        assert_eq!(GUPPY_BLUE.at(0.0).to_rgba8()[..3], [30, 204, 191]);
+        assert_eq!(GUPPY_ORANGE.at(1.0), GUPPY.at(0.5));
+        assert_eq!(GUPPY_BLUE.at(1.0), GUPPY.at(0.5));
     }
 }

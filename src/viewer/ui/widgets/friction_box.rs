@@ -5,11 +5,10 @@ use std::collections::VecDeque;
 use crate::simulation::{State, curvature_limit};
 use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
+use colorgrad::Gradient;
 
-use super::super::super::colors::{BAD, DIM, FAINT, GOOD, GREY, OK, SURFACE, TEXT};
+use super::super::super::colors::{DIM, FAINT, GREY, GUPPY, SURFACE, TEXT};
 use super::super::style::caps_font;
-
-const COMFORT_QUANTILES: [(f32, egui::Color32); 3] = [(0.50, GOOD), (0.75, OK), (1.00, BAD)];
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
@@ -117,7 +116,7 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
     for sample in &friction.samples {
         let age = ((friction.time - sample.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
         let alpha = ((1.0 - age).powi(2) * 180.0) as u8;
-        let color = comfort_color(utilization(*sample));
+        let color = utilization_color(utilization(*sample));
         painter.circle_filled(
             plot_position(plot, *sample),
             5.0,
@@ -127,7 +126,7 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
 
     let current = friction.current();
     let ball = plot_position(plot, current);
-    let color = comfort_color(utilization(current));
+    let color = utilization_color(utilization(current));
     painter.line_segment([center, ball], egui::Stroke::new(5.0, color));
     painter.circle_filled(ball, 9.0, color);
     painter.circle_stroke(ball, 9.0, egui::Stroke::new(1.0, TEXT));
@@ -192,11 +191,9 @@ fn plot_position(plot: egui::Rect, sample: Sample) -> egui::Pos2 {
     plot.center() + egui::vec2(lat * plot.width() / 2.0, -lon * plot.height() / 2.0)
 }
 
-fn comfort_color(utilization: f32) -> egui::Color32 {
-    COMFORT_QUANTILES
-        .iter()
-        .find(|(quantile, _)| utilization <= *quantile)
-        .map_or(COMFORT_QUANTILES.last().unwrap().1, |(_, color)| *color)
+fn utilization_color(utilization: f32) -> egui::Color32 {
+    let [r, g, b, _] = GUPPY.at(1.0 - utilization.clamp(0.0, 1.0)).to_rgba8();
+    egui::Color32::from_rgb(r, g, b)
 }
 
 #[cfg(test)]
@@ -251,10 +248,15 @@ mod tests {
     }
 
     #[test]
-    fn comfort_uses_theme_status_colors() {
-        assert_eq!(comfort_color(0.5), GOOD);
-        assert_eq!(comfort_color(0.6), OK);
-        assert_eq!(comfort_color(0.8), BAD);
+    fn utilization_runs_from_guppy_blue_to_orange() {
+        assert_eq!(
+            utilization_color(0.0),
+            egui::Color32::from_rgb(30, 204, 191)
+        );
+        assert_eq!(
+            utilization_color(1.0),
+            egui::Color32::from_rgb(250, 145, 79)
+        );
     }
 
     #[test]

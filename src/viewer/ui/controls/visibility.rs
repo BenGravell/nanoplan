@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::super::super::colors::RED;
+use super::super::super::colors::ORANGE;
 use crate::viewer::{CarpetVisualization, UiState};
 
 pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
@@ -30,7 +30,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
         ui.checkbox(&mut state.show_diag_points, "Search points");
         ui.checkbox(&mut state.show_diag_trajectories, "Candidate trajectories");
         if state.preview_s == 0.0 && (state.show_diag_points || state.show_diag_trajectories) {
-            ui.colored_label(RED, "Set future preview above zero to record diagnostics.");
+            ui.colored_label(ORANGE, "Set future preview above zero to show diagnostics.");
         }
     }
 }
