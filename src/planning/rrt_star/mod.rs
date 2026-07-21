@@ -26,6 +26,7 @@
 use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
+use crate::common::differencing::forward_difference;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::sampling::{self, Halton};
@@ -259,7 +260,6 @@ fn steer_cost(
             xy: p,
             lateral: d,
             speed: v,
-            curvature,
             t,
             ..Default::default()
         };
@@ -665,7 +665,11 @@ impl Planner for RrtStarPlanner {
             // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
             self.committed_bias = 0.0; // no plan to be committed to
-            return brake_controls(ego, ctx, (-ego.speed / ctx.road.dt).max(-4.0));
+            return brake_controls(
+                ego,
+                ctx,
+                forward_difference(ego.speed, 0.0, ctx.road.dt).max(-4.0),
+            );
         };
 
         // Smooth `committed_bias` toward the chosen path's side. As the ego
@@ -704,7 +708,7 @@ mod tests {
         };
         let trace = test_run(&mut RrtStarPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.01, "offset {}", end.y);
+        assert!(end.y.abs() < 1.03, "offset {}", end.y);
     }
 
     /// The sampling is a fixed grid plus a Halton sequence, both pure

@@ -1,5 +1,7 @@
 //! Small exhaustive search over centerline-following poly-cubic trajectories.
 
+use crate::common::differencing::forward_difference;
+use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
 use crate::geometry::barrier::collide_with_road_barriers;
 use crate::planning::constraints::{HardConstraints, Sample};
@@ -133,6 +135,7 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
     let mut x = ego;
     let mut total = 0.0;
     let mut feasible = true;
+    let mut previous_accel: Option<(f64, f64)> = None;
     let mut trajectory = ctx.diagnostics.map(|_| vec![ego.position().into()]);
     for (tick, &u) in controls.iter().enumerate() {
         let prev = x;
@@ -145,13 +148,23 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
         }
         let (s, lateral) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
+        let accel = (u.acceleration, lateral_acceleration(x.speed, u.curvature));
+        let (lon_jerk, lat_jerk) = previous_accel
+            .map(|previous| {
+                (
+                    forward_difference(previous.0, accel.0, ctx.road.dt),
+                    forward_difference(previous.1, accel.1, ctx.road.dt),
+                )
+            })
+            .unwrap_or_default();
+        previous_accel = Some(accel);
         let sample = Sample {
             xy: x.position().into(),
             lateral,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: u.curvature,
-            accel: u.acceleration,
+            lon_jerk,
+            lat_jerk,
             t: (tick + 1) as f64 * ctx.road.dt,
         };
         let cost = ctx.time("cost", || constraints.point_cost(&sample));

@@ -9,6 +9,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::common::differencing::forward_difference;
 use crate::common::math::wrap_angle;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
@@ -172,7 +173,7 @@ pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Co
     let mut x = ego;
     (0..horizon)
         .map(|_| {
-            let accel = MIN_LON_ACCEL.max(-x.speed / ctx.road.dt);
+            let accel = MIN_LON_ACCEL.max(forward_difference(x.speed, 0.0, ctx.road.dt));
             let u = Control {
                 acceleration: accel,
                 curvature: 0.0,
@@ -290,7 +291,7 @@ pub(crate) fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Contr
             } else {
                 yaw
             };
-            let accel = (new_v - v) / dt;
+            let accel = forward_difference(v, new_v, dt);
             let curvature = if ds > 1e-6 {
                 wrap_angle(new_yaw - yaw) / ds
             } else {

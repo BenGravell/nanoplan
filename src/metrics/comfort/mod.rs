@@ -1,132 +1,107 @@
-//! Race-car comfort: a continuous score of longitudinal and lateral
-//! acceleration. Vehicle limits are free; only nonlinear exceedance costs.
+//! Race-car comfort: a continuous score of longitudinal and lateral jerk.
 
+use crate::common::differencing::forward_difference;
+use crate::common::interp::interp1d;
+use crate::common::kinematics::lateral_acceleration;
 use crate::metrics::TickCtx;
-use crate::simulation::State;
-use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+use crate::simulation::{Control, State};
 
-/// Comfort at tick `i`: reads the [`Kinematics`] precomputed for the whole
-/// rollout (forward differences need the neighboring ticks, so they can't
-/// be built tickwise).
+const LON_JERK: &[f64] = &[0.0, 10.0, 20.0, 40.0];
+const LON_SCORE: &[f64] = &[1.0, 0.99, 0.9, 0.0];
+const LAT_JERK: &[f64] = &[0.0, 10.0, 15.0, 30.0];
+const LAT_SCORE: &[f64] = &[1.0, 0.99, 0.9, 0.0];
+
 pub(crate) fn score(ctx: &TickCtx, i: usize) -> f64 {
-    ctx.kinematics.score(i)
+    let (lon, lat) = jerk_at(ctx.ego, ctx.controls, ctx.dt, i);
+    jerk_score(lon, lat)
 }
 
-/// Forward difference, padded by repeating the last value so the result has
-/// the same length as the input.
-fn diff(v: &[f64], dt: f64) -> Vec<f64> {
-    let mut d: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]) / dt).collect();
-    d.push(d.last().copied().unwrap_or(0.0));
-    d
+pub(crate) fn jerk_score(lon: f64, lat: f64) -> f64 {
+    let lon_score = interp1d(lon.abs(), LON_JERK, LON_SCORE);
+    let lat_score = interp1d(lat.abs(), LAT_JERK, LAT_SCORE);
+    lon_score * lat_score
 }
 
-/// Tickwise kinematics of an ego trace (forward differences, padded).
-pub(crate) struct Kinematics {
-    lon_accel: Vec<f64>,
-    lat_accel: Vec<f64>,
-}
-
-impl Kinematics {
-    pub(crate) fn new(ego: &[State], dt: f64) -> Self {
-        let speed: Vec<f64> = ego.iter().map(|s| s.speed).collect();
-        let lon_accel = diff(&speed, dt);
-        let mut lat_accel: Vec<f64> = ego
-            .windows(2)
-            .map(|w| {
-                let v0 = [w[0].speed * w[0].yaw.cos(), w[0].speed * w[0].yaw.sin()];
-                let v1 = [w[1].speed * w[1].yaw.cos(), w[1].speed * w[1].yaw.sin()];
-                let dv = [(v1[0] - v0[0]) / dt, (v1[1] - v0[1]) / dt];
-                -w[0].yaw.sin() * dv[0] + w[0].yaw.cos() * dv[1]
-            })
-            .collect();
-        lat_accel.push(lat_accel.last().copied().unwrap_or(0.0));
-        Kinematics {
-            lon_accel,
-            lat_accel,
-        }
+/// Forward-difference jerk at tick `i`, padded by repeating the final jerk.
+fn jerk_at(ego: &[State], controls: &[Control], dt: f64, i: usize) -> (f64, f64) {
+    if controls.len() < 2 {
+        return (0.0, 0.0);
     }
 
-    pub(crate) fn score(&self, i: usize) -> f64 {
-        accel_score(self.lon_accel[i], self.lat_accel[i])
-    }
-}
+    let a = i.min(controls.len() - 2);
+    let b = a + 1;
 
-pub(crate) fn accel_score(lon: f64, lat: f64) -> f64 {
-    let lon_excess = if lon < MIN_LON_ACCEL {
-        (MIN_LON_ACCEL - lon) / -MIN_LON_ACCEL
-    } else if lon > MAX_LON_ACCEL {
-        (lon - MAX_LON_ACCEL) / MAX_LON_ACCEL
-    } else {
-        0.0
-    };
-    let lat_excess = ((lat.abs() - MAX_ABS_LAT_ACCEL) / MAX_ABS_LAT_ACCEL).max(0.0);
-    1.0 / (1.0 + lon_excess.powi(4) + lat_excess.powi(4))
+    let lon_a = controls[a].acceleration;
+    let lon_b = controls[b].acceleration;
+    let lon = forward_difference(lon_a, lon_b, dt);
+
+    let lat_a = lateral_acceleration(ego[a].speed, controls[a].curvature);
+    let lat_b = lateral_acceleration(ego[b].speed, controls[b].curvature);
+    let lat = forward_difference(lat_a, lat_b, dt);
+
+    (lon, lat)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
     #[test]
-    fn vehicle_acceleration_limits_are_fully_acceptable() {
-        for lon in [MIN_LON_ACCEL, 0.0, MAX_LON_ACCEL] {
-            for lat in [-MAX_ABS_LAT_ACCEL, 0.0, MAX_ABS_LAT_ACCEL] {
-                assert_eq!(accel_score(lon, lat), 1.0);
-            }
+    fn longitudinal_jerk_uses_linear_anchor_interpolation() {
+        for (&jerk, &expected) in LON_JERK.iter().zip(LON_SCORE) {
+            close(jerk_score(jerk, 0.0), expected);
+            close(jerk_score(-jerk, 0.0), expected);
         }
+        close(jerk_score(5.0, 0.0), 0.995);
+        close(jerk_score(15.0, 0.0), 0.945);
+        close(jerk_score(30.0, 0.0), 0.45);
+        close(jerk_score(50.0, 0.0), 0.0);
     }
 
     #[test]
-    fn score_is_continuous_at_each_limit() {
-        let scores = [
-            accel_score(MAX_LON_ACCEL * 1.001, 0.0),
-            accel_score(MIN_LON_ACCEL * 1.001, 0.0),
-            accel_score(0.0, MAX_ABS_LAT_ACCEL * 1.001),
+    fn lateral_jerk_uses_linear_anchor_interpolation() {
+        for (&jerk, &expected) in LAT_JERK.iter().zip(LAT_SCORE) {
+            close(jerk_score(0.0, jerk), expected);
+            close(jerk_score(0.0, -jerk), expected);
+        }
+        close(jerk_score(0.0, 5.0), 0.995);
+        close(jerk_score(0.0, 12.5), 0.945);
+        close(jerk_score(0.0, 22.5), 0.45);
+        close(jerk_score(0.0, 40.0), 0.0);
+    }
+
+    #[test]
+    fn longitudinal_and_lateral_penalties_compound() {
+        close(jerk_score(20.0, 15.0), 0.81);
+    }
+
+    #[test]
+    fn acceleration_comes_from_controls_and_jerk_is_differenced() {
+        let ego = vec![
+            State {
+                speed: 10.0,
+                ..Default::default()
+            };
+            3
         ];
-        assert!(scores.into_iter().all(|s| s < 1.0 && s > 0.999_999_999_99));
-    }
-
-    #[test]
-    fn fourth_power_shaper_ignores_small_excess_but_bites_extremes() {
-        let mild = accel_score(1.5 * MAX_LON_ACCEL, 0.0);
-        let severe = accel_score(2.0 * MAX_LON_ACCEL, 0.0);
-        let extreme = accel_score(3.0 * MAX_LON_ACCEL, 0.0);
-        assert!(mild > 0.9);
-        assert_eq!(severe, 0.5);
-        assert!(extreme < 0.1);
-        assert!(mild > severe && severe > extreme);
-    }
-
-    #[test]
-    fn acceleration_and_braking_use_their_own_vehicle_limits() {
-        assert_eq!(accel_score(2.0 * MAX_LON_ACCEL, 0.0), 0.5);
-        assert_eq!(accel_score(2.0 * MIN_LON_ACCEL, 0.0), 0.5);
-    }
-
-    #[test]
-    fn combined_longitudinal_and_lateral_extremes_compound() {
-        assert_eq!(
-            accel_score(2.0 * MAX_LON_ACCEL, 2.0 * MAX_ABS_LAT_ACCEL),
-            1.0 / 3.0
-        );
-    }
-
-    #[test]
-    fn fast_heading_change_is_fine_when_lateral_acceleration_is_low() {
-        let kinematics = Kinematics::new(
-            &[
-                State {
-                    speed: 1.0,
-                    ..Default::default()
-                },
-                State {
-                    speed: 1.0,
-                    yaw: 0.2,
-                    ..Default::default()
-                },
-            ],
-            0.1,
-        );
-        assert_eq!(kinematics.score(0), 1.0);
+        let controls = [
+            Control::default(),
+            Control {
+                acceleration: 2.0,
+                curvature: 0.01,
+            },
+            Control {
+                acceleration: 4.0,
+                curvature: 0.02,
+            },
+        ];
+        assert_eq!(jerk_at(&ego, &controls, 0.1, 0), (20.0, 10.0));
+        assert_eq!(jerk_at(&ego, &controls, 0.1, 1), (20.0, 10.0));
+        assert_eq!(jerk_at(&ego, &controls, 0.1, 2), (20.0, 10.0));
+        close(jerk_score(20.0, 10.0), 0.891);
     }
 }

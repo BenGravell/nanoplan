@@ -1,5 +1,5 @@
-use super::physics::{clamp_control, net_longitudinal_accel};
 use super::{Control, State};
+use crate::common::kinematics::{clamp_control, net_longitudinal_accel};
 
 /// Speed reached after `ticks` maximum-acceleration integration steps.
 pub(crate) fn speed_after_max_accel(mut speed: f64, ticks: usize, dt: f64) -> f64 {
@@ -50,7 +50,9 @@ impl CommandLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulation::physics::longitudinal_resistance_accel;
+    use crate::common::kinematics::{
+        curvature_from_lateral_acceleration, lateral_acceleration, longitudinal_resistance_accel,
+    };
     use crate::vehicle::{
         MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MAX_TERMINAL_SPEED_MPS, MIN_LON_ACCEL,
     };
@@ -232,7 +234,7 @@ mod tests {
         assert!((s.yaw - expected_yaw).abs() < 1e-9, "yaw {}", s.yaw);
 
         let fast = 25.0;
-        let kappa_lat = MAX_ABS_LAT_ACCEL / (fast * fast);
+        let kappa_lat = curvature_from_lateral_acceleration(fast, MAX_ABS_LAT_ACCEL);
         let s = world_step(
             State {
                 speed: fast,
@@ -250,7 +252,7 @@ mod tests {
             "curv {}",
             applied_curvature
         );
-        assert!((applied_curvature * fast * fast - MAX_ABS_LAT_ACCEL).abs() < 1e-9);
+        assert!((lateral_acceleration(fast, applied_curvature) - MAX_ABS_LAT_ACCEL).abs() < 1e-9);
     }
 
     #[test]

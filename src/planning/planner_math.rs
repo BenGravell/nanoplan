@@ -52,8 +52,8 @@ pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: 0.0,
-            accel: 0.0,
+            lon_jerk: 0.0,
+            lat_jerk: 0.0,
             t: t_s,
         },
     )

@@ -5,6 +5,7 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
+use crate::common::differencing::forward_difference;
 use crate::simulation::{Control, State, clamp_control, world_step};
 
 /// Cubic flat-output connector between two states/poses.
@@ -118,7 +119,7 @@ pub(crate) fn steer_controls(
             let t = (i as f64 + 0.5) * dt;
             let mut u = steer.control(t);
             u.curvature *= curvature_sign;
-            let accel_floor = -x.speed / dt;
+            let accel_floor = forward_difference(x.speed, 0.0, dt);
             u.acceleration = u.acceleration.max(accel_floor);
             let u = clamp_control(u, x.speed);
             x = world_step(x, u, dt);

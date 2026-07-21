@@ -75,6 +75,11 @@ pub(crate) fn preview_metrics(live: &Live) -> Metrics {
     let ego: Vec<State> = std::iter::once(live.world.ego())
         .chain(live.world.plan.iter().skip(1).copied())
         .collect();
+    let controls = if live.world.plan_controls.is_empty() {
+        vec![live.world.actuation()]
+    } else {
+        live.world.plan_controls.clone()
+    };
     let track = Path::new(live.world.road.centerline());
     let actors: Vec<Vec<State>> = live
         .world
@@ -86,5 +91,5 @@ pub(crate) fn preview_metrics(live: &Live) -> Metrics {
                 .collect()
         })
         .collect();
-    evaluate(&ego, &actors, &live.world.road)
+    evaluate(&ego, &controls, &actors, &live.world.road)
 }

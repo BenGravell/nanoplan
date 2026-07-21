@@ -25,7 +25,7 @@ pub(crate) mod safety;
 pub(crate) mod aggregation;
 
 use crate::geometry::CAR_FOOTPRINT;
-use crate::simulation::State;
+use crate::simulation::{Control, State};
 use crate::track::{Path, Road};
 
 pub(crate) use aggregation as agg;
@@ -43,8 +43,8 @@ pub(crate) struct TickCtx<'a> {
     pub(crate) actors_at: &'a [Vec<State>],
     /// Ego arc length along the route at every tick.
     pub(crate) station: &'a [f64],
-    /// Tickwise ego kinematics (accels and yaw rates).
-    pub(crate) kinematics: &'a comfort::Kinematics,
+    /// Applied ego control at every scored tick.
+    pub(crate) controls: &'a [Control],
     /// Road geometry, including its static side barriers.
     pub(crate) road: &'a Road,
     pub(crate) dt: f64,
@@ -84,7 +84,7 @@ pub(crate) const METRICS: [MetricSpec; 3] = [
     MetricSpec {
         score: comfort::score,
         aggregate: agg::avg,
-        role: CompositeRole::Weighted(0.001),
+        role: CompositeRole::Weighted(0.01),
     },
 ];
 
@@ -103,24 +103,29 @@ pub(crate) struct Metrics {
     pub(crate) score: f64,
 }
 
-/// Evaluate all metrics over a finished rollout. `actors[i]` must be sampled
-/// at the same ticks as `ego`.
-pub(crate) fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
+/// Evaluate all metrics over a finished rollout. `controls[i]` and
+/// `actors[*][i]` must be sampled at the same ticks as `ego[i]`.
+pub(crate) fn evaluate(
+    ego: &[State],
+    controls: &[Control],
+    actors: &[Vec<State>],
+    road: &Road,
+) -> Metrics {
     let n = ego.len();
     if n == 0 {
         return Metrics::default();
     }
+    assert_eq!(controls.len(), n);
     let path = Path::new(road.centerline());
     let station: Vec<f64> = ego.iter().map(|s| path.project(s.position()).0).collect();
     let actors_at: Vec<Vec<State>> = (0..n)
         .map(|i| actors.iter().map(|a| a[i]).collect())
         .collect();
-    let kinematics = comfort::Kinematics::new(ego, road.dt);
     let ctx = TickCtx {
         ego,
         actors_at: &actors_at,
         station: &station,
-        kinematics: &kinematics,
+        controls,
         road,
         dt: road.dt,
     };
@@ -171,9 +176,14 @@ mod tests {
             .collect()
     }
 
+    fn evaluate_coasting(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
+        evaluate(ego, &vec![Control::default(); ego.len()], actors, road)
+    }
+
     #[test]
     fn perfect_cruise_scores_one_every_tick() {
-        let m = evaluate(&cruise(*MAX_TERMINAL_SPEED_MPS, 20), &[], &road());
+        let ego = cruise(*MAX_TERMINAL_SPEED_MPS, 20);
+        let m = evaluate_coasting(&ego, &[], &road());
         assert!(
             m.per_tick
                 .iter()
@@ -200,10 +210,18 @@ mod tests {
                 DT,
             ));
         }
-        let accelerated = evaluate(&trace, &[], &road());
+        let controls = vec![
+            Control {
+                acceleration: MAX_LON_ACCEL,
+                ..Default::default()
+            };
+            trace.len()
+        ];
+        let accelerated = evaluate(&trace, &controls, &[], &road());
         assert!((accelerated.aggregate[1] - 1.0).abs() < 1e-9);
 
-        let held = evaluate(&cruise(initial, 20), &[], &road());
+        let held_trace = cruise(initial, 20);
+        let held = evaluate_coasting(&held_trace, &[], &road());
         assert!(held.aggregate[1] < accelerated.aggregate[1]);
     }
 
@@ -217,7 +235,7 @@ mod tests {
             };
             201
         ];
-        let m = evaluate(&ego, &[parked], &road());
+        let m = evaluate_coasting(&ego, &[parked], &road());
         // tick 100 is exactly at the parked car
         assert_eq!(m.per_tick[100][0], 0.0);
         assert_eq!(m.score_per_tick[100], 0.0);
@@ -228,24 +246,36 @@ mod tests {
     }
 
     #[test]
-    fn race_braking_within_vehicle_limit_is_fully_comfortable() {
+    fn changing_acceleration_is_penalized_but_steady_braking_is_not() {
         let mut ego = cruise(10.0, 200);
+        let mut controls = vec![Control::default(); ego.len()];
         for (i, s) in ego.iter_mut().enumerate().skip(100) {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
+            controls[i].acceleration = -6.0;
         }
-        let m = evaluate(&ego, &[], &road());
+        let m = evaluate(&ego, &controls, &[], &road());
         assert_eq!(m.per_tick[50][2], 1.0);
+        assert_eq!(m.per_tick[99][2], 0.0);
         assert_eq!(m.per_tick[110][2], 1.0);
-        assert_eq!(m.aggregate[2], 1.0);
+        assert!(m.aggregate[2] < 1.0);
     }
 
     #[test]
-    fn comfort_only_breaks_tiny_progress_ties() {
-        let uncomfortable = aggregation::composite(&METRICS, &[1.0, 0.5, 0.0]);
-        let comfortable = aggregation::composite(&METRICS, &[1.0, 0.5, 1.0]);
-        let tiny_progress_edge = aggregation::composite(&METRICS, &[1.0, 0.500_3, 0.0]);
-        assert!(comfortable - uncomfortable < 0.000_2);
-        assert!(tiny_progress_edge > comfortable);
+    fn comfort_only_breaks_tiny_ties() {
+        let comfortable_mid_safety = aggregation::composite(&METRICS, &[0.5, 1.0, 1.0]);
+        let comfortable_mid_progress = aggregation::composite(&METRICS, &[1.0, 0.5, 1.0]);
+
+        let uncomfortable_tiny_improve_safety = aggregation::composite(&METRICS, &[0.51, 1.0, 0.0]);
+        let uncomfortable_tiny_improve_progress =
+            aggregation::composite(&METRICS, &[1.0, 0.51, 0.0]);
+
+        // Tiny safety improvement must dominate perfect comfort improvement.
+        assert!(uncomfortable_tiny_improve_safety > comfortable_mid_safety);
+
+        // Tiny progress improvement must dominate perfect comfort improvement.
+        assert!(uncomfortable_tiny_improve_progress > comfortable_mid_progress);
+
+        // Safety score zero must collapse overall score to zero.
         assert_eq!(aggregation::composite(&METRICS, &[0.0, 1.0, 1.0]), 0.0);
     }
 
@@ -253,7 +283,7 @@ mod tests {
     fn progress_clamps_backward_motion_to_zero() {
         let mut ego = cruise(10.0, 200);
         ego.reverse();
-        let m = evaluate(&ego, &[], &road());
+        let m = evaluate_coasting(&ego, &[], &road());
         assert_eq!(m.per_tick[50][1], 0.0);
         assert_eq!(m.aggregate[1], 0.0);
     }
@@ -262,7 +292,7 @@ mod tests {
     fn leaving_the_road_once_zeroes_ttc() {
         let mut ego = cruise(10.0, 200);
         ego[50].y = 7.0;
-        let m = evaluate(&ego, &[], &road());
+        let m = evaluate_coasting(&ego, &[], &road());
         assert_eq!(m.per_tick[50][0], 0.0);
         assert_eq!(m.per_tick[51][0], 1.0);
         assert_eq!(m.aggregate[0], 0.0); // min aggregation: one bad tick
@@ -278,7 +308,7 @@ mod tests {
         ego[50].y = 4.0;
         let wide = Road::new(CENTERLINE.to_vec(), 10.0, 5.5, DT);
         let narrow = Road::new(CENTERLINE.to_vec(), 10.0, 3.5, DT);
-        assert_eq!(evaluate(&ego, &[], &wide).aggregate[0], 1.0);
-        assert_eq!(evaluate(&ego, &[], &narrow).aggregate[0], 0.0);
+        assert_eq!(evaluate_coasting(&ego, &[], &wide).aggregate[0], 1.0);
+        assert_eq!(evaluate_coasting(&ego, &[], &narrow).aggregate[0], 0.0);
     }
 }

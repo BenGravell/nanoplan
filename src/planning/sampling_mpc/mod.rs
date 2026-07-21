@@ -61,6 +61,8 @@ pub(crate) use cem::Cem;
 pub(crate) use mppi::Mppi;
 pub(crate) use ps::PredictiveSampling;
 
+use crate::common::differencing::forward_difference;
+use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::policy::centerline_feedback;
@@ -283,7 +285,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
     fn state_cost(
         path: &Path,
         x: &State,
-        u: Control,
+        jerk: (f64, f64),
         t: usize,
         initial_speed: f64,
         ctx: &Context,
@@ -295,8 +297,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
-            curvature: u.curvature,
-            accel: u.acceleration,
+            lon_jerk: jerk.0,
+            lat_jerk: jerk.1,
             t: t as f64 * ctx.road.dt,
         };
         let constraints = HardConstraints::new(
@@ -324,11 +326,22 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let mut x = ego;
         let mut xs = vec![ego];
         let mut total = 0.0;
+        let mut previous_accel: Option<(f64, f64)> = None;
         for t in 0..HORIZON {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = world_step(x, u, ctx.road.dt);
-            total += Self::state_cost(path, &x, u, t + 1, ego.speed, ctx);
+            let accel = (u.acceleration, lateral_acceleration(x.speed, u.curvature));
+            let jerk = previous_accel
+                .map(|previous| {
+                    (
+                        forward_difference(previous.0, accel.0, ctx.road.dt),
+                        forward_difference(previous.1, accel.1, ctx.road.dt),
+                    )
+                })
+                .unwrap_or_default();
+            previous_accel = Some(accel);
+            total += Self::state_cost(path, &x, jerk, t + 1, ego.speed, ctx);
             xs.push(x);
         }
         (xs, -total)

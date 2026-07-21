@@ -20,6 +20,8 @@
 //! edge costs are non-negative, so the first final-layer node A\* settles is
 //! the global optimum); only the work to find it is smaller.
 
+use crate::common::differencing::forward_difference;
+use crate::common::kinematics::longitudinal_resistance_accel;
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::geometry::curvature::curvature_of;
@@ -28,7 +30,6 @@ use crate::planning::search_tree::{
     RoadFrame, best_first, brake_controls, parent_chain, xy_to_controls,
 };
 use crate::planning::{Context, Planner};
-use crate::simulation::physics::longitudinal_resistance_accel;
 use crate::simulation::{Control, State, curvature_limit};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
@@ -139,7 +140,6 @@ impl Planner for LatticePlanner {
                     lateral: d,
                     heading_err,
                     speed,
-                    curvature,
                     t: (sa - s0) / v + elapsed,
                     ..Default::default()
                 };
@@ -325,9 +325,10 @@ impl Planner for LatticePlanner {
                         -curvature_limit(expected_speed),
                         curvature_limit(expected_speed),
                     );
-                    u.acceleration = ((target_speed - expected_speed) / ctx.road.dt
-                        + longitudinal_resistance_accel(expected_speed))
-                    .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+                    u.acceleration =
+                        (forward_difference(expected_speed, target_speed, ctx.road.dt)
+                            + longitudinal_resistance_accel(expected_speed))
+                        .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
                     expected_speed = target_speed;
                     u
                 })

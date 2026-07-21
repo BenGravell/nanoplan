@@ -211,9 +211,10 @@ planner form of the same composite objective.
   disfavor them.
 - **Progress and comfort are the production metrics** — forward speed is
   normalized by the speed reachable under maximum thrust acceleration
-  from the current speed (using the plant's rolling resistance and drag), and longitudinal/lateral
-  acceleration goes through `metrics::comfort::accel_score`. Their weights
-  and safety's multiplier role come directly from the `METRICS` registry.
+  from the current speed (using the plant's rolling resistance and drag), and
+  longitudinal/lateral jerk goes through `metrics::comfort::jerk_score`.
+  Their weights and safety's multiplier role come directly from the `METRICS`
+  registry.
 - **Actor prediction** goes through `prediction::predict` — the lane-aware
   kinematic model — instead of each planner reimplementing prediction
   independently. An actor travelling along the route is rolled forward along

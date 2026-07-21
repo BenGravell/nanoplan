@@ -18,33 +18,24 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         }
     }
 
-    pub(crate) fn stage(&self, x: &State, u: Control, t: usize, s_hint: Option<f64>) -> f64 {
+    pub(crate) fn stage(&self, x: &State, _u: Control, t: usize, s_hint: Option<f64>) -> f64 {
         let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, u, self.ctx.actors, false)
+        self.stage_sample(sample, self.ctx.actors, false)
     }
 
     pub(crate) fn stage_with_predicted_actors(
         &self,
         x: &State,
-        u: Control,
+        _u: Control,
         t: usize,
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
         let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, u, predicted_actors, true)
+        self.stage_sample(sample, predicted_actors, true)
     }
 
-    fn stage_sample(
-        &self,
-        sample: Sample,
-        u: Control,
-        actors: &[State],
-        actors_are_predicted: bool,
-    ) -> f64 {
-        let mut sample = sample;
-        sample.accel = u.acceleration;
-        sample.curvature = u.curvature;
+    fn stage_sample(&self, sample: Sample, actors: &[State], actors_are_predicted: bool) -> f64 {
         let constraints = HardConstraints::new(
             self.ctx.road.half_width,
             actors,

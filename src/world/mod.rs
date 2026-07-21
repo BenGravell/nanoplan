@@ -42,6 +42,7 @@ pub(crate) struct LiveWorld {
     pub(crate) road: Road,
     pub(crate) actors: Vec<SmartActor>,
     pub(crate) plan: Vec<State>,
+    pub(crate) plan_controls: Vec<Control>,
     pub(crate) diagnostics: DiagnosticsData,
     pub(crate) last_plan_ms: f64,
     pub(crate) last_planner_actors: usize,
@@ -116,6 +117,7 @@ impl LiveWorld {
             road,
             actors,
             plan: vec![],
+            plan_controls: vec![],
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
             last_planner_actors: 0,
@@ -200,9 +202,10 @@ impl LiveWorld {
         self.diagnostics = diagnostics.take();
 
         self.plan = self.simulator.preview(&controls, self.preview_ticks);
+        self.plan_controls = controls.into_iter().take(self.plan.len()).collect();
         let previous_ego = self.ego();
         self.simulator
-            .step(controls.first().copied().unwrap_or_default());
+            .step(self.plan_controls.first().copied().unwrap_or_default());
         self.resolve_collisions(previous_ego, &previous_actors);
     }
 

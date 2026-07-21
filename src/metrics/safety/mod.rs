@@ -36,6 +36,7 @@ fn collides(ego: &State, actor: &State) -> bool {
 mod tests {
     use super::*;
     use crate::metrics::evaluate;
+    use crate::simulation::Control;
     use crate::track::Road;
 
     fn road() -> Road {
@@ -63,7 +64,11 @@ mod tests {
             ego.len()
         ];
 
-        assert_eq!(evaluate(&ego, &[parked], &road()).per_tick[0][0], 1.0);
+        let controls = vec![Control::default(); ego.len()];
+        assert_eq!(
+            evaluate(&ego, &controls, &[parked], &road()).per_tick[0][0],
+            1.0
+        );
     }
 
     #[test]
@@ -83,7 +88,11 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(evaluate(&ego, &[actor], &road()).per_tick[0][0], 1.0);
+        let controls = vec![Control::default(); ego.len()];
+        assert_eq!(
+            evaluate(&ego, &controls, &[actor], &road()).per_tick[0][0],
+            1.0
+        );
     }
 
     #[test]
@@ -98,6 +107,10 @@ mod tests {
         ];
         actor[5].x = 0.0;
 
-        assert_eq!(evaluate(&ego, &[actor], &road()).per_tick[0][0], 0.0);
+        let controls = vec![Control::default(); ego.len()];
+        assert_eq!(
+            evaluate(&ego, &controls, &[actor], &road()).per_tick[0][0],
+            0.0
+        );
     }
 }

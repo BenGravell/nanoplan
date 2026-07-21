@@ -4,6 +4,7 @@ use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use colorgrad::Gradient;
 
+use crate::common::differencing::forward_difference;
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
@@ -103,11 +104,11 @@ fn visualization_values(
         CarpetVisualization::Speed => states.iter().map(|state| state.speed).collect(),
         CarpetVisualization::Time => (0..states.len()).map(|i| i as f64 * dt).collect(),
         CarpetVisualization::LongitudinalAcceleration => {
-            padded_forward(&states, |a, b| (b.speed - a.speed) / dt)
+            padded_forward(&states, |a, b| forward_difference(a.speed, b.speed, dt))
         }
         CarpetVisualization::LateralAcceleration => padded_forward(&states, |a, b| {
-            let dvx = (b.speed * b.yaw.cos() - a.speed * a.yaw.cos()) / dt;
-            let dvy = (b.speed * b.yaw.sin() - a.speed * a.yaw.sin()) / dt;
+            let dvx = forward_difference(a.speed * a.yaw.cos(), b.speed * b.yaw.cos(), dt);
+            let dvy = forward_difference(a.speed * a.yaw.sin(), b.speed * b.yaw.sin(), dt);
             -a.yaw.sin() * dvx + a.yaw.cos() * dvy
         }),
         CarpetVisualization::Curvature => padded_forward(&states, |a, b| {

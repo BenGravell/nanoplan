@@ -2,6 +2,8 @@
 
 use std::collections::VecDeque;
 
+use crate::common::differencing::forward_difference;
+use crate::common::kinematics::lateral_acceleration;
 use crate::simulation::{State, curvature_limit};
 use crate::vehicle::{GRAVITY_MS2, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
@@ -175,7 +177,7 @@ fn gravity_label(acceleration: f64, signed: bool) -> String {
 }
 
 fn attainable_lateral_fraction(speed: f64) -> f32 {
-    (speed * speed * curvature_limit(speed) / MAX_ABS_LAT_ACCEL).clamp(0.0, 1.0) as f32
+    (lateral_acceleration(speed, curvature_limit(speed)) / MAX_ABS_LAT_ACCEL).clamp(0.0, 1.0) as f32
 }
 
 fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
@@ -187,7 +189,10 @@ fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
         current.speed * current.yaw.cos(),
         current.speed * current.yaw.sin(),
     ];
-    let dv = [(v1[0] - v0[0]) / dt, (v1[1] - v0[1]) / dt];
+    let dv = [
+        forward_difference(v0[0], v1[0], dt),
+        forward_difference(v0[1], v1[1], dt),
+    ];
     [
         previous.yaw.cos() * dv[0] + previous.yaw.sin() * dv[1],
         -previous.yaw.sin() * dv[0] + previous.yaw.cos() * dv[1],

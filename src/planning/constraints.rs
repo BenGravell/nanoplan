@@ -27,8 +27,8 @@ pub(crate) struct Sample {
     /// Signed heading error from the lane direction at this point.
     pub(crate) heading_err: f64,
     pub(crate) speed: f64,
-    pub(crate) curvature: f64,
-    pub(crate) accel: f64,
+    pub(crate) lon_jerk: f64,
+    pub(crate) lat_jerk: f64,
     /// Seconds from now this sample is reached, for actor prediction.
     pub(crate) t: f64,
 }
@@ -135,7 +135,7 @@ impl<'a> HardConstraints<'a> {
         let scores = [
             1.0,
             progress::speed_score(forward_speed, self.initial_speed, tick, self.dt),
-            comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
+            comfort::jerk_score(sample.lon_jerk, sample.lat_jerk),
         ];
         1.0 - aggregation::composite(&METRICS, &scores)
     }
@@ -191,8 +191,8 @@ mod tests {
     fn planner_cost_is_the_composite_complement() {
         let sample = Sample {
             speed: 12.0,
-            accel: 2.0,
-            curvature: 0.1,
+            lon_jerk: 20.0,
+            lat_jerk: 15.0,
             t: 1.0,
             ..Default::default()
         };
@@ -204,7 +204,7 @@ mod tests {
                 (sample.t / DT).round() as usize,
                 DT,
             ),
-            comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
+            comfort::jerk_score(sample.lon_jerk, sample.lat_jerk),
         ];
         assert_eq!(
             point_cost(&sample, &[]),
