@@ -15,6 +15,7 @@ pub(crate) mod sampling_mpc;
 pub(crate) mod search_tree;
 pub(crate) mod steering;
 pub(crate) mod straight;
+mod trajectory_cost;
 pub(crate) mod treetop;
 
 pub(crate) use basic::BasicPlanner;
@@ -26,6 +27,7 @@ pub(crate) use pi2ddp::Pi2DdpPlanner;
 pub(crate) use rrt_star::RrtStarPlanner;
 pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub(crate) use straight::StraightPlanner;
+pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
 
 use crate::simulation::{Control, State};

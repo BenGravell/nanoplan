@@ -12,6 +12,11 @@ use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
+const FIRST_TARGETS_M: [f64; 3] = [10.0, 25.0, 40.0];
+const DURATION_FACTORS: [f64; 3] = [1.0, 1.5, 2.0];
+const CENTERLINE_SEGMENT_M: f64 = 15.0;
+const GOAL_BUFFER_M: f64 = 1.0;
+
 pub(crate) struct BasicPlanner;
 
 impl Planner for BasicPlanner {
@@ -46,11 +51,6 @@ impl Planner for BasicPlanner {
         })
     }
 }
-
-const FIRST_TARGETS_M: [f64; 3] = [10.0, 25.0, 40.0];
-const DURATION_FACTORS: [f64; 3] = [1.0, 1.5, 2.0];
-const CENTERLINE_SEGMENT_M: f64 = 15.0;
-const GOAL_BUFFER_M: f64 = 1.0;
 
 fn candidate(
     ego: State,

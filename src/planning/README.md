@@ -535,9 +535,10 @@ one step and continues refining; otherwise it re-initializes from scratch.
 failures (see the `stays_finite_and_safe_over_long_rollout` regression
 test):
 
-- `clamp_u` bounds direct acceleration and curvature commands — near-stationary
-  rollouts have little state diversity, which makes the `Σₓₓ` inverse in the gain
-  computation nearly singular and can otherwise blow the policy up.
+- `clamp_control` bounds direct acceleration and curvature commands, including
+  the speed-dependent lateral-acceleration limit — near-stationary rollouts have
+  little state diversity, which makes the `Σₓₓ` inverse in the gain computation
+  nearly singular and can otherwise blow the policy up.
 - A PSD guard on the perturbation covariance: if `Σᵤ`'s Schur complement
   loses positive-definiteness (noisy statistics), it's replaced with the
   road-informed prior scaled by `λ_exp` rather than propagated.

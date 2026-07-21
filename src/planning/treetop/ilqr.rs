@@ -64,12 +64,12 @@ use super::{TICKS, take_warm};
 use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
 use crate::common::matrix::{M4, M22, M24, M42};
 use crate::common::measure::dot;
+use crate::common::state_control::state;
 use crate::common::vector::{V2, V4};
-use crate::planning::planner_math::{TrajectoryCost, state, state_from_v4};
 use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
 };
-use crate::planning::{Context, Planner};
+use crate::planning::{Context, Planner, TrajectoryCost};
 use crate::prediction::predict;
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
@@ -177,7 +177,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
         .collect();
     let eval = |z: [f64; 6]| {
         ocp.stage_cost_with_predicted_actors(
-            &state_from_v4([z[0], z[1], z[2], z[3]]),
+            &State::from([z[0], z[1], z[2], z[3]]),
             &Control {
                 acceleration: z[4],
                 curvature: z[5],
@@ -199,7 +199,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
 }
 
 fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M4) {
-    fd_grad_hess(&|z| ocp.terminal_cost(&state_from_v4(z)), state(x))
+    fd_grad_hess(&|z| ocp.terminal_cost(&State::from(z)), state(x))
 }
 
 /// Central-difference gradient and Hessian of a black-box scalar. The
@@ -252,8 +252,8 @@ fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M4, M42) {
         zp[j] += H_DYN;
         let mut zm = state(x);
         zm[j] -= H_DYN;
-        let sp = state(&world_step(state_from_v4(zp), *u, dt));
-        let sm = state(&world_step(state_from_v4(zm), *u, dt));
+        let sp = state(&world_step(State::from(zp), *u, dt));
+        let sm = state(&world_step(State::from(zm), *u, dt));
         for i in 0..4 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }

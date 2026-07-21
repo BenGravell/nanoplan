@@ -1,6 +1,6 @@
 //! Shared vehicle kinematics, resistance, and control limits.
 
-use crate::simulation::Control;
+use crate::common::state_control::Control;
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL,
     MIN_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,

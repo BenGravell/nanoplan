@@ -1,5 +1,5 @@
-use crate::planning::Context;
 use crate::planning::constraints::{HardConstraints, Sample};
+use crate::planning::{Context, planner_math};
 use crate::simulation::{Control, State};
 use crate::track::Path;
 
@@ -19,7 +19,8 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
     }
 
     pub(crate) fn stage(&self, x: &State, _u: Control, t: usize, s_hint: Option<f64>) -> f64 {
-        let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        let (_, sample) =
+            planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
         self.stage_sample(sample, self.ctx.actors, false)
     }
 
@@ -31,7 +32,8 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        let (_, sample) =
+            planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
         self.stage_sample(sample, predicted_actors, true)
     }
 

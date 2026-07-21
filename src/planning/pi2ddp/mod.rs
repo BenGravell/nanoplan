@@ -14,12 +14,12 @@
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
+use crate::common::kinematics::clamp_control;
 use crate::common::matrix::{M2, M4, M6, M24};
 use crate::common::rng::Rng;
 use crate::common::vector::V2;
-use crate::planning::planner_math::{self, TrajectoryCost};
 use crate::planning::search_tree::centerline_follow_controls;
-use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
+use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, warm_start_matches};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
@@ -215,12 +215,15 @@ impl Planner for Pi2DdpPlanner {
                             pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
                             pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum(),
                         ];
-                        let u = planner_math::clamp_u([
-                            pol.u[j][0] + kx[0] + eps[0],
-                            pol.u[j][1] + kx[1] + eps[1],
-                        ]);
-                        us[k][j] = u;
-                        x = world_step(x, planner_math::control(u), ctx.road.dt);
+                        let u = clamp_control(
+                            Control::from([
+                                pol.u[j][0] + kx[0] + eps[0],
+                                pol.u[j][1] + kx[1] + eps[1],
+                            ]),
+                            x.speed,
+                        );
+                        us[k][j] = [u.acceleration, u.curvature];
+                        x = world_step(x, u, ctx.road.dt);
                         ctg[k][j] = state_cost(&x, j + 1);
                         xs[k][j + 1] = x;
                     }
@@ -385,22 +388,25 @@ impl Planner for Pi2DdpPlanner {
                     x.yaw - nom.yaw,
                     x.speed - nom.speed,
                 ];
-                let u = planner_math::clamp_u([
-                    pol.u[j][0]
-                        + pol.gains[j][0]
-                            .iter()
-                            .zip(&dx)
-                            .map(|(a, b)| a * b)
-                            .sum::<f64>(),
-                    pol.u[j][1]
-                        + pol.gains[j][1]
-                            .iter()
-                            .zip(&dx)
-                            .map(|(a, b)| a * b)
-                            .sum::<f64>(),
-                ]);
-                u_exec.push(u);
-                x = world_step(x, planner_math::control(u), ctx.road.dt);
+                let u = clamp_control(
+                    Control::from([
+                        pol.u[j][0]
+                            + pol.gains[j][0]
+                                .iter()
+                                .zip(&dx)
+                                .map(|(a, b)| a * b)
+                                .sum::<f64>(),
+                        pol.u[j][1]
+                            + pol.gains[j][1]
+                                .iter()
+                                .zip(&dx)
+                                .map(|(a, b)| a * b)
+                                .sum::<f64>(),
+                    ]),
+                    x.speed,
+                );
+                u_exec.push([u.acceleration, u.curvature]);
+                x = world_step(x, u, ctx.road.dt);
             }
             let (_, cost) = noise_free(&u_exec);
 
@@ -427,7 +433,7 @@ impl Planner for Pi2DdpPlanner {
             pol.u = base.u;
         }
 
-        let out: Vec<Control> = pol.u.iter().map(|&u| planner_math::control(u)).collect();
+        let out: Vec<Control> = pol.u.iter().copied().map(Control::from).collect();
         pol.expected_next = world_step(ego, out[0], ctx.road.dt);
         self.policy = Some(pol);
         out

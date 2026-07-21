@@ -1,3 +1,5 @@
+use crate::common::vector::{V2, V4};
+
 /// 2D world position.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Position {
@@ -19,7 +21,7 @@ impl Position {
     }
 }
 
-/// Position and heading without speed.
+/// Position and heading.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Pose {
     pub(crate) x: f64,
@@ -49,6 +51,17 @@ impl State {
 
     pub(crate) fn position(self) -> Position {
         self.into()
+    }
+}
+
+impl From<V4> for State {
+    fn from(v: V4) -> Self {
+        State {
+            x: v[0],
+            y: v[1],
+            yaw: v[2],
+            speed: v[3],
+        }
     }
 }
 
@@ -121,9 +134,22 @@ impl From<Pose> for State {
     }
 }
 
+pub(crate) fn state(s: &State) -> V4 {
+    [s.x, s.y, s.yaw, s.speed]
+}
+
 /// Control action: longitudinal acceleration and path curvature.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Control {
     pub(crate) acceleration: f64,
     pub(crate) curvature: f64,
+}
+
+impl From<V2> for Control {
+    fn from(v: V2) -> Self {
+        Control {
+            acceleration: v[0],
+            curvature: v[1],
+        }
+    }
 }

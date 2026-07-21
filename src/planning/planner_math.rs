@@ -1,42 +1,9 @@
 //! Planner-specific math helpers.
 
-mod trajectory_cost;
-
 use crate::common::math::wrap_angle;
-use crate::common::vector::{V2, V4};
 use crate::planning::constraints::Sample;
-use crate::simulation::{Control, State};
+use crate::simulation::State;
 use crate::track::Path;
-use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
-
-pub(crate) use trajectory_cost::TrajectoryCost;
-
-pub(crate) fn clamp_u(u: V2) -> V2 {
-    [
-        u[0].clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
-        u[1].clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE),
-    ]
-}
-
-pub(crate) fn control(u: V2) -> Control {
-    Control {
-        acceleration: u[0],
-        curvature: u[1],
-    }
-}
-
-pub(crate) fn state(s: &State) -> V4 {
-    [s.x, s.y, s.yaw, s.speed]
-}
-
-pub(crate) fn state_from_v4(v: V4) -> State {
-    State {
-        x: v[0],
-        y: v[1],
-        yaw: v[2],
-        speed: v[3],
-    }
-}
 
 pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>) -> (f64, Sample) {
     let p = x.position();

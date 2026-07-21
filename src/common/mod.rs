@@ -6,4 +6,5 @@ pub(crate) mod math;
 pub(crate) mod matrix;
 pub(crate) mod measure;
 pub(crate) mod rng;
+pub(crate) mod state_control;
 pub(crate) mod vector;

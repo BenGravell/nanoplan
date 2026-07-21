@@ -2,13 +2,12 @@
 
 mod collision;
 mod integration;
-mod state_control;
 
 pub(crate) use crate::common::kinematics::{clamp_control, curvature_limit};
+pub(crate) use crate::common::state_control::{Control, Pose, Position, State};
 pub(crate) use crate::vehicle::MAX_TERMINAL_SPEED_MPS;
 pub(crate) use collision::{DynamicBody, collide_dynamic_bodies};
 pub(crate) use integration::{CommandLimiter, speed_after_max_accel, world_step};
-pub(crate) use state_control::{Control, Pose, Position, State};
 
 /// The ego vehicle plant: state and actuator memory.
 pub(crate) struct Simulator {
