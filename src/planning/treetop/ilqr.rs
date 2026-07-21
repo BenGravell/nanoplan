@@ -60,10 +60,11 @@
 //! points.
 
 use super::{TICKS, take_warm};
-use crate::planning::planner_math::{
-    M4, M22, M24, M42, TrajectoryCost, V2, V4, dot, mat_add, mat_mul, mat_vec, state,
-    state_from_v4, transpose, vec_add,
-};
+use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
+use crate::common::matrix::{M4, M22, M24, M42};
+use crate::common::measure::dot;
+use crate::common::vector::{V2, V4};
+use crate::planning::planner_math::{TrajectoryCost, state, state_from_v4};
 use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
 };

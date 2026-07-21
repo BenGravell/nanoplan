@@ -32,7 +32,3 @@ pub(crate) fn mat_add<const M: usize, const N: usize>(
 ) -> [[f64; N]; M] {
     std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
 }
-
-pub(crate) fn dot<const N: usize>(a: [f64; N], b: [f64; N]) -> f64 {
-    (0..N).map(|i| a[i] * b[i]).sum()
-}

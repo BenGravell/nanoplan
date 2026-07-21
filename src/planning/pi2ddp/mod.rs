@@ -14,8 +14,10 @@
 //! and the initial curvature variance is sized so sampled trajectories span
 //! the lane width at the preview distance.
 
+use crate::common::matrix::{M2, M4, M6, M24};
 use crate::common::rng::Rng;
-use crate::planning::planner_math::{self, M2, M4, M6, M24, TrajectoryCost, V2};
+use crate::common::vector::V2;
+use crate::planning::planner_math::{self, TrajectoryCost};
 use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
 use crate::simulation::{Control, State, world_step};

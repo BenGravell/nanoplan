@@ -1,20 +1,15 @@
-//! Tiny shared vector/matrix types and planner math helpers.
+//! Planner-specific math helpers.
 
-mod linalg;
-mod matrix;
 mod trajectory_cost;
-mod vector;
 
 use crate::common::math::wrap_angle;
+use crate::common::vector::{V2, V4};
 use crate::planning::cost;
 use crate::simulation::{Control, State};
 use crate::track::Path;
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-pub(crate) use linalg::{dot, mat_add, mat_mul, mat_vec, transpose, vec_add};
-pub(crate) use matrix::{M2, M4, M6, M22, M24, M42};
 pub(crate) use trajectory_cost::TrajectoryCost;
-pub(crate) use vector::{V2, V4};
 
 pub(crate) fn clamp_u(u: V2) -> V2 {
     [
