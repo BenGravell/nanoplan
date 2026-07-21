@@ -2,11 +2,13 @@
 
 use crate::simulation::{Position, State};
 
+type Projection = (f64, f64, f64);
+
 /// A polyline with arc-length lookup and Frenet projection.
 pub(crate) struct Path {
     pts: Vec<[f64; 2]>,
     s: Vec<f64>,
-    actor_projections: std::cell::RefCell<Vec<(State, (f64, f64, f64))>>,
+    actor_projections: std::cell::RefCell<Vec<(State, Projection)>>,
 }
 
 impl Path {
@@ -47,7 +49,7 @@ impl Path {
 
     /// Projection and track heading cached for unchanged actor states that
     /// are predicted repeatedly during one planner call.
-    pub(crate) fn actor_projection(&self, state: State) -> (f64, f64, f64) {
+    pub(crate) fn actor_projection(&self, state: State) -> Projection {
         if let Some((_, projection)) = self
             .actor_projections
             .borrow()

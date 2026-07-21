@@ -32,6 +32,7 @@ impl RenderSnapshot {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     mut gizmos: Gizmos,
     mut road_surface: ResMut<RoadSurfaceMesh>,

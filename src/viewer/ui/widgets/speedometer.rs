@@ -57,7 +57,7 @@ fn free_area(rect: egui::Rect) -> egui::Rect {
 }
 
 fn speed_fraction(speed: f64) -> f32 {
-    (speed / *MAX_TERMINAL_SPEED_MPS).clamp(0.0, 1.0) as f32
+    (speed.abs() / *MAX_TERMINAL_SPEED_MPS).clamp(0.0, 1.0) as f32
 }
 
 fn draw_ribbon(
@@ -247,8 +247,8 @@ mod tests {
 
     #[test]
     fn guppy_gauge_runs_from_blue_to_orange() {
-        assert_eq!(gauge_color(0.0), egui::Color32::from_rgb(30, 204, 191));
-        assert_eq!(gauge_color(1.0), egui::Color32::from_rgb(250, 145, 79));
+        assert_eq!(gauge_color(0.0), egui::Color32::from_rgb(42, 182, 196));
+        assert_eq!(gauge_color(1.0), egui::Color32::from_rgb(254, 107, 44));
     }
 
     #[test]

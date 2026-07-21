@@ -117,16 +117,16 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) -> b
             started_at: now,
         });
     }
-    if let Some(active) = activation {
-        if activation_ready(now - active.started_at) {
-            root.data_mut(|data| data.remove::<MenuActivation>(activation_id));
-            if active.index == 0 {
-                *started = true;
-            } else if active.index == 1 {
-                *tutorial = true;
-            }
-            return active.index == MENU_ITEMS.len() - 1;
+    if let Some(active) = activation
+        && activation_ready(now - active.started_at)
+    {
+        root.data_mut(|data| data.remove::<MenuActivation>(activation_id));
+        if active.index == 0 {
+            *started = true;
+        } else if active.index == 1 {
+            *tutorial = true;
         }
+        return active.index == MENU_ITEMS.len() - 1;
     }
     root.data_mut(|data| data.insert_temp(selection_id, selected));
     if let Some(active) = activation {

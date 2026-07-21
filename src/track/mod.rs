@@ -7,6 +7,7 @@ mod model;
 mod path;
 mod presets;
 mod road;
+#[allow(clippy::module_inception)]
 mod track;
 
 pub(crate) use catalog::TRACK_CATALOG;

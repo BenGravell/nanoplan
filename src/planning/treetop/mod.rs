@@ -41,7 +41,7 @@
 //! - **Obstacles are moving actors priced by the shared metric objective.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
-//!   [`cost::HardConstraints`](crate::planning::cost::HardConstraints) at
+//!   [`HardConstraints`](crate::planning::constraints::HardConstraints) at
 //!   the absolute time the state is reached, which folds in the same
 //!   actor prediction, drivable-area bound, and production composite every
 //!   other search planner uses.
@@ -316,7 +316,6 @@ mod tests {
             y: 2.0,
             yaw: 0.0,
             speed: 5.0,
-            ..Default::default()
         };
         let z = zero_action_point(x, 2.0);
         assert!(z.x > x.x && z.x < x.x + x.speed * 2.0);

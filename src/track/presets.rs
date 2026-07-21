@@ -4,8 +4,7 @@ use std::f64::consts::PI;
 
 use super::model::GeneratedTrack;
 use crate::vehicle::{
-    AIR_DENSITY_KG_M3, DRAG_AREA_M2, EGO_MASS_KG, GRAVITY_MS2, MAX_ABS_CURVATURE, MAX_LON_ACCEL,
-    ROLLING_RESISTANCE_COEFF,
+    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
 };
 
 const STRAIGHT_HALF_WIDTH_M: f64 = 10.0;
@@ -28,12 +27,11 @@ pub(crate) struct PresetInfo {
 pub(crate) const TRACK_PRESETS: [PresetInfo; 1] = [PresetInfo { name: "Test Track" }];
 
 /// Distance needed to reach a fraction of drag-limited terminal speed from rest
-/// under maximum requested acceleration.
+/// under maximum thrust acceleration.
 fn acceleration_distance(speed_fraction: f64) -> f64 {
-    let rolling_accel = ROLLING_RESISTANCE_COEFF * GRAVITY_MS2;
-    let aero_accel_per_speed_squared = 0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 / EGO_MASS_KG;
+    let rolling_accel = ROLLING_RESISTANCE_ACCEL;
     assert!(MAX_LON_ACCEL > rolling_accel);
-    -(1.0 - speed_fraction * speed_fraction).ln() / (2.0 * aero_accel_per_speed_squared)
+    -(1.0 - speed_fraction * speed_fraction).ln() / (2.0 * AERO_DRAG_ACCEL_COEFFICIENT)
 }
 
 pub(crate) fn generate(index: usize) -> GeneratedTrack {
@@ -200,14 +198,14 @@ fn superellipse_cap(center_x: f64, angle: f64, side: f64) -> [f64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulation::physics::terminal_speed_for_accel;
+    use crate::vehicle::MAX_TERMINAL_SPEED_MPS;
 
     #[test]
     fn acceleration_straight_reaches_ninety_five_percent_terminal_speed() {
-        let terminal = terminal_speed_for_accel(MAX_LON_ACCEL).unwrap();
+        let terminal = *MAX_TERMINAL_SPEED_MPS;
         let distance = acceleration_distance(TERMINAL_SPEED_FRACTION);
-        let aero = 0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 / EGO_MASS_KG;
-        let net_accel = MAX_LON_ACCEL - ROLLING_RESISTANCE_COEFF * GRAVITY_MS2;
+        let aero = AERO_DRAG_ACCEL_COEFFICIENT;
+        let net_accel = MAX_LON_ACCEL - ROLLING_RESISTANCE_ACCEL;
         let speed = (net_accel / aero * (1.0 - (-2.0 * aero * distance).exp())).sqrt();
         assert!((speed / terminal - TERMINAL_SPEED_FRACTION).abs() < 1e-12);
     }

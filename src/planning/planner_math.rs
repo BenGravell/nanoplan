@@ -4,7 +4,7 @@ mod trajectory_cost;
 
 use crate::common::math::wrap_angle;
 use crate::common::vector::{V2, V4};
-use crate::planning::cost;
+use crate::planning::constraints::Sample;
 use crate::simulation::{Control, State};
 use crate::track::Path;
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_LON_ACCEL, MIN_LON_ACCEL};
@@ -38,12 +38,7 @@ pub(crate) fn state_from_v4(v: V4) -> State {
     }
 }
 
-pub(crate) fn state_sample(
-    path: &Path,
-    x: &State,
-    t_s: f64,
-    s_hint: Option<f64>,
-) -> (f64, cost::Sample) {
+pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>) -> (f64, Sample) {
     let p = x.position();
     let (s, d) = match s_hint {
         Some(h) => path.project_near(p, h, 15.0),
@@ -52,7 +47,7 @@ pub(crate) fn state_sample(
     let (_, lane_yaw) = path.pose_at(s);
     (
         s,
-        cost::Sample {
+        Sample {
             xy: p.xy(),
             lateral: d,
             heading_err: wrap_angle(x.yaw - lane_yaw),

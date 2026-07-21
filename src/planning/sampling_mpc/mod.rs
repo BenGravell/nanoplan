@@ -38,7 +38,7 @@
 //!   [`crate::simulation::world_step`] — shared memoryless simulation physics
 //!   with vehicle limits and drag, but without actuator memory or collisions.
 //! - **The shared metric objective.** Each rolled-out state is priced through
-//!   [`crate::planning::cost::HardConstraints`], the same cost interface the
+//!   [`crate::planning::constraints::HardConstraints`], the same cost interface the
 //!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
 //!   finite by the shared constraint escape slope since MPPI's and CEM's reward
 //!   aggregation can't absorb an infinity — the same reason PI²-DDP makes
@@ -62,7 +62,7 @@ pub(crate) use mppi::Mppi;
 pub(crate) use ps::PredictiveSampling;
 
 use crate::common::math::wrap_angle;
-use crate::planning::cost::{self, Sample};
+use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
@@ -280,7 +280,14 @@ impl<O: Optimizer> SamplingPlanner<O> {
 
     /// Cost of being at `x` at tick `t` having just applied `u` — the
     /// production composite metric with hard violations made finite.
-    fn state_cost(path: &Path, x: &State, u: Control, t: usize, ctx: &Context) -> f64 {
+    fn state_cost(
+        path: &Path,
+        x: &State,
+        u: Control,
+        t: usize,
+        initial_speed: f64,
+        ctx: &Context,
+    ) -> f64 {
         let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
@@ -292,7 +299,13 @@ impl<O: Optimizer> SamplingPlanner<O> {
             accel: u.acceleration,
             t: t as f64 * ctx.road.dt,
         };
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
+        let constraints = HardConstraints::new(
+            ctx.road.half_width,
+            ctx.actors,
+            path,
+            initial_speed,
+            ctx.road.dt,
+        );
         // The metric objective with hard violations made finite by a depth-scaled
         // escape slope (`soft_point_cost`): a flat penalty plateau leaves
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
@@ -315,7 +328,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = world_step(x, u, ctx.road.dt);
-            total += Self::state_cost(path, &x, u, t + 1, ctx);
+            total += Self::state_cost(path, &x, u, t + 1, ego.speed, ctx);
             xs.push(x);
         }
         (xs, -total)
@@ -452,7 +465,7 @@ mod tests {
         assert!(end.y.abs() < 5.5, "{} offset {}", O::NAME, end.y);
         assert!(end.speed > ego.speed, "{} speed {}", O::NAME, end.speed);
         assert!(
-            end.speed <= *crate::simulation::physics::MAX_TERMINAL_SPEED_MPS + 1e-9,
+            end.speed <= *crate::simulation::MAX_TERMINAL_SPEED_MPS + 1e-9,
             "{} speed {}",
             O::NAME,
             end.speed

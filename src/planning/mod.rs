@@ -3,7 +3,6 @@
 pub(crate) mod basic;
 pub(crate) mod bezier_toppra;
 pub(crate) mod constraints;
-pub(crate) mod cost;
 pub(crate) mod diagnostics;
 pub(crate) mod latency;
 pub(crate) mod lattice;

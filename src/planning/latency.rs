@@ -10,12 +10,11 @@
 //! - `optimize`: computing the trajectory/decision
 //! - `extract`: converting the internal solution into controls
 //! - `cost`: evaluating the shared trajectory-cost function
-//!   ([`super::cost`]) at one sample. Every planner that samples and
-//!   compares candidate trajectories (the lattice, PI²-DDP, RRT*) times its
-//!   calls into `cost::HardConstraints` under this name, so the viewer's
-//!   latency table can compare "time spent pricing candidates" across
-//!   planners even though each calls it a different number of times in a
-//!   different structural loop.
+//!   ([`super::constraints::HardConstraints::point_cost`]) at one sample.
+//!   Every planner that samples and compares candidate trajectories (the
+//!   lattice, PI²-DDP, RRT*) times its calls into
+//!   `constraints::HardConstraints` under this name, so the viewer's latency
+//!   table can compare "time spent pricing candidates" across implementations.
 //!
 //! Planners add their own seams for phases only they have (e.g. PI²-DDP's
 //! `rollouts`). Seams may nest — they are

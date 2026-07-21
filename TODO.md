@@ -44,7 +44,19 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 - Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
 This works for static obstacles.
 
+
+## road geometry
+
+Centerlines are very coarsely discretized currently, which leads to obvious polygon-ing around high curvature corners.
+As a pre-process step at track generation time, fit a cubic spline through all of the known anchor points (raw track data), then sub-sample them with fairly fine ~1m spacing. End result is still a polygon, but with more points coming from a smooth curve.
+
 ## UX
+
+--
+Add position-in-opponent-grid stat to upper right corner.
+
+--
+Friction box labels for lat accel clip left/right outside container on mobile
 
 -- New flow for driving startup.
 

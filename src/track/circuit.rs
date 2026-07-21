@@ -1,8 +1,8 @@
 //! Closed-circuit samples, parsing, interpolation, and projection.
 
-use super::model::{
-    GeneratedTrack, SAMPLE_COUNT, TrainingTrack, limit_widths_for_curvature, road_is_simple,
-};
+use super::model::{GeneratedTrack, limit_widths_for_curvature, road_is_simple};
+#[cfg(test)]
+use super::model::{SAMPLE_COUNT, TrainingTrack};
 use crate::common::measure::dist;
 
 #[derive(Debug, Clone, Copy)]
@@ -101,6 +101,7 @@ impl Circuit {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn training_track(&self) -> TrainingTrack {
         let mut points = Vec::with_capacity(SAMPLE_COUNT);
         let mut right = Vec::with_capacity(SAMPLE_COUNT);

@@ -1,5 +1,17 @@
-use super::physics::{clamp_control, longitudinal_resistance_accel};
+use super::physics::{clamp_control, net_longitudinal_accel};
 use super::{Control, State};
+
+/// Speed reached after `ticks` maximum-acceleration integration steps.
+pub(crate) fn speed_after_max_accel(mut speed: f64, ticks: usize, dt: f64) -> f64 {
+    if dt <= 0.0 {
+        return speed;
+    }
+
+    for _ in 0..ticks {
+        speed += net_longitudinal_accel(crate::vehicle::MAX_LON_ACCEL, speed) * dt;
+    }
+    speed
+}
 
 /// Advance the high-fidelity world plant by one Euler step of length `dt`,
 /// using an already-applied direct control. This includes passive
@@ -7,7 +19,7 @@ use super::{Control, State};
 /// dynamic bodies have advanced.
 pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
-    let net_accel = u.acceleration - longitudinal_resistance_accel(s.speed);
+    let net_accel = net_longitudinal_accel(u.acceleration, s.speed);
     State {
         x: s.x + s.speed * s.yaw.cos() * dt,
         y: s.y + s.speed * s.yaw.sin() * dt,
@@ -38,8 +50,10 @@ impl CommandLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulation::physics::terminal_speed_for_accel;
-    use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+    use crate::simulation::physics::longitudinal_resistance_accel;
+    use crate::vehicle::{
+        MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MAX_TERMINAL_SPEED_MPS, MIN_LON_ACCEL,
+    };
 
     #[test]
     fn world_step_applies_static_limits() {
@@ -61,6 +75,21 @@ mod tests {
                 < 1e-9
         );
         assert!((ns.yaw - s.speed * MAX_ABS_CURVATURE * 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn max_accel_baseline_uses_the_worlds_drag_limited_update() {
+        let dt = 0.1;
+        let initial = 20.0;
+        let one_step = initial + net_longitudinal_accel(MAX_LON_ACCEL, initial) * dt;
+        assert!((speed_after_max_accel(initial, 1, dt) - one_step).abs() < 1e-12);
+
+        let mut expected = initial;
+        for _ in 0..20 {
+            expected += net_longitudinal_accel(MAX_LON_ACCEL, expected) * dt;
+        }
+        assert!((speed_after_max_accel(initial, 20, dt) - expected).abs() < 1e-12);
+        assert!(expected < initial + MAX_LON_ACCEL * 2.0);
     }
 
     #[test]
@@ -133,7 +162,7 @@ mod tests {
 
     #[test]
     fn terminal_speed_controls_acceleration_sign() {
-        let terminal = terminal_speed_for_accel(MAX_LON_ACCEL).unwrap();
+        let terminal = *MAX_TERMINAL_SPEED_MPS;
         let below = world_step(
             State {
                 speed: terminal * 0.5,

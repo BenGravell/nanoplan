@@ -149,7 +149,9 @@ pub(crate) fn evaluate(ego: &[State], actors: &[Vec<State>], road: &Road) -> Met
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
+    use crate::simulation::MAX_TERMINAL_SPEED_MPS;
+    use crate::simulation::{Control, world_step};
+    use crate::vehicle::MAX_LON_ACCEL;
 
     const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
     const DT: f64 = 0.1;
@@ -182,9 +184,27 @@ mod tests {
     }
 
     #[test]
-    fn progress_uses_the_physical_terminal_speed() {
-        let m = evaluate(&cruise(*MAX_TERMINAL_SPEED_MPS / 2.0, 20), &[], &road());
-        assert!((m.aggregate[1] - 0.5).abs() < 1e-9);
+    fn progress_uses_full_acceleration_from_the_initial_speed() {
+        let initial = *MAX_TERMINAL_SPEED_MPS / 2.0;
+        let mut trace = vec![State {
+            speed: initial,
+            ..Default::default()
+        }];
+        for _ in 0..20 {
+            trace.push(world_step(
+                *trace.last().unwrap(),
+                Control {
+                    acceleration: MAX_LON_ACCEL,
+                    ..Default::default()
+                },
+                DT,
+            ));
+        }
+        let accelerated = evaluate(&trace, &[], &road());
+        assert!((accelerated.aggregate[1] - 1.0).abs() < 1e-9);
+
+        let held = evaluate(&cruise(initial, 20), &[], &road());
+        assert!(held.aggregate[1] < accelerated.aggregate[1]);
     }
 
     #[test]

@@ -19,7 +19,7 @@
 //! treetop's `Loss` carries ~200 lines of hand-derived gradients and
 //! Hessians (`loss.h`), and its `Dynamics::jacobian` is closed-form.
 //! nanoplan deliberately provides neither: its shared metric objective
-//! ([`crate::planning::cost::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
+//! ([`crate::planning::constraints::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/planning/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the state-cost gradient/Hessian
@@ -48,6 +48,7 @@
 //!   `HARD_VIOLATION_PENALTY · (1 + depth)` where `depth` is how far
 //!   inside the violation the sample sits — same cliff at the boundary,
 //!   but with a gradient pointing back out of it.
+//!
 //! **Seams**: `route`, `warm_start`, `optimize` (the whole solve), with
 //! `derivs` (all backward-pass FD work), `fd_cost`, `fd_dynamics`, and
 //! `rollout` (the line-search forward passes) nested inside, and `extract`.
@@ -102,7 +103,7 @@ impl Ocp<'_, '_> {
     /// `s_hint` narrows the Frenet projection during FD probing, where the
     /// state moves by ±[`H_COST`] around a known station.
     fn stage_cost(&self, x: &State, u: &Control, t: usize, s_hint: Option<f64>) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx).stage(x, *u, t, s_hint)
+        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(x, *u, t, s_hint)
     }
 
     fn stage_cost_with_predicted_actors(
@@ -113,7 +114,7 @@ impl Ocp<'_, '_> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx).stage_with_predicted_actors(
+        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage_with_predicted_actors(
             x,
             *u,
             t,
@@ -123,7 +124,12 @@ impl Ocp<'_, '_> {
     }
 
     fn terminal_cost(&self, x: &State) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx).stage(x, Control::default(), TICKS, None)
+        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(
+            x,
+            Control::default(),
+            TICKS,
+            None,
+        )
     }
 
     /// Total cost of a rolled-out trajectory (treetop `Loss::totalValue`).
@@ -670,7 +676,7 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
         let path = Path::new(road.centerline());
-        let tc = TrajectoryCost::new(&path, &ctx);
+        let tc = TrajectoryCost::new(&path, &ctx, 8.0);
         let x = State {
             x: 5.0,
             speed: 8.0,

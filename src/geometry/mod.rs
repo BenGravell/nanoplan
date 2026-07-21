@@ -1,6 +1,7 @@
-//! Shared physical/rendered footprints.
+//! Shared geometry helpers and physical/rendered footprints.
 
 pub(crate) mod barrier;
+pub(crate) mod curvature;
 mod footprint;
 mod polygon;
 mod road_polygon;

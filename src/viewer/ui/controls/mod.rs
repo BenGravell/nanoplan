@@ -8,8 +8,8 @@ use crate::viewer::live::Live;
 
 mod camera;
 pub(crate) mod metrics;
-mod planner;
 mod opponents;
+mod planner;
 mod visibility;
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -108,12 +108,7 @@ fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
             }
         });
     if state.track != previous_track {
-        live.regenerate_with_actor_count(
-            live.seed,
-            state.planner,
-            state.track,
-            state.opponents,
-        );
+        live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
     }
     ui.add_space(6.0);
 

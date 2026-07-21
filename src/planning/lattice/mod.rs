@@ -22,7 +22,8 @@
 
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
-use crate::planning::cost::{self, Sample};
+use crate::geometry::curvature::curvature_of;
+use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{
     RoadFrame, best_first, brake_controls, parent_chain, xy_to_controls,
 };
@@ -78,7 +79,13 @@ impl Planner for LatticePlanner {
             speed: v,
             horizon_m,
         } = ctx.time("route", || RoadFrame::new(ego, ctx));
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, &path);
+        let constraints = HardConstraints::new(
+            ctx.road.half_width,
+            ctx.actors,
+            &path,
+            ego.speed,
+            ctx.road.dt,
+        );
         let lateral_bound = (ctx.road.half_width - EGO_FOOTPRINT.width / 2.0).max(0.0);
         let horizon_m = horizon_m.min((path.length() - s0).max(1.0));
         // STATION_LAYERS evenly spaced layers reaching out to the full
@@ -99,8 +106,9 @@ impl Planner for LatticePlanner {
         // Cost of one lattice edge: the metric objective at each sampled
         // point, timed under the "cost" seam. Curvature at each point is a
         // numerical estimate off the last three sampled points
-        // (`cost::curvature_of`) — the lattice has no closed-form curve to
-        // evaluate directly, unlike RRT*'s steering function. Returns
+        // (`geometry::curvature::curvature_of`) — the lattice has no
+        // closed-form curve to evaluate directly, unlike RRT*'s steering
+        // function. Returns
         // `f64::INFINITY` for a colliding or off-road edge (A* skips it).
         let edge_cost = |sa: f64, da: f64, sb: f64, db: f64, m0: f64| -> f64 {
             let mut total = 0.0;
@@ -112,7 +120,7 @@ impl Planner for LatticePlanner {
                 let s = sa + (sb - sa) * u;
                 let d = d_shape(da, db, m0, u);
                 let p = path.frenet_to_xy(s, d);
-                let curvature = prev2.map_or(0.0, |p0| cost::curvature_of(p0, prev1, p));
+                let curvature = prev2.map_or(0.0, |p0| curvature_of(p0, prev1, p));
                 if curvature > MAX_ABS_CURVATURE {
                     return f64::INFINITY;
                 }
@@ -224,7 +232,7 @@ impl Planner for LatticePlanner {
         };
 
         // reconstruct the chosen lateral per layer from the parent chain
-        let mut laterals = vec![0.0; STATION_LAYERS];
+        let mut laterals = [0.0; STATION_LAYERS];
         for node in parent_chain(result.goal, 0, |n| {
             (result.parent[n] != usize::MAX).then_some(result.parent[n])
         }) {
@@ -260,7 +268,7 @@ impl Planner for LatticePlanner {
             let mut speeds: Vec<f64> = stations
                 .iter()
                 .map(|&s| {
-                    let curvature = cost::curvature_of(
+                    let curvature = curvature_of(
                         winning_xy((s - CURVATURE_WINDOW_M).max(0.0)),
                         winning_xy(s),
                         winning_xy((s + CURVATURE_WINDOW_M).min(s_max)),

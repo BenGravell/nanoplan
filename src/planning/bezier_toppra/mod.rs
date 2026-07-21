@@ -10,7 +10,10 @@ use crate::simulation::curvature_limit;
 use crate::simulation::physics::longitudinal_resistance_accel;
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
-use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+use crate::vehicle::{
+    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL,
+    MIN_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
+};
 
 const GRID_STEPS: usize = 100;
 
@@ -138,9 +141,8 @@ fn toppra_profile(start_speed2: f64, ds: f64, max_speed2: &[f64]) -> Vec<f64> {
 fn predecessor_limit(next_speed2: f64, ds: f64) -> f64 {
     // Forward-speed resistance is rolling + aero*x, hence this is the closed
     // form of max x whose hardest braking can reach `next_speed2`.
-    let r0 = longitudinal_resistance_accel(1e-6);
-    let r1 = longitudinal_resistance_accel(1.0) - r0;
-    (next_speed2 - 2.0 * ds * (MIN_LON_ACCEL - r0)) / (1.0 - 2.0 * ds * r1)
+    (next_speed2 - 2.0 * ds * (MIN_LON_ACCEL - ROLLING_RESISTANCE_ACCEL))
+        / (1.0 - 2.0 * ds * AERO_DRAG_ACCEL_COEFFICIENT)
 }
 
 fn arrival_times(ds: f64, speed2: &[f64]) -> Vec<f64> {

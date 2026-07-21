@@ -7,7 +7,7 @@ use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
-use crate::simulation::physics::MAX_TERMINAL_SPEED_MPS;
+use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Control, DynamicBody, Simulator, State, collide_dynamic_bodies};
 use crate::track::{ROAD_SAMPLE_STEP_M, Road, Track};
 use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL};

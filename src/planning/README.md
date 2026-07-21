@@ -8,8 +8,7 @@ subdirectory per planner implementation.
 planning/
 ├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
-├── constraints.rs hard collision/off-road rules for shared trajectory cost
-├── cost.rs        shared composite-metric objective
+├── constraints.rs hard rules and the shared composite-metric objective
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── straight/      strawman: zero control, always
 ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
@@ -211,7 +210,8 @@ planner form of the same composite objective.
   fires at the true edge. A planner should reject these outright, not merely
   disfavor them.
 - **Progress and comfort are the production metrics** — forward speed is
-  normalized by the physical terminal speed, and longitudinal/lateral
+  normalized by the speed reachable under maximum thrust acceleration
+  from the current speed (using the plant's rolling resistance and drag), and longitudinal/lateral
   acceleration goes through `metrics::comfort::accel_score`. Their weights
   and safety's multiplier role come directly from the `METRICS` registry.
 - **Actor prediction** goes through `prediction::predict` — the lane-aware
@@ -244,7 +244,7 @@ one of two ways, both compatible with that constraint:
   `CubicSteer::curvature` evaluates the curvature of a specific flat-output
   polynomial it already committed to — a geometric property of one
   candidate, not a gradient used to choose the next one.
-- **A purely numerical estimate off sampled points.** `cost::curvature_of`
+- **A purely numerical estimate off sampled points.** `geometry::curvature::curvature_of`
   computes the Menger curvature of three points (twice the triangle area
   over the product of the three side lengths) — plain arithmetic, no
   derivative of any parametric formula. The lattice, which has no
@@ -444,7 +444,7 @@ costs every edge with the [shared metric objective](#the-shared-metric-objective
 per sampled point, including its hard `f64::INFINITY` reject on predicted
 collision or leaving the drivable area, and finds the cheapest path with **A\* (best-first)
 search** over the layered DAG. Curvature at each sampled point, needed for
-the comfort metric, comes from `cost::curvature_of` — the lattice
+the comfort metric, comes from `geometry::curvature::curvature_of` — the lattice
 has no closed-form curve of its own, so it estimates curvature numerically
 off the last three sampled points.
 

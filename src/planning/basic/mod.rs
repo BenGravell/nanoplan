@@ -2,7 +2,7 @@
 
 use crate::common::math::wrap_angle;
 use crate::geometry::barrier::collide_with_road_barriers;
-use crate::planning::cost::{HardConstraints, Sample};
+use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{brake_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
@@ -123,7 +123,13 @@ fn append_segment(
 }
 
 fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<f64> {
-    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path);
+    let constraints = HardConstraints::new(
+        ctx.road.half_width,
+        ctx.actors,
+        path,
+        ego.speed,
+        ctx.road.dt,
+    );
     let mut x = ego;
     let mut total = 0.0;
     let mut feasible = true;

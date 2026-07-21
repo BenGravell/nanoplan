@@ -18,11 +18,6 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
             .trailing_fill(true),
     );
     if live.world.actors.len() != state.opponents {
-        live.regenerate_with_actor_count(
-            live.seed,
-            state.planner,
-            state.track,
-            state.opponents,
-        );
+        live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
     }
 }

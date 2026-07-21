@@ -24,7 +24,6 @@ mod tests {
             y: 2.0,
             yaw,
             speed: 3.0,
-            ..Default::default()
         };
         let road = test_road(&[
             [1.0, 2.0],

@@ -178,7 +178,10 @@ fn tutorial_keymap_fits_supported_phone_viewports() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
         for label in ["TUTORIAL", "CAMERA CONTROLS", "MMB / WASD", "RESET", "BACK"] {
             let rect = harness.get_by_label(label).rect();
-            assert!(screen.contains_rect(rect), "{label:?} at {rect:?} is clipped at {size:?}");
+            assert!(
+                screen.contains_rect(rect),
+                "{label:?} at {rect:?} is clipped at {size:?}"
+            );
         }
     }
 }
@@ -442,9 +445,7 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
     harness.run();
 
     assert!(harness.get_all_by_label("OPPONENTS").count() >= 2);
-    let slider = harness
-        .get_by_role(egui::accesskit::Role::SpinButton)
-        .rect();
+    let slider = harness.get_by_role(egui::accesskit::Role::Slider).rect();
     let left = slider.left_center() + egui::vec2(1.0, 0.0);
     let right = slider.right_center() - egui::vec2(1.0, 0.0);
     harness.drag_at(left);
@@ -560,7 +561,6 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         ] {
             let nodes: Vec<_> = harness
                 .get_all_by_label(label)
-                .into_iter()
                 .filter(|node| node.rect().left() < control_width * pixels_per_point)
                 .collect();
             assert!(
@@ -597,7 +597,6 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         let control_rect = |label| {
             harness
                 .get_all_by_label(label)
-                .into_iter()
                 .map(|node| node.rect())
                 .find(|rect| rect.left() < control_width * pixels_per_point)
                 .unwrap()

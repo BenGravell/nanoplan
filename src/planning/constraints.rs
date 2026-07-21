@@ -62,17 +62,27 @@ struct CollisionFree<'a> {
 
 impl HardConstraint for CollisionFree<'_> {
     fn is_violated(&self, sample: &Sample) -> bool {
+        self.is_violated_at(sample, sample.t)
+    }
+
+    fn violation_depth(&self, sample: &Sample) -> f64 {
+        self.violation_depth_at(sample, sample.t)
+    }
+}
+
+impl CollisionFree<'_> {
+    fn is_violated_at(&self, sample: &Sample, actor_time: f64) -> bool {
         self.actors.iter().any(|a| {
-            let predicted = predict(a, self.track, sample.t);
+            let predicted = predict(a, self.track, actor_time);
             (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y) < COLLISION_DIAMETER_M
         })
     }
 
-    fn violation_depth(&self, sample: &Sample) -> f64 {
+    fn violation_depth_at(&self, sample: &Sample, actor_time: f64) -> f64 {
         self.actors
             .iter()
             .map(|a| {
-                let p = predict(a, self.track, sample.t);
+                let p = predict(a, self.track, actor_time);
                 let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
                 (COLLISION_DIAMETER_M - gap).max(0.0)
             })
@@ -88,32 +98,43 @@ impl HardConstraint for CollisionFree<'_> {
 pub(crate) struct HardConstraints<'a> {
     drivable: DrivableArea,
     collision: CollisionFree<'a>,
+    initial_speed: f64,
+    dt: f64,
 }
 
 impl<'a> HardConstraints<'a> {
-    pub(crate) fn new(road_half_width: f64, actors: &'a [State], track: &'a Path) -> Self {
+    pub(crate) fn new(
+        road_half_width: f64,
+        actors: &'a [State],
+        track: &'a Path,
+        initial_speed: f64,
+        dt: f64,
+    ) -> Self {
         HardConstraints {
             drivable: DrivableArea {
                 half_width: road_half_width,
             },
             collision: CollisionFree { actors, track },
+            initial_speed,
+            dt,
         }
-    }
-
-    pub(crate) fn violation_depth(&self, sample: &Sample) -> f64 {
-        self.drivable.violation_depth(sample) + self.collision.violation_depth(sample)
     }
 
     /// Per-sample complement of the production composite metric, or infinity
     /// when its safety multiplier is zero.
     pub(crate) fn point_cost(&self, sample: &Sample) -> f64 {
-        if self.drivable.is_violated(sample) || self.collision.is_violated(sample) {
+        self.point_cost_with_actor_time(sample, sample.t)
+    }
+
+    fn point_cost_with_actor_time(&self, sample: &Sample, actor_time: f64) -> f64 {
+        if self.drivable.is_violated(sample) || self.collision.is_violated_at(sample, actor_time) {
             return f64::INFINITY;
         }
         let forward_speed = sample.speed * sample.heading_err.cos();
+        let tick = (sample.t / self.dt).round().max(0.0) as usize;
         let scores = [
             1.0,
-            progress::speed_score(forward_speed),
+            progress::speed_score(forward_speed, self.initial_speed, tick, self.dt),
             comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
         ];
         1.0 - aggregation::composite(&METRICS, &scores)
@@ -121,7 +142,13 @@ impl<'a> HardConstraints<'a> {
 
     /// Finite, depth-scaled stand-in for a hard violation.
     pub(crate) fn violation_penalty(&self, sample: &Sample) -> f64 {
-        HARD_VIOLATION_PENALTY * (1.0 + self.violation_depth(sample))
+        self.violation_penalty_with_actor_time(sample, sample.t)
+    }
+
+    fn violation_penalty_with_actor_time(&self, sample: &Sample, actor_time: f64) -> f64 {
+        let depth = self.drivable.violation_depth(sample)
+            + self.collision.violation_depth_at(sample, actor_time);
+        HARD_VIOLATION_PENALTY * (1.0 + depth)
     }
 
     /// [`HardConstraints::point_cost`] with hard violations made finite by
@@ -134,5 +161,88 @@ impl<'a> HardConstraints<'a> {
         } else {
             self.violation_penalty(sample)
         }
+    }
+
+    /// Soft point cost when `actors` were already predicted to `sample.t`.
+    pub(crate) fn soft_point_cost_with_predicted_actors(&self, sample: &Sample) -> f64 {
+        let c = self.point_cost_with_actor_time(sample, 0.0);
+        if c.is_finite() {
+            c
+        } else {
+            self.violation_penalty_with_actor_time(sample, 0.0)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HALF_WIDTH_M: f64 = 5.5;
+    const DT: f64 = 0.1;
+    const INITIAL_SPEED: f64 = 10.0;
+
+    fn point_cost(sample: &Sample, actors: &[State]) -> f64 {
+        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        HardConstraints::new(HALF_WIDTH_M, actors, &track, INITIAL_SPEED, DT).point_cost(sample)
+    }
+
+    #[test]
+    fn planner_cost_is_the_composite_complement() {
+        let sample = Sample {
+            speed: 12.0,
+            accel: 2.0,
+            curvature: 0.1,
+            t: 1.0,
+            ..Default::default()
+        };
+        let scores = [
+            1.0,
+            progress::speed_score(
+                sample.speed,
+                INITIAL_SPEED,
+                (sample.t / DT).round() as usize,
+                DT,
+            ),
+            comfort::accel_score(sample.accel, sample.speed.powi(2) * sample.curvature),
+        ];
+        assert_eq!(
+            point_cost(&sample, &[]),
+            1.0 - aggregation::composite(&METRICS, &scores)
+        );
+    }
+
+    #[test]
+    fn safety_gate_rejects_collision_and_off_road() {
+        let actor = State {
+            x: 1.0,
+            ..Default::default()
+        };
+        assert!(point_cost(&Sample::default(), &[actor]).is_infinite());
+        assert!(
+            point_cost(
+                &Sample {
+                    lateral: 10.0,
+                    ..Default::default()
+                },
+                &[]
+            )
+            .is_infinite()
+        );
+    }
+
+    #[test]
+    fn soft_violation_cost_has_an_escape_slope() {
+        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        let constraints = HardConstraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, DT);
+        let near = Sample {
+            lateral: HALF_WIDTH_M + 0.5,
+            ..Default::default()
+        };
+        let far = Sample {
+            lateral: HALF_WIDTH_M + 3.0,
+            ..Default::default()
+        };
+        assert!(constraints.soft_point_cost(&far) > constraints.soft_point_cost(&near));
     }
 }

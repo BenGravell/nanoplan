@@ -1,20 +1,26 @@
-use crate::planning::{Context, cost};
+use crate::planning::Context;
+use crate::planning::constraints::{HardConstraints, Sample};
 use crate::simulation::{Control, State};
 use crate::track::Path;
 
 pub(crate) struct TrajectoryCost<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
+    initial_speed: f64,
 }
 
 impl<'a, 'b> TrajectoryCost<'a, 'b> {
-    pub(crate) fn new(path: &'a Path, ctx: &'a Context<'b>) -> Self {
-        TrajectoryCost { path, ctx }
+    pub(crate) fn new(path: &'a Path, ctx: &'a Context<'b>, initial_speed: f64) -> Self {
+        TrajectoryCost {
+            path,
+            ctx,
+            initial_speed,
+        }
     }
 
     pub(crate) fn stage(&self, x: &State, u: Control, t: usize, s_hint: Option<f64>) -> f64 {
         let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, u, self.ctx.actors)
+        self.stage_sample(sample, u, self.ctx.actors, false)
     }
 
     pub(crate) fn stage_with_predicted_actors(
@@ -25,18 +31,33 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        let (_, mut sample) =
-            super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        sample.t = 0.0;
-        self.stage_sample(sample, u, predicted_actors)
+        let (_, sample) = super::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
+        self.stage_sample(sample, u, predicted_actors, true)
     }
 
-    fn stage_sample(&self, sample: cost::Sample, u: Control, actors: &[State]) -> f64 {
+    fn stage_sample(
+        &self,
+        sample: Sample,
+        u: Control,
+        actors: &[State],
+        actors_are_predicted: bool,
+    ) -> f64 {
         let mut sample = sample;
         sample.accel = u.acceleration;
         sample.curvature = u.curvature;
-        let constraints = cost::HardConstraints::new(self.ctx.road.half_width, actors, self.path);
-        self.ctx
-            .time("cost", || constraints.soft_point_cost(&sample))
+        let constraints = HardConstraints::new(
+            self.ctx.road.half_width,
+            actors,
+            self.path,
+            self.initial_speed,
+            self.ctx.road.dt,
+        );
+        self.ctx.time("cost", || {
+            if actors_are_predicted {
+                constraints.soft_point_cost_with_predicted_actors(&sample)
+            } else {
+                constraints.soft_point_cost(&sample)
+            }
+        })
     }
 }

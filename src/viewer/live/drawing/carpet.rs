@@ -9,9 +9,11 @@ use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+#[cfg(test)]
+use crate::viewer::colors::GUPPY_ORANGE;
 use crate::viewer::{
     CarpetVisualization,
-    colors::{GUPPY, GUPPY_BLUE, GUPPY_ORANGE},
+    colors::{GUPPY, GUPPY_BLUE},
 };
 
 use super::super::Live;
@@ -214,8 +216,8 @@ fn mean_occupancy_time(point: State, footprints: &[TimedState]) -> Option<f64> {
         let s = sample.state.yaw.sin();
         let longitudinal = dx * c + dy * s;
         let lateral = -dx * s + dy * c;
-        if longitudinal >= -FOOTPRINT_EPSILON_M
-            && longitudinal <= EGO_FOOTPRINT.length + FOOTPRINT_EPSILON_M
+        if (-FOOTPRINT_EPSILON_M..=EGO_FOOTPRINT.length + FOOTPRINT_EPSILON_M)
+            .contains(&longitudinal)
             && lateral.abs() <= EGO_FOOTPRINT.width * 0.5 + FOOTPRINT_EPSILON_M
         {
             total += sample.time;
@@ -345,10 +347,10 @@ mod tests {
 
     #[test]
     fn carpet_colormaps_match_metric_signedness() {
-        assert_eq!(GUPPY.at(0.0).to_rgba8()[..3], [250, 145, 79]);
-        assert_eq!(GUPPY.at(1.0).to_rgba8()[..3], [30, 204, 191]);
-        assert_eq!(GUPPY_ORANGE.at(0.0).to_rgba8()[..3], [250, 145, 79]);
-        assert_eq!(GUPPY_BLUE.at(0.0).to_rgba8()[..3], [30, 204, 191]);
+        assert_eq!(GUPPY.at(0.0).to_rgba8()[..3], [254, 107, 44]);
+        assert_eq!(GUPPY.at(1.0).to_rgba8()[..3], [42, 182, 196]);
+        assert_eq!(GUPPY_ORANGE.at(0.0).to_rgba8()[..3], [254, 107, 44]);
+        assert_eq!(GUPPY_BLUE.at(0.0).to_rgba8()[..3], [42, 182, 196]);
         assert_eq!(GUPPY_ORANGE.at(1.0), GUPPY.at(0.5));
         assert_eq!(GUPPY_BLUE.at(1.0), GUPPY.at(0.5));
     }

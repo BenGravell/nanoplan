@@ -283,11 +283,11 @@ mod tests {
     fn utilization_runs_from_guppy_blue_to_orange() {
         assert_eq!(
             utilization_color(0.0),
-            egui::Color32::from_rgb(30, 204, 191)
+            egui::Color32::from_rgb(42, 182, 196)
         );
         assert_eq!(
             utilization_color(1.0),
-            egui::Color32::from_rgb(250, 145, 79)
+            egui::Color32::from_rgb(254, 107, 44)
         );
     }
 

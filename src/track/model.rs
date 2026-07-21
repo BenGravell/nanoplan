@@ -15,6 +15,7 @@ const MIN_GENERATED_HALF_WIDTH_M: f64 = 2.5;
 const COEFFICIENT_COUNT: usize = SAMPLE_COUNT / 2 + 1;
 const MODEL: &str = include_str!("trained_model.json");
 
+#[cfg(test)]
 pub(crate) struct TrainingTrack {
     pub(crate) length: f64,
     pub(crate) points: Vec<[f64; 2]>,
@@ -87,6 +88,7 @@ impl TrackModel {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn train(tracks: &[TrainingTrack]) -> Result<Self, String> {
         let profiles = tracks
             .iter()
@@ -201,6 +203,7 @@ pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64],
     }
 }
 
+#[cfg(test)]
 fn spectrum(values: &[f64]) -> Vec<Coeff> {
     (0..=values.len() / 2)
         .map(|k| {

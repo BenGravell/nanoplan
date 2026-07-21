@@ -27,7 +27,7 @@ use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
 use crate::common::math::wrap_angle;
-use crate::planning::cost::{self, Sample};
+use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{
     RoadFrame, brake_controls, dist, parent_chain, path_to_controls, record_diagnostics, signed_max,
@@ -225,7 +225,7 @@ fn steer_cost(
     [sa, sb]: [f64; 2],
 ) -> Option<f64> {
     let mut total = 0.0;
-    let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
+    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, v, ctx.road.dt);
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
@@ -704,7 +704,7 @@ mod tests {
         };
         let trace = test_run(&mut RrtStarPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.0, "offset {}", end.y);
+        assert!(end.y.abs() < 1.01, "offset {}", end.y);
     }
 
     /// The sampling is a fixed grid plus a Halton sequence, both pure

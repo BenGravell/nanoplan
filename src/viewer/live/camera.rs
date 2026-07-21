@@ -49,6 +49,7 @@ impl Default for CameraState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn camera_input(
     mut live: NonSendMut<Live>,
     mouse: Res<ButtonInput<MouseButton>>,

@@ -155,7 +155,7 @@ impl Planner for Pi2DdpPlanner {
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
-        let trajectory_cost = TrajectoryCost::new(&path, ctx);
+        let trajectory_cost = TrajectoryCost::new(&path, ctx, ego.speed);
         let state_cost =
             |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {

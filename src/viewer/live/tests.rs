@@ -175,8 +175,10 @@ fn render_interpolation_blends_pose_and_wraps_yaw() {
 
 #[test]
 fn new_track_starts_with_ego_aligned_to_its_tangent() {
-    let mut live = Live::default();
-    live.acc = DT as f32 * 0.9;
+    let mut live = Live {
+        acc: DT as f32 * 0.9,
+        ..Default::default()
+    };
 
     live.regenerate_with_actor_count(2, PlannerKind::BezierToppra, 0, DEFAULT_ACTORS);
 

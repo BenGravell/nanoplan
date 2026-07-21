@@ -53,13 +53,14 @@ use super::{
     zero_action_point,
 };
 use crate::common::math::wrap_angle;
+use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{
     parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained,
 };
 use crate::planning::steering::{CubicSteer, steer_controls};
-use crate::planning::{Context, Planner, cost};
+use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
@@ -146,8 +147,18 @@ impl Tree {
             nodes: Vec::new(),
             layers: std::array::from_fn(|_| Vec::new()),
         };
-        let g = Grower { path, ctx };
-        let constraints = cost::HardConstraints::new(ctx.road.half_width, ctx.actors, path);
+        let g = Grower {
+            path,
+            ctx,
+            initial_speed: start.speed,
+        };
+        let constraints = HardConstraints::new(
+            ctx.road.half_width,
+            ctx.actors,
+            path,
+            start.speed,
+            ctx.road.dt,
+        );
 
         // Root node.
         tree.nodes.push(Node {
@@ -224,7 +235,6 @@ impl Tree {
                         y: w.y + (c[1] - 0.5) * 2.0 * WARM_D_POS,
                         yaw: w.yaw + (c[2] - 0.5) * 2.0 * WARM_D_YAW,
                         speed: (w.speed + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0),
-                        ..Default::default()
                     };
                     (target, Reason::Sample)
                 } else {
@@ -238,7 +248,6 @@ impl Tree {
                         y: xy[1],
                         yaw: lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
                         speed: c[3] * SAMPLE_SPEED_FACTOR * ctx.road.target_speed,
-                        ..Default::default()
                     };
                     (target, Reason::Sample)
                 };
@@ -416,6 +425,7 @@ fn zap_dist2(zap: State, target: &State) -> f64 {
 struct Grower<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
+    initial_speed: f64,
 }
 
 impl Grower<'_, '_> {
@@ -442,8 +452,13 @@ impl Grower<'_, '_> {
         let t0 = (layer - 1) as f64 * STEER_TICKS as f64 * dt;
         let mut total = 0.0;
         let mut collides = false;
-        let constraints =
-            cost::HardConstraints::new(self.ctx.road.half_width, self.ctx.actors, self.path);
+        let constraints = HardConstraints::new(
+            self.ctx.road.half_width,
+            self.ctx.actors,
+            self.path,
+            self.initial_speed,
+            self.ctx.road.dt,
+        );
         for i in 0..us.len() {
             let x = &xs[i + 1];
             let (_, mut sample) =
@@ -580,7 +595,6 @@ mod tests {
             y: 0.8,
             yaw: 0.0,
             speed: 10.0,
-            ..Default::default()
         };
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
