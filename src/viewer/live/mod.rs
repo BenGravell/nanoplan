@@ -15,7 +15,7 @@ mod screen;
 pub(crate) use camera::{CameraState, MAX_ZOOM, MIN_ZOOM, camera_input};
 pub(crate) use drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
-    configure_carpet, configure_diagnostics, configure_plan, setup_road_surface,
+    configure_carpet, configure_diagnostics, configure_plan, setup_grid, setup_road_surface,
 };
 use rendering::RenderSnapshot;
 pub(crate) use rendering::draw;

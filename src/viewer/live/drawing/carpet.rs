@@ -14,14 +14,13 @@ use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LO
 use crate::viewer::colors::GUPPY_ORANGE;
 use crate::viewer::{
     CarpetVisualization,
-    colors::{GUPPY, GUPPY_BLUE},
+    colors::{GUPPY, GUPPY_BLUE, carpet_color},
 };
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, px};
 
 const BAND_M: f64 = 0.35;
-const ALPHA: f32 = 0.72;
 const FOOTPRINT_EPSILON_M: f64 = 1e-9;
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -57,14 +56,11 @@ pub(crate) fn draw(
 
     for band in bands {
         let index = (band.time / dt).round() as usize;
-        let color = colormap.at(values[index.min(values.len() - 1)] as f32);
-        let [red, green, blue, _] = color.to_rgba8();
-        let color = Color::Srgba(Srgba::new(
-            red as f32 / 255.0,
-            green as f32 / 255.0,
-            blue as f32 / 255.0,
-            ALPHA,
-        ));
+        let color = carpet_color(
+            colormap
+                .at(values[index.min(values.len() - 1)] as f32)
+                .to_rgba8(),
+        );
         let forward = Vec2::new(band.state.yaw.cos() as f32, band.state.yaw.sin() as f32);
         let left = Vec2::new(-forward.y, forward.x);
         let center = px(&band.state);

@@ -17,9 +17,11 @@ mod colors;
 mod live;
 mod ui;
 
+#[cfg(test)]
+use colors::CANVAS_RGB;
+use colors::NON_DRIVABLE_RGB;
+
 pub(crate) const DT: f64 = 0.1;
-const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
-const NON_DRIVABLE_RGB: (u8, u8, u8) = (218, 224, 216);
 const VIEW_MSAA: Msaa = Msaa::Sample4;
 const RESIZE_DEBOUNCE_SECONDS: f32 = 0.2;
 pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 667.0;
@@ -125,6 +127,7 @@ pub(crate) fn run() {
                 |mut commands: Commands| {
                     commands.spawn((Camera2d, VIEW_MSAA));
                 },
+                live::setup_grid,
                 live::setup_road_surface,
             ),
         )

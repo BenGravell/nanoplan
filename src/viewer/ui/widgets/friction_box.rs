@@ -61,6 +61,7 @@ impl FrictionBox {
 }
 
 pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &FrictionBox, speed: f64) {
+    let scale = rect.height() / 121.0;
     let plot = plot_rect(rect);
     let center = plot.center();
 
@@ -83,22 +84,22 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
             egui::pos2(plot.left(), center.y),
             egui::pos2(plot.right(), center.y),
         ],
-        egui::Stroke::new(1.0, GREY),
+        egui::Stroke::new(scale, GREY),
     );
     painter.line_segment(
         [
             egui::pos2(center.x, plot.top()),
             egui::pos2(center.x, plot.bottom()),
         ],
-        egui::Stroke::new(1.0, GREY),
+        egui::Stroke::new(scale, GREY),
     );
     painter.rect_stroke(
         plot,
         0.0,
-        egui::Stroke::new(1.0, GREY),
+        egui::Stroke::new(scale, GREY),
         egui::StrokeKind::Inside,
     );
-    draw_bound_labels(painter, plot);
+    draw_bound_labels(painter, plot, scale);
 
     for sample in &friction.samples {
         let age = ((friction.time - sample.time) / friction.trail_horizon_s).clamp(0.0, 1.0);
@@ -106,52 +107,55 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
         let color = utilization_color(utilization(*sample));
         painter.circle_filled(
             plot_position(plot, *sample),
-            5.0,
+            5.0 * scale,
             egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
         );
     }
 
     let ball = plot_position(plot, friction.current());
     let color = utilization_color(utilization(friction.current()));
-    painter.line_segment([center, ball], egui::Stroke::new(5.0, color));
-    painter.circle_filled(ball, 9.0, color);
-    painter.circle_stroke(ball, 9.0, egui::Stroke::new(1.0, TEXT));
+    painter.line_segment([center, ball], egui::Stroke::new(5.0 * scale, color));
+    painter.circle_filled(ball, 9.0 * scale, color);
+    painter.circle_stroke(ball, 9.0 * scale, egui::Stroke::new(scale, TEXT));
 }
 
 fn plot_rect(rect: egui::Rect) -> egui::Rect {
-    let size = (rect.width() - 38.0)
-        .min(rect.height() - 16.0)
-        .clamp(0.0, 144.0);
+    let scale = rect.height() / 121.0;
+    // Leave room for the two four-character lateral labels, their gaps, and
+    // a lean outer inset so they never spill out of a narrow phone rail.
+    let size = (rect.width() - 46.0 * scale)
+        .min(rect.height() - 20.0 * scale)
+        .max(0.0);
     egui::Rect::from_min_size(
-        egui::pos2(rect.center().x - size / 2.0, rect.top() + 10.0),
+        egui::pos2(rect.center().x - size / 2.0, rect.center().y - size / 2.0),
         egui::vec2(size, size),
     )
 }
 
-fn draw_bound_labels(painter: &egui::Painter, plot: egui::Rect) {
-    let font = egui::FontId::monospace(8.0);
+fn draw_bound_labels(painter: &egui::Painter, plot: egui::Rect, scale: f32) {
+    let font = egui::FontId::monospace(8.0 * scale);
     let center = plot.center();
     for (position, align, value, signed) in [
         (
-            egui::pos2(center.x, plot.top() - 2.0),
+            egui::pos2(center.x, plot.top() - 2.0 * scale),
             egui::Align2::CENTER_BOTTOM,
             MAX_LON_ACCEL,
             true,
         ),
         (
-            egui::pos2(center.x, plot.bottom() + 2.0),
+            egui::pos2(center.x, plot.bottom() + 2.0 * scale),
             egui::Align2::CENTER_TOP,
             MIN_LON_ACCEL,
             true,
         ),
         (
-            egui::pos2(plot.left() - 3.0, center.y),
+            egui::pos2(plot.left() - 3.0 * scale, center.y),
             egui::Align2::RIGHT_CENTER,
             MAX_ABS_LAT_ACCEL,
             false,
         ),
         (
-            egui::pos2(plot.right() + 3.0, center.y),
+            egui::pos2(plot.right() + 3.0 * scale, center.y),
             egui::Align2::LEFT_CENTER,
             MAX_ABS_LAT_ACCEL,
             false,
@@ -310,5 +314,21 @@ mod tests {
 
         assert!(widget.contains_rect(plot.expand(6.0)));
         assert!(plot.bottom() + 18.0 <= widget.bottom());
+    }
+
+    #[test]
+    fn plot_reserves_room_for_mobile_lateral_labels() {
+        let widget = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(116.0, 121.0));
+        let plot = plot_rect(widget);
+
+        assert!(plot.left() - widget.left() >= 23.0);
+        assert!(widget.right() - plot.right() >= 23.0);
+    }
+
+    #[test]
+    fn desktop_plot_is_not_capped_at_the_old_fixed_size() {
+        let widget = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(364.0, 353.0));
+
+        assert!(plot_rect(widget).width() > 144.0);
     }
 }

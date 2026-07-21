@@ -13,7 +13,7 @@ mod tutorial;
 mod visualization;
 mod widgets;
 
-use super::colors::PANEL;
+use super::colors::{PANEL, SIDE_PANEL};
 pub(crate) use controls::ControlTab;
 use controls::control_deck;
 use style::{configure, scale_to_viewport};
@@ -61,7 +61,10 @@ pub(crate) fn ui(
         }
         return;
     }
-    let rect = viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
+    let (rect, exit_requested) = viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
+    if exit_requested {
+        request_exit(&mut app_exit);
+    }
     let zoom = ctx.zoom_factor();
     driving_canvas.rect = Some(Rect::from_corners(
         Vec2::new(rect.min.x, rect.min.y) * zoom,
@@ -82,12 +85,12 @@ fn viewer_layout(
     state: &mut UiState,
     live: &mut Live,
     active_tab: &mut ControlTab,
-) -> egui::Rect {
+) -> (egui::Rect, bool) {
     let viewport = root.max_rect().size();
     let compact = compact_layout(viewport);
     visualization_rail(root, live, right_rail_width(viewport, compact), compact);
     let frame = egui::Frame::new()
-        .fill(PANEL)
+        .fill(SIDE_PANEL)
         .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
     let width = if compact {
         compact_rail_widths(viewport).0
@@ -101,7 +104,59 @@ fn viewer_layout(
         .show(root, |ui| {
             control_deck(ui, state, live, active_tab, compact)
         });
-    root.available_rect_before_wrap()
+    pause_rail(root, live, compact);
+    let canvas = root.available_rect_before_wrap();
+    let exit_requested = pause_modal(root.ctx(), state, live, compact);
+    (canvas, exit_requested)
+}
+
+fn pause_rail(root: &mut egui::Ui, live: &mut Live, compact: bool) {
+    let margin = if compact { 6 } else { 10 };
+    egui::Panel::top("pause_rail")
+        .exact_size(if compact { 44.0 } else { 52.0 })
+        .frame(
+            egui::Frame::new()
+                .fill(PANEL)
+                .inner_margin(egui::Margin::same(margin)),
+        )
+        .show(root, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                if ui
+                    .add_sized([120.0, ui.available_height()], egui::Button::new("PAUSE"))
+                    .clicked()
+                {
+                    live.toggle_pause();
+                }
+            });
+        });
+}
+
+fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compact: bool) -> bool {
+    if !live.paused {
+        return false;
+    }
+
+    let response = egui::Modal::new("pause_menu".into()).show(ctx, |ui| {
+        ui.set_min_width(if compact { 220.0 } else { 280.0 });
+        ui.vertical_centered(|ui| {
+            ui.heading("PAUSED");
+        });
+        ui.add_space(8.0);
+        let width = ui.available_width();
+        let resume = ui.add_sized([width, 36.0], egui::Button::new("RESUME"));
+        let start = ui.add_sized([width, 36.0], egui::Button::new("RETURN TO START MENU"));
+        let exit = ui.add_sized([width, 36.0], egui::Button::new("EXIT"));
+        (resume.clicked(), start.clicked(), exit.clicked())
+    });
+
+    let (resume, start, exit) = response.inner;
+    if resume || response.should_close() {
+        live.toggle_pause();
+    } else if start {
+        live.toggle_pause();
+        state.started = false;
+    }
+    exit
 }
 
 fn right_rail_width(viewport: egui::Vec2, compact: bool) -> f32 {
@@ -116,10 +171,8 @@ fn desktop_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
     // Scale against the viewport height so 1440p and 2160p layouts retain the
     // proportions of a 16:9 1080p display without ballooning on ultrawides.
     let reference_width = viewport.y * 16.0 / 9.0;
-    (
-        (reference_width * 0.2).max(372.0),
-        (reference_width * 0.12).max(220.0),
-    )
+    let width = (reference_width * 0.2).max(372.0);
+    (width, width)
 }
 
 fn compact_layout(viewport: egui::Vec2) -> bool {
@@ -127,10 +180,8 @@ fn compact_layout(viewport: egui::Vec2) -> bool {
 }
 
 fn compact_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
-    (
-        (viewport.x * 0.31).clamp(252.0, 280.0),
-        (viewport.x * 0.17).clamp(132.0, 152.0),
-    )
+    let width = (viewport.x * 0.25 + 48.0).min(280.0);
+    (width, width)
 }
 
 #[cfg(test)]

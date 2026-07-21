@@ -53,10 +53,7 @@ As a pre-process step at track generation time, fit a cubic spline through all o
 ## UX
 
 --
-Add position-in-opponent-grid stat to upper right corner.
-
---
-Friction box labels for lat accel clip left/right outside container on mobile
+Add position-in-opponent-grid stat to upper right corner. Display as X / Y where X is ego position and Y is total number of racers. Position in grid is based on relative ranking of each racer's current progress along the track. For ranking purpose, we project each corner of the car against the track centerline and take the projected point that is farthest along the track - this gives the racer's progress value scalar. 
 
 -- New flow for driving startup.
 

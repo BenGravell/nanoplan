@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use super::super::Live;
 use super::super::screen::{PX_PER_M, ppx};
+use crate::viewer::colors::DIAGNOSTICS;
 
-const COLOR: Color = Color::srgba(0.0, 0.0, 0.0, 0.4);
 const POINT_RADIUS_M: f32 = 0.14;
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -33,12 +33,12 @@ pub(in crate::viewer::live) fn draw(
 ) {
     if show_trajectories {
         for trajectory in &diagnostics.trajectories {
-            trajectories.linestrip_2d(trajectory.iter().copied().map(ppx), COLOR);
+            trajectories.linestrip_2d(trajectory.iter().copied().map(ppx), DIAGNOSTICS);
         }
     }
     if show_points {
         for &point in &diagnostics.points {
-            points.circle_2d(ppx(point), 0.5 * POINT_RADIUS_M * PX_PER_M, COLOR);
+            points.circle_2d(ppx(point), 0.5 * POINT_RADIUS_M * PX_PER_M, DIAGNOSTICS);
         }
     }
 }

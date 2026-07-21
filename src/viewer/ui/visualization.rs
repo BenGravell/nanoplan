@@ -1,7 +1,7 @@
 use bevy_egui::egui;
 
 use super::hud;
-use crate::viewer::colors::PANEL;
+use crate::viewer::colors::SIDE_PANEL;
 use crate::viewer::live::Live;
 
 pub(super) fn visualization_rail(root: &mut egui::Ui, live: &Live, width: f32, compact: bool) {
@@ -10,7 +10,7 @@ pub(super) fn visualization_rail(root: &mut egui::Ui, live: &Live, width: f32, c
         .resizable(false)
         .frame(
             egui::Frame::new()
-                .fill(PANEL)
+                .fill(SIDE_PANEL)
                 .inner_margin(egui::Margin::same(if compact { 6 } else { 10 })),
         )
         .show(root, |ui| {

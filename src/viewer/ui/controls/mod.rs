@@ -1,8 +1,6 @@
 use crate::track::{GENERATED_TRACK_NAME, TRACK_CATALOG, TRACK_PRESETS};
 use bevy_egui::egui;
 
-use super::super::colors::TEXT;
-use super::style::caps_font;
 use crate::viewer::UiState;
 use crate::viewer::live::Live;
 
@@ -14,6 +12,7 @@ mod visibility;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) enum ControlTab {
+    Track,
     #[default]
     Planner,
     Opponents,
@@ -29,58 +28,21 @@ pub(super) fn control_deck(
     active_tab: &mut ControlTab,
     compact: bool,
 ) {
-    transport_controls(ui, state, live);
-    ui.add_space(if compact { 6.0 } else { 9.0 });
-
-    let tabs = if compact {
-        [
-            Some((ControlTab::Planner, "PLANNER")),
-            Some((ControlTab::Camera, "CAMERA")),
-            Some((ControlTab::Opponents, "OPPONENTS")),
-            Some((ControlTab::Visibility, "VIZ")),
-            None,
-            Some((ControlTab::Metrics, "METRICS")),
-        ]
-    } else {
-        [
-            Some((ControlTab::Planner, "PLANNER")),
-            Some((ControlTab::Opponents, "OPPONENTS")),
-            Some((ControlTab::Camera, "CAMERA")),
-            Some((ControlTab::Visibility, "VIZ")),
-            None,
-            Some((ControlTab::Metrics, "METRICS")),
-        ]
-    };
-    let columns = if compact { 2 } else { 3 };
-    for row in tabs.chunks(columns) {
-        let width = equal_button_width(ui, columns);
-        ui.horizontal(|ui| {
-            for entry in row {
-                let Some((tab, title)) = entry else {
-                    ui.allocate_space(egui::vec2(width, 32.0));
-                    continue;
-                };
-                let selected = *active_tab == *tab;
-                if ui
-                    .add_sized(
-                        [width, 32.0],
-                        egui::Button::new(
-                            egui::RichText::new(*title)
-                                .font(caps_font(12.0))
-                                .color(if selected { egui::Color32::WHITE } else { TEXT }),
-                        )
-                        .selected(selected),
-                    )
-                    .clicked()
-                {
-                    *active_tab = *tab;
-                }
+    let selector = egui::ComboBox::from_id_salt("control_tab")
+        .selected_text(active_tab.label())
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for tab in ControlTab::ALL {
+                ui.selectable_value(active_tab, tab, tab.label());
             }
         });
-    }
-    ui.add_space(if compact { 3.0 } else { 9.0 });
+    selector
+        .response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "OPTIONS"));
+    ui.add_space(if compact { 6.0 } else { 9.0 });
 
     egui::ScrollArea::vertical().show(ui, |ui| match *active_tab {
+        ControlTab::Track => track_controls(ui, state, live, compact),
         ControlTab::Planner => planner::show(ui, state),
         ControlTab::Opponents => opponents::show(ui, state, live),
         ControlTab::Camera => camera::show(ui, live),
@@ -89,11 +51,37 @@ pub(super) fn control_deck(
     });
 }
 
-fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
+impl ControlTab {
+    const ALL: [Self; 6] = [
+        Self::Track,
+        Self::Planner,
+        Self::Opponents,
+        Self::Camera,
+        Self::Visibility,
+        Self::Metrics,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Track => "TRACK",
+            Self::Planner => "PLANNER",
+            Self::Opponents => "OPPONENTS",
+            Self::Camera => "CAMERA",
+            Self::Visibility => "VIZ",
+            Self::Metrics => "METRICS",
+        }
+    }
+}
+
+fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, compact: bool) {
     let previous_track = state.track;
-    egui::ComboBox::from_label("TRACK")
-        .selected_text(track_name(state.track))
-        .width(ui.available_width() - 64.0)
+    egui::ComboBox::from_id_salt("track")
+        .selected_text(if compact && state.track == 0 {
+            "Generated"
+        } else {
+            track_name(state.track)
+        })
+        .width(ui.available_width())
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut state.track, 0, GENERATED_TRACK_NAME);
             for (index, track) in TRACK_PRESETS.iter().enumerate() {
@@ -110,27 +98,14 @@ fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
     if state.track != previous_track {
         live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
     }
-    ui.add_space(6.0);
+    if state.track == 0 {
+        ui.add_space(6.0);
 
-    let width = equal_button_width(ui, 2);
-    ui.horizontal(|ui| {
-        let pause_label = if live.paused { "RESUME" } else { "PAUSE" };
-        if ui
-            .add_sized(
-                [width, 36.0],
-                egui::Button::new(egui::RichText::new(pause_label).size(13.0)),
-            )
-            .clicked()
-        {
-            live.toggle_pause();
-        }
-        if ui
-            .add_sized(
-                [width, 36.0],
-                egui::Button::new(egui::RichText::new("↻ NEW TRACK").size(13.0)),
-            )
-            .clicked()
-        {
+        let response = ui.add_sized(
+            [ui.available_width(), 36.0],
+            egui::Button::new(egui::RichText::new("↻ NEW TRACK").size(13.0)),
+        );
+        if response.clicked() {
             live.regenerate_with_actor_count(
                 live.seed + 1,
                 state.planner,
@@ -138,7 +113,7 @@ fn transport_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
                 state.opponents,
             );
         }
-    });
+    }
 }
 
 fn track_name(index: usize) -> &'static str {
@@ -149,8 +124,4 @@ fn track_name(index: usize) -> &'static str {
     } else {
         TRACK_CATALOG[index - TRACK_PRESETS.len() - 1].name
     }
-}
-
-fn equal_button_width(ui: &egui::Ui, count: usize) -> f32 {
-    (ui.available_width() - ui.spacing().item_spacing.x * (count - 1) as f32) / count as f32
 }

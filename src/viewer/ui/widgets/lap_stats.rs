@@ -8,16 +8,19 @@ use crate::viewer::live::LapStats;
 use super::super::style::caps_font;
 
 pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, stats: LapStats) {
+    let scale = rect.height() / 121.0;
     painter.text(
         rect.right_top(),
         egui::Align2::RIGHT_TOP,
         "LAP STATS",
-        caps_font(10.0),
+        caps_font(10.0 * scale),
         DIM,
     );
 
-    let label_font = caps_font(8.0);
-    let value_font = egui::FontId::monospace(9.0);
+    let label_font = caps_font(8.0 * scale);
+    let value_font = egui::FontId::monospace(9.0 * scale);
+    let first_row = 17.0 * scale;
+    let row_step = 15.0 * scale;
     for (row, (label, value)) in [
         ("CURRENT", format_time(Some(stats.current_s))),
         ("PREVIOUS", format_time(stats.previous_s)),
@@ -27,7 +30,7 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, stats: LapStats) {
     .into_iter()
     .enumerate()
     {
-        let y = rect.top() + 17.0 + row as f32 * 15.0;
+        let y = rect.top() + first_row + row as f32 * row_step;
         painter.text(
             egui::pos2(rect.left(), y),
             egui::Align2::LEFT_TOP,

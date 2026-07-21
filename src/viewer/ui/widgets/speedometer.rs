@@ -6,6 +6,7 @@ use colorgrad::Gradient;
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::viewer::colors::{DIM, FAINT, GUPPY, TEXT};
 
+const REFERENCE_HEIGHT: f32 = 121.0;
 const LOW_THICKNESS: f32 = 11.0;
 const HIGH_THICKNESS: f32 = 21.0;
 const CHAMFER: f32 = 30.0;
@@ -14,23 +15,26 @@ const INSET: f32 = 3.0;
 pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
     let speed = velocity.abs();
     let fraction = speed_fraction(speed);
+    let scale = rect.height() / REFERENCE_HEIGHT;
+    let inset = INSET * scale;
+    let chamfer = CHAMFER * scale;
     let points = [
-        egui::pos2(rect.left() + INSET, rect.bottom() - INSET),
-        egui::pos2(rect.right() - CHAMFER - INSET, rect.bottom() - INSET),
-        egui::pos2(rect.right() - INSET, rect.bottom() - CHAMFER - INSET),
-        egui::pos2(rect.right() - INSET, rect.top() + INSET),
+        egui::pos2(rect.left() + inset, rect.bottom() - inset),
+        egui::pos2(rect.right() - chamfer - inset, rect.bottom() - inset),
+        egui::pos2(rect.right() - inset, rect.bottom() - chamfer - inset),
+        egui::pos2(rect.right() - inset, rect.top() + inset),
     ];
 
-    draw_ribbon(painter, &points, 1.0, |_| FAINT);
-    draw_ribbon(painter, &points, fraction, gauge_color);
+    draw_ribbon(painter, &points, 1.0, scale, |_| FAINT);
+    draw_ribbon(painter, &points, fraction, scale, gauge_color);
 
     // Center labels in the area left by the bottom and right gauge arms.
     // Centering them in the outer rect pushes wide values into the right arm
     // on narrow rails.
-    let free_area = free_area(rect);
+    let free_area = free_area(rect, scale);
     let center = free_area.center();
     let value = format!("{speed:04.1}");
-    let mut value_font = egui::FontId::monospace((rect.height() * 0.25).clamp(20.0, 30.0));
+    let mut value_font = egui::FontId::monospace(30.0 * scale);
     let value_width = painter
         .layout_no_wrap(value.clone(), value_font.clone(), TEXT)
         .size()
@@ -44,15 +48,15 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
         egui::pos2(center.x, value_bottom),
         egui::Align2::CENTER_TOP,
         "m/s",
-        egui::FontId::monospace(12.0),
+        egui::FontId::monospace(12.0 * scale),
         DIM,
     );
 }
 
-fn free_area(rect: egui::Rect) -> egui::Rect {
+fn free_area(rect: egui::Rect, scale: f32) -> egui::Rect {
     egui::Rect::from_min_max(
-        rect.min + egui::Vec2::splat(INSET),
-        rect.max - egui::Vec2::splat(INSET + HIGH_THICKNESS),
+        rect.min + egui::Vec2::splat(INSET * scale),
+        rect.max - egui::Vec2::splat((INSET + HIGH_THICKNESS) * scale),
     )
 }
 
@@ -64,9 +68,10 @@ fn draw_ribbon(
     painter: &egui::Painter,
     path: &[egui::Pos2],
     fraction: f32,
+    scale: f32,
     color: impl Fn(f32) -> egui::Color32,
 ) {
-    let Some(mesh) = ribbon_mesh(path, fraction, color) else {
+    let Some(mesh) = ribbon_mesh(path, fraction, scale, color) else {
         return;
     };
     painter.add(egui::Shape::mesh(mesh));
@@ -75,6 +80,7 @@ fn draw_ribbon(
 fn ribbon_mesh(
     path: &[egui::Pos2],
     fraction: f32,
+    scale: f32,
     color: impl Fn(f32) -> egui::Color32,
 ) -> Option<egui::Mesh> {
     if fraction <= 0.0 || path.len() < 2 {
@@ -95,7 +101,9 @@ fn ribbon_mesh(
         .iter()
         .enumerate()
         .map(|(index, &point)| {
-            point + inward_miter(path, index) * thickness(outer_distances[index], bottom_length)
+            point
+                + inward_miter(path, index)
+                    * thickness(outer_distances[index], bottom_length, scale)
         })
         .collect();
     let sections = ribbon_sections(path, &inner);
@@ -226,9 +234,9 @@ fn gauge_color(fraction: f32) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
 }
 
-fn thickness(distance: f32, bottom_length: f32) -> f32 {
+fn thickness(distance: f32, bottom_length: f32, scale: f32) -> f32 {
     egui::lerp(
-        LOW_THICKNESS..=HIGH_THICKNESS,
+        LOW_THICKNESS * scale..=HIGH_THICKNESS * scale,
         (distance / bottom_length.max(f32::EPSILON)).clamp(0.0, 1.0),
     )
 }
@@ -254,13 +262,13 @@ mod tests {
     #[test]
     fn bottom_flares_then_chamfer_and_right_edge_stay_at_max_thickness() {
         let bottom = 100.0;
-        assert_eq!(thickness(0.0, bottom), LOW_THICKNESS);
+        assert_eq!(thickness(0.0, bottom, 1.0), LOW_THICKNESS);
         assert_eq!(
-            thickness(bottom / 2.0, bottom),
+            thickness(bottom / 2.0, bottom, 1.0),
             (LOW_THICKNESS + HIGH_THICKNESS) / 2.0
         );
-        assert_eq!(thickness(bottom, bottom), HIGH_THICKNESS);
-        assert_eq!(thickness(bottom + 50.0, bottom), HIGH_THICKNESS);
+        assert_eq!(thickness(bottom, bottom, 1.0), HIGH_THICKNESS);
+        assert_eq!(thickness(bottom + 50.0, bottom, 1.0), HIGH_THICKNESS);
     }
 
     #[test]
@@ -275,7 +283,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
             })
             .collect();
         let sections = ribbon_sections(&path, &inner);
@@ -284,9 +292,12 @@ mod tests {
             .map(|section| section_center(section[0]).distance(section_center(section[1])))
             .collect();
         let total: f32 = lengths.iter().sum();
-        let at_corner = ribbon_mesh(&path, lengths[0] / total, |_| egui::Color32::WHITE).unwrap();
-        let past_corner =
-            ribbon_mesh(&path, (lengths[0] + 1.0) / total, |_| egui::Color32::WHITE).unwrap();
+        let at_corner =
+            ribbon_mesh(&path, lengths[0] / total, 1.0, |_| egui::Color32::WHITE).unwrap();
+        let past_corner = ribbon_mesh(&path, (lengths[0] + 1.0) / total, 1.0, |_| {
+            egui::Color32::WHITE
+        })
+        .unwrap();
 
         assert_eq!(at_corner.vertices, past_corner.vertices[..4]);
         assert_eq!(at_corner.indices, past_corner.indices[..6]);
@@ -304,7 +315,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
             })
             .collect();
         let sections = ribbon_sections(&path, &inner);
@@ -347,7 +358,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0)
+                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
             })
             .collect();
         let sections = ribbon_sections(&path, &inner);
@@ -362,7 +373,7 @@ mod tests {
     fn gauge_keeps_its_content_area_clear_of_its_arms() {
         let gauge =
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 120.0 * 3.0 / 5.0));
-        let free = free_area(gauge);
+        let free = free_area(gauge, 1.0);
 
         assert!(free.right() <= gauge.right() - INSET - HIGH_THICKNESS);
         assert!(free.bottom() <= gauge.bottom() - INSET - HIGH_THICKNESS);

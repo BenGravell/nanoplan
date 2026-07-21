@@ -380,7 +380,7 @@ fn ego_carpet_selector_lives_in_the_viz_menu() {
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
-    harness.get_by_label("VIZ").click();
+    harness.state_mut().tab = ControlTab::Visibility;
     harness.run();
 
     assert!(harness.get_by_label("Ego carpet color").rect().right() <= 440.0);
@@ -406,7 +406,7 @@ fn future_controls_live_together_in_the_viz_menu() {
     harness.run_steps(2);
 
     assert!(harness.query_by_label("future preview [s]").is_none());
-    harness.get_by_label("VIZ").click();
+    harness.state_mut().tab = ControlTab::Visibility;
     harness.run();
 
     for label in [
@@ -441,10 +441,10 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
-    harness.get_by_label("OPPONENTS").click();
+    harness.state_mut().tab = ControlTab::Opponents;
     harness.run();
 
-    assert!(harness.get_all_by_label("OPPONENTS").count() >= 2);
+    assert!(harness.query_by_label("OPPONENTS").is_some());
     let slider = harness.get_by_role(egui::accesskit::Role::Slider).rect();
     let left = slider.left_center() + egui::vec2(1.0, 0.0);
     let right = slider.right_center() - egui::vec2(1.0, 0.0);
@@ -462,16 +462,109 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
 }
 
 #[test]
+fn section_selector_opens_track_options() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "OPTIONS")
+        .click();
+    harness.run();
+    harness.get_by_label("TRACK").click();
+    harness.run();
+
+    assert!(harness.state().tab == ControlTab::Track);
+    assert!(harness.query_by_label("↻ NEW TRACK").is_some());
+
+    harness.state_mut().ui.track = 1;
+    harness.run();
+    assert!(harness.query_by_label("↻ NEW TRACK").is_none());
+}
+
+#[test]
+fn pause_rail_opens_navigation_modal() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    state.ui.started = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let (_, exit_requested) =
+                    viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+                state.exit_requested |= exit_requested;
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    harness.get_by_label("PAUSE").click();
+    harness.run();
+    for label in ["RESUME", "RETURN TO START MENU", "EXIT"] {
+        assert!(harness.query_by_label(label).is_some());
+    }
+    let paused = harness.get_by_label("PAUSED").rect();
+    let resume = harness.get_by_label("RESUME").rect();
+    assert!((paused.center().x - resume.center().x).abs() <= 1.0);
+
+    harness.get_by_label("RESUME").click();
+    harness.run();
+    assert!(!harness.state().live.paused);
+
+    harness.get_by_label("PAUSE").click();
+    harness.run();
+    harness.get_by_label("RETURN TO START MENU").click();
+    harness.run();
+    assert!(!harness.state().ui.started);
+
+    harness.state_mut().ui.started = true;
+    harness.get_by_label("PAUSE").click();
+    harness.run();
+    harness.get_by_label("EXIT").click();
+    harness.run();
+    assert!(harness.state().exit_requested);
+}
+
+#[test]
 fn layout_only_compacts_for_phone_sized_viewports() {
     for (_, phone) in PHONE_LANDSCAPE_SIZES {
         assert!(compact_layout(phone));
         let (left, right) = compact_rail_widths(phone);
-        assert!(phone.x - left - right >= phone.x * 0.4);
+        assert_eq!(left, right);
     }
     assert!(compact_layout(egui::vec2(960.0, 540.0)));
     assert!(!compact_layout(egui::vec2(1920.0, 1080.0)));
     assert!(!compact_layout(egui::vec2(3440.0, 1440.0)));
     assert!(!compact_layout(egui::vec2(3840.0, 2160.0)));
+}
+
+#[test]
+fn compact_layout_gives_narrow_phones_more_road_space() {
+    let road_width = |viewport: egui::Vec2| {
+        let (left, right) = compact_rail_widths(viewport);
+        viewport.x - left - right
+    };
+
+    assert!((road_width(PHONE_LANDSCAPE_SIZES[0].1) - 237.5).abs() < 0.001);
+    assert!((road_width(PHONE_LANDSCAPE_SIZES[1].1) - 294.0).abs() < 0.001);
+    assert!((road_width(PHONE_LANDSCAPE_SIZES[3].1) - 480.0).abs() < 0.001);
 }
 
 #[test]
@@ -485,9 +578,9 @@ fn desktop_menu_scales_with_display_height() {
         assert!((actual.0 - expected.0).abs() < 0.001);
         assert!((actual.1 - expected.1).abs() < 0.001);
     };
-    close(at_1080p, (384.0, 230.4));
-    close(at_1440p, (512.0, 307.2));
-    close(at_2160p, (768.0, 460.8));
+    close(at_1080p, (384.0, 384.0));
+    close(at_1440p, (512.0, 512.0));
+    close(at_2160p, (768.0, 768.0));
     assert_eq!(ultrawide, at_1440p);
 }
 
@@ -550,15 +643,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         } else {
             desktop_rail_widths(size)
         };
-        for label in [
-            "PAUSE",
-            "↻ NEW TRACK",
-            "PLANNER",
-            "CAMERA",
-            "VIZ",
-            "METRICS",
-            "ACTIVE PLANNER",
-        ] {
+        for label in ["OPTIONS", "ACTIVE PLANNER"] {
             let nodes: Vec<_> = harness
                 .get_all_by_label(label)
                 .filter(|node| node.rect().left() < control_width * pixels_per_point)
@@ -589,27 +674,28 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "HUD is outside the right rail at {name}: {hud:?}"
         );
 
+        let selector = harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "OPTIONS")
+            .rect();
         let pause = harness.get_by_label("PAUSE").rect();
-        let new_track = harness.get_by_label("↻ NEW TRACK").rect();
-        let planner = harness.get_by_label("PLANNER").rect();
-        assert!((pause.width() - new_track.width()).abs() <= 1.0);
-        assert!((pause.left() - planner.left()).abs() <= 1.0);
-        let control_rect = |label| {
-            harness
-                .get_all_by_label(label)
-                .map(|node| node.rect())
-                .find(|rect| rect.left() < control_width * pixels_per_point)
-                .unwrap()
-        };
-        let last_tab = control_rect(if compact { "CAMERA" } else { "METRICS" });
-        assert!((new_track.right() - last_tab.right()).abs() <= 1.0);
-        for label in ["CAMERA", "VIZ", "METRICS"] {
-            let tab = control_rect(label);
-            assert!(
-                (tab.width() - planner.width()).abs() <= 1.0,
-                "tab widths differ at {name}: PLANNER {planner:?}, {label} {tab:?}"
-            );
-        }
+        assert!(
+            pause.left() >= control_width * pixels_per_point
+                && pause.right() <= screen.right() - rail_width * pixels_per_point,
+            "pause button is outside the center rail at {name}: {pause:?}"
+        );
+        assert!(
+            (pause.center().x - screen.center().x).abs() <= 1.0,
+            "pause button is not centered at {name}: {pause:?}"
+        );
+        let margin = if compact { 10.0 } else { 16.0 } * desktop_zoom(size.y * pixels_per_point);
+        assert!(
+            (selector.left() - margin).abs() <= 1.0,
+            "selector does not start at the left menu margin at {name}: {selector:?}"
+        );
+        assert!(
+            (selector.right() - (control_width * pixels_per_point - margin)).abs() <= 1.0,
+            "selector does not end at the right menu margin at {name}: {selector:?}"
+        );
 
         harness
             .render()

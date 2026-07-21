@@ -10,9 +10,9 @@ use bevy::prelude::*;
 
 use super::super::rendering::interpolate_state;
 use super::super::screen::{PX_PER_M, px};
+use crate::viewer::colors::{ACTOR_VEHICLE, EGO_VEHICLE, VEHICLE_TIRE};
 
 const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
-const TIRE_COLOR: Color = Color::srgb(0.02, 0.02, 0.02);
 
 pub(in crate::viewer::live) fn draw(
     gizmos: &mut Gizmos,
@@ -22,13 +22,7 @@ pub(in crate::viewer::live) fn draw(
     previous_actors: &[(usize, State)],
     render_alpha: f64,
 ) {
-    draw_vehicle(
-        gizmos,
-        ego,
-        ego_curvature,
-        CAR_FOOTPRINT,
-        Color::srgb(0.08, 0.1, 0.1),
-    );
+    draw_vehicle(gizmos, ego, ego_curvature, CAR_FOOTPRINT, EGO_VEHICLE);
     for actor in actors {
         let previous = previous_actors
             .iter()
@@ -43,13 +37,7 @@ pub(in crate::viewer::live) fn draw(
             actor.state
         };
         let curvature = previous.map_or(0.0, |previous| actor_curvature(previous, actor.state));
-        draw_vehicle(
-            gizmos,
-            &state,
-            curvature,
-            CAR_FOOTPRINT,
-            Color::srgb(0.35, 0.38, 0.38),
-        );
+        draw_vehicle(gizmos, &state, curvature, CAR_FOOTPRINT, ACTOR_VEHICLE);
     }
 }
 
@@ -93,7 +81,7 @@ fn draw_vehicle(
                     Rot2::radians(state.yaw as f32 + angle),
                 ),
                 Vec2::new(diameter, width) * PX_PER_M,
-                TIRE_COLOR,
+                VEHICLE_TIRE,
             );
         }
     }

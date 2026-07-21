@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use super::Live;
 use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, PlannedTrajectoryGizmos,
-    RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, GridMesh,
+    PlannedTrajectoryGizmos, RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
 use crate::viewer::ui::controls::metrics::preview_metrics;
@@ -35,6 +35,7 @@ impl RenderSnapshot {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     mut gizmos: Gizmos,
+    mut grid_mesh: ResMut<GridMesh>,
     mut road_surface: ResMut<RoadSurfaceMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
@@ -81,7 +82,9 @@ pub(crate) fn draw(
     camera.scale = Vec3::splat(1.0 / live.camera.zoom);
 
     if state.show_grid {
-        grid::draw(&mut gizmos, live.camera, &window);
+        grid::draw(&mut meshes, &mut grid_mesh, live.camera, &window);
+    } else {
+        grid::clear(&mut meshes, &mut grid_mesh);
     }
 
     let carpet_metrics = state

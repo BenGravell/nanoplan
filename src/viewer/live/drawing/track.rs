@@ -7,12 +7,10 @@ use bevy::render::render_resource::PrimitiveTopology;
 
 use super::super::Live;
 use super::super::screen::ppx;
-use crate::viewer::CANVAS_RGB;
-
-const EDGE: Color = Color::srgb(0.6, 0.6, 0.6);
-const CENTERLINE: Color = Color::srgb(0.25, 0.5, 0.35);
-const SUBDUED_EDGE: Color = Color::srgba(0.6, 0.6, 0.6, 0.18);
-const SUBDUED_CENTERLINE: Color = Color::srgba(0.25, 0.5, 0.35, 0.14);
+use crate::viewer::colors::{
+    ROAD_SURFACE, SUBDUED_TRACK_CENTERLINE, SUBDUED_TRACK_EDGE, TRACK_CENTERLINE, TRACK_EDGE,
+    TRACK_STATION,
+};
 
 #[derive(Resource)]
 pub(crate) struct RoadSurfaceMesh {
@@ -30,7 +28,7 @@ pub(crate) fn setup(
     let handle = meshes.add(surface_mesh(&polygon));
     commands.spawn((
         Mesh2d(handle.clone()),
-        MeshMaterial2d(materials.add(Color::srgb_u8(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2))),
+        MeshMaterial2d(materials.add(ROAD_SURFACE)),
         Transform::from_xyz(0.0, 0.0, -1.0),
     ));
     commands.insert_resource(RoadSurfaceMesh { handle, polygon });
@@ -55,8 +53,8 @@ pub(in crate::viewer::live) fn draw(
             &polygon,
             true,
             show_centerline,
-            SUBDUED_EDGE,
-            SUBDUED_CENTERLINE,
+            SUBDUED_TRACK_EDGE,
+            SUBDUED_TRACK_CENTERLINE,
         );
     }
 
@@ -72,11 +70,18 @@ pub(in crate::viewer::live) fn draw(
     if track.lap_length().is_none() {
         update_surface(meshes, surface, &polygon);
     }
-    draw_lines(gizmos, &polygon, false, show_centerline, EDGE, CENTERLINE);
+    draw_lines(
+        gizmos,
+        &polygon,
+        false,
+        show_centerline,
+        TRACK_EDGE,
+        TRACK_CENTERLINE,
+    );
 
     if show_stations {
         for (&right, &left) in polygon.right_boundary().iter().zip(polygon.left_boundary()) {
-            gizmos.line_2d(ppx(right), ppx(left), Color::srgba(0.6, 0.6, 0.6, 0.2));
+            gizmos.line_2d(ppx(right), ppx(left), TRACK_STATION);
         }
     }
 }
