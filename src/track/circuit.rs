@@ -4,6 +4,7 @@ use super::model::{GeneratedTrack, limit_widths_for_curvature, road_is_simple};
 #[cfg(test)]
 use super::model::{SAMPLE_COUNT, TrainingTrack};
 use crate::common::measure::dist;
+use splinefit::{ClosedCubicSplineFit2D, evaluate::evaluate};
 
 const SAMPLE_SPACING_M: f64 = 1.0;
 const SPLINE_ARC_STEP_M: f64 = 0.25;
@@ -205,34 +206,57 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
         parameter: f64,
     }
 
-    let second_derivatives = spline_second_derivatives(anchors);
-    let mut stations = Vec::new();
-    let mut previous = anchors[0].point;
-    let mut traveled = 0.0;
-    stations.push(Station {
-        distance: 0.0,
-        parameter: 0.0,
-    });
+    let mut anchor_parameters = vec![0.0];
     for segment in 0..anchors.len() {
         let chord = dist(
             anchors[segment].point,
             anchors[(segment + 1) % anchors.len()].point,
-        );
+        )
+        .max(1e-9);
+        anchor_parameters.push(anchor_parameters.last().unwrap() + chord);
+    }
+    let coordinates = anchors
+        .iter()
+        .chain(std::iter::once(&anchors[0]))
+        .flat_map(|anchor| anchor.point)
+        .collect();
+    let spline = ClosedCubicSplineFit2D::new(anchor_parameters.clone(), coordinates)
+        .and_then(ClosedCubicSplineFit2D::interpolating_spline)
+        .expect("valid track anchors must produce a periodic cubic spline");
+    let evaluate_points = |parameters: &[f64]| {
+        evaluate(&spline, parameters)
+            .expect("spline evaluation parameters must lie inside the track domain")
+            .chunks_exact(2)
+            .map(|point| [point[0], point[1]])
+            .collect::<Vec<_>>()
+    };
+
+    let mut dense_parameters = vec![0.0];
+    for segment in 0..anchors.len() {
+        let chord = anchor_parameters[segment + 1] - anchor_parameters[segment];
         let steps = (chord / SPLINE_ARC_STEP_M).ceil().max(8.0) as usize;
         for step in 1..=steps {
             let u = step as f64 / steps as f64;
-            let point = spline_point(anchors, &second_derivatives, segment, u);
-            traveled += dist(previous, point);
-            stations.push(Station {
-                distance: traveled,
-                parameter: segment as f64 + u,
-            });
-            previous = point;
+            dense_parameters.push(anchor_parameters[segment] + u * chord);
         }
+    }
+    let dense_points = evaluate_points(&dense_parameters);
+    let mut traveled = 0.0;
+    let mut stations = Vec::with_capacity(dense_parameters.len());
+    stations.push(Station {
+        distance: 0.0,
+        parameter: 0.0,
+    });
+    for i in 1..dense_parameters.len() {
+        traveled += dist(dense_points[i - 1], dense_points[i]);
+        stations.push(Station {
+            distance: traveled,
+            parameter: dense_parameters[i],
+        });
     }
 
     let count = (traveled / spacing).ceil().max(3.0) as usize;
-    (0..count)
+    let parameters = (0..count)
         .map(|i| {
             let target = traveled * i as f64 / count as f64;
             let next = stations.partition_point(|station| station.distance < target);
@@ -240,13 +264,22 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             let a = b - 1;
             let span = stations[b].distance - stations[a].distance;
             let fraction = (target - stations[a].distance) / span.max(1e-12);
-            let parameter =
-                stations[a].parameter + fraction * (stations[b].parameter - stations[a].parameter);
-            let segment = parameter.floor() as usize % anchors.len();
-            let u = parameter.fract();
+            stations[a].parameter + fraction * (stations[b].parameter - stations[a].parameter)
+        })
+        .collect::<Vec<_>>();
+    evaluate_points(&parameters)
+        .into_iter()
+        .zip(parameters)
+        .map(|(point, parameter)| {
+            let segment = anchor_parameters
+                .partition_point(|&anchor| anchor <= parameter)
+                .saturating_sub(1)
+                .min(anchors.len() - 1);
+            let u = (parameter - anchor_parameters[segment])
+                / (anchor_parameters[segment + 1] - anchor_parameters[segment]);
             let next_anchor = (segment + 1) % anchors.len();
             Sample {
-                point: spline_point(anchors, &second_derivatives, segment, u),
+                point,
                 right: anchors[segment].right
                     + u * (anchors[next_anchor].right - anchors[segment].right),
                 left: anchors[segment].left
@@ -254,97 +287,6 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             }
         })
         .collect()
-}
-
-fn spline_second_derivatives(anchors: &[Sample]) -> Vec<[f64; 2]> {
-    let n = anchors.len();
-    let lengths = (0..n)
-        .map(|i| dist(anchors[i].point, anchors[(i + 1) % n].point).max(1e-9))
-        .collect::<Vec<_>>();
-    let diagonal = (0..n)
-        .map(|i| 2.0 * (lengths[(i + n - 1) % n] + lengths[i]))
-        .collect::<Vec<_>>();
-    let rhs = |axis: usize| {
-        (0..n)
-            .map(|i| {
-                let previous = (i + n - 1) % n;
-                let next = (i + 1) % n;
-                6.0 * ((anchors[next].point[axis] - anchors[i].point[axis]) / lengths[i]
-                    - (anchors[i].point[axis] - anchors[previous].point[axis]) / lengths[previous])
-            })
-            .collect::<Vec<_>>()
-    };
-    let x = solve_cyclic(&lengths, &diagonal, rhs(0));
-    let y = solve_cyclic(&lengths, &diagonal, rhs(1));
-    x.into_iter().zip(y).map(|(x, y)| [x, y]).collect()
-}
-
-fn solve_cyclic(lengths: &[f64], diagonal: &[f64], rhs: Vec<f64>) -> Vec<f64> {
-    let n = rhs.len();
-    let corner = lengths[n - 1];
-    let gamma = -diagonal[0];
-    let mut reduced_diagonal = diagonal.to_vec();
-    reduced_diagonal[0] -= gamma;
-    reduced_diagonal[n - 1] -= corner * corner / gamma;
-    let mut basis = vec![0.0; n];
-    basis[0] = gamma;
-    basis[n - 1] = corner;
-    let solution = solve_tridiagonal(lengths, &reduced_diagonal, &rhs);
-    let correction = solve_tridiagonal(lengths, &reduced_diagonal, &basis);
-    let scale = (solution[0] + corner * solution[n - 1] / gamma)
-        / (1.0 + correction[0] + corner * correction[n - 1] / gamma);
-    solution
-        .into_iter()
-        .zip(correction)
-        .map(|(value, correction)| value - scale * correction)
-        .collect()
-}
-
-fn solve_tridiagonal(lengths: &[f64], diagonal: &[f64], rhs: &[f64]) -> Vec<f64> {
-    let n = rhs.len();
-    let mut upper = vec![0.0; n];
-    let mut solution = vec![0.0; n];
-    upper[0] = lengths[0] / diagonal[0];
-    solution[0] = rhs[0] / diagonal[0];
-    for i in 1..n {
-        let pivot = diagonal[i] - lengths[i - 1] * upper[i - 1];
-        if i + 1 < n {
-            upper[i] = lengths[i] / pivot;
-        }
-        solution[i] = (rhs[i] - lengths[i - 1] * solution[i - 1]) / pivot;
-    }
-    for i in (0..n - 1).rev() {
-        solution[i] -= upper[i] * solution[i + 1];
-    }
-    solution
-}
-
-fn spline_point(
-    anchors: &[Sample],
-    second_derivatives: &[[f64; 2]],
-    segment: usize,
-    u: f64,
-) -> [f64; 2] {
-    let next = (segment + 1) % anchors.len();
-    let a = 1.0 - u;
-    let b = u;
-    let length = dist(anchors[segment].point, anchors[next].point).max(1e-9);
-    [
-        a * anchors[segment].point[0]
-            + b * anchors[next].point[0]
-            + length
-                * length
-                * (second_derivatives[segment][0] * (a * a * a - a)
-                    + second_derivatives[next][0] * (b * b * b - b))
-                / 6.0,
-        a * anchors[segment].point[1]
-            + b * anchors[next].point[1]
-            + length
-                * length
-                * (second_derivatives[segment][1] * (a * a * a - a)
-                    + second_derivatives[next][1] * (b * b * b - b))
-                / 6.0,
-    ]
 }
 
 #[cfg(test)]
