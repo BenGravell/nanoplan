@@ -9,7 +9,7 @@ use crate::vehicle::{GRAVITY_MS2, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCE
 use bevy_egui::egui;
 use colorgrad::Gradient;
 
-use super::super::super::colors::{DIM, FAINT, GREY, GUPPY, SURFACE, TEXT};
+use super::super::super::colors::{DIM_TEXT, FAINT, GREY_152, GUPPY, SURFACE, TEXT};
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
@@ -84,19 +84,19 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
             egui::pos2(plot.left(), center.y),
             egui::pos2(plot.right(), center.y),
         ],
-        egui::Stroke::new(scale, GREY),
+        egui::Stroke::new(scale, GREY_152),
     );
     painter.line_segment(
         [
             egui::pos2(center.x, plot.top()),
             egui::pos2(center.x, plot.bottom()),
         ],
-        egui::Stroke::new(scale, GREY),
+        egui::Stroke::new(scale, GREY_152),
     );
     painter.rect_stroke(
         plot,
         0.0,
-        egui::Stroke::new(scale, GREY),
+        egui::Stroke::new(scale, GREY_152),
         egui::StrokeKind::Inside,
     );
     draw_bound_labels(painter, plot, scale);
@@ -166,7 +166,7 @@ fn draw_bound_labels(painter: &egui::Painter, plot: egui::Rect, scale: f32) {
             align,
             gravity_label(value, signed),
             font.clone(),
-            DIM,
+            DIM_TEXT,
         );
     }
 }

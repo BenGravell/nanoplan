@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::super::super::colors::DIM;
+use super::super::super::colors::DIM_TEXT;
 use super::super::style::caps_font;
 use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
@@ -8,7 +8,7 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
     ui.label(
         egui::RichText::new("FOLLOW")
             .font(caps_font(11.0))
-            .color(DIM),
+            .color(DIM_TEXT),
     );
     ui.checkbox(
         &mut live.camera.follow,
@@ -26,7 +26,11 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
         &mut live.camera.smooth,
         if compact { "Smooth" } else { "Smooth motion" },
     );
-    ui.label(egui::RichText::new("ZOOM").font(caps_font(11.0)).color(DIM));
+    ui.label(
+        egui::RichText::new("ZOOM")
+            .font(caps_font(11.0))
+            .color(DIM_TEXT),
+    );
     let zoom = ui
         .scope(|ui| {
             if compact {

@@ -1,53 +1,61 @@
 use std::sync::LazyLock;
 
-use bevy::prelude::{Color, LinearRgba, Srgba};
+use bevy::prelude::{Color, LinearRgba};
 use bevy_egui::egui;
 use colorgrad::BlendMode;
 
-// Named colors
-pub(crate) const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
+use super::color_conversion::{
+    to_linear_rgba, to_rgb8, to_srgb, to_srgba, with_premultiplied_alpha,
+};
 
-pub(crate) const WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
-pub(crate) const GREY: egui::Color32 = egui::Color32::from_rgb(147, 158, 156);
+// Named colors
+pub(crate) const GREEN: egui::Color32 = egui::Color32::from_rgb(64, 128, 89);
+pub(crate) const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 105, 0);
+pub(crate) const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 190, 0);
+
+// Greys
+pub(crate) const BLACK: egui::Color32 = egui::Color32::from_gray(0);
+pub(crate) const GREY_008: egui::Color32 = egui::Color32::from_gray(8);
+pub(crate) const GREY_024: egui::Color32 = egui::Color32::from_gray(24);
+pub(crate) const GREY_048: egui::Color32 = egui::Color32::from_gray(48);
+pub(crate) const GREY_080: egui::Color32 = egui::Color32::from_gray(80);
+pub(crate) const GREY_152: egui::Color32 = egui::Color32::from_gray(152);
+pub(crate) const GREY_200: egui::Color32 = egui::Color32::from_gray(200);
+pub(crate) const GREY_224: egui::Color32 = egui::Color32::from_gray(224);
+pub(crate) const GREY_232: egui::Color32 = egui::Color32::from_gray(232);
+pub(crate) const GREY_240: egui::Color32 = egui::Color32::from_gray(240);
+pub(crate) const GREY_248: egui::Color32 = egui::Color32::from_gray(248);
+pub(crate) const WHITE: egui::Color32 = egui::Color32::from_gray(255);
 
 // Functional colors
-pub(crate) const ACCENT: Color = Color::srgb_u8(ORANGE.r(), ORANGE.g(), ORANGE.b());
-pub(crate) const HOVER: egui::Color32 = egui::Color32::from_rgb(255, 210, 105);
-pub(crate) const TEXT: egui::Color32 = egui::Color32::from_rgb(25, 29, 30);
-pub(crate) const DIM: egui::Color32 = egui::Color32::from_rgb(95, 108, 111);
-pub(crate) const PANEL: egui::Color32 = egui::Color32::from_rgb(250, 250, 246);
+pub(crate) const ACCENT: Color = to_srgb(ORANGE);
+pub(crate) const HOVER: egui::Color32 = GOLD;
+pub(crate) const TEXT: egui::Color32 = egui::Color32::from_rgb(25, 28, 30);
+pub(crate) const DIM_TEXT: egui::Color32 = egui::Color32::from_rgb(95, 108, 111);
+pub(crate) const PANEL: egui::Color32 = GREY_248;
 // Keep the controls legible while letting the road remain visible beneath the overlays.
-pub(crate) const SIDE_PANEL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(200, 200, 200, 205);
-pub(crate) const SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 252);
-pub(crate) const CONTROL: egui::Color32 = egui::Color32::from_rgb(232, 235, 229);
-pub(crate) const FAINT: egui::Color32 = egui::Color32::from_rgb(224, 229, 223);
+pub(crate) const SIDE_PANEL: egui::Color32 = with_premultiplied_alpha(GREY_224, 208);
+pub(crate) const SURFACE: egui::Color32 = WHITE;
+pub(crate) const CONTROL: egui::Color32 = GREY_232;
+pub(crate) const FAINT: egui::Color32 = GREY_224;
 
 // Live viewer colors
-pub(crate) const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
-pub(crate) const NON_DRIVABLE_RGB: (u8, u8, u8) = (190, 196, 193);
+pub(crate) const CANVAS_RGB: (u8, u8, u8) = to_rgb8(GREY_240);
+pub(crate) const NON_DRIVABLE_RGB: (u8, u8, u8) = to_rgb8(GREY_200);
 pub(crate) const ROAD_SURFACE: Color = Color::srgb_u8(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2);
-pub(crate) const TRACK_EDGE: Color = Color::srgb(0.6, 0.6, 0.6);
-pub(crate) const TRACK_CENTERLINE: Color = Color::srgb(0.25, 0.5, 0.35);
-pub(crate) const SUBDUED_TRACK_EDGE: Color = Color::srgba(0.6, 0.6, 0.6, 0.18);
-pub(crate) const SUBDUED_TRACK_CENTERLINE: Color = Color::srgba(0.25, 0.5, 0.35, 0.14);
-pub(crate) const TRACK_STATION: Color = Color::srgba(0.6, 0.6, 0.6, 0.2);
-pub(crate) const GRID_MINOR: LinearRgba = LinearRgba::new(0.2, 0.4, 0.55, 0.055);
-pub(crate) const GRID_MAJOR: LinearRgba = LinearRgba::new(0.2, 0.48, 0.68, 0.14);
-pub(crate) const EGO_VEHICLE: Color = Color::srgb(0.08, 0.1, 0.1);
-pub(crate) const ACTOR_VEHICLE: Color = Color::srgb(0.35, 0.38, 0.38);
-pub(crate) const VEHICLE_TIRE: Color = Color::srgb(0.02, 0.02, 0.02);
-pub(crate) const DIAGNOSTICS: Color = Color::srgba(0.0, 0.0, 0.0, 0.4);
-const CARPET_ALPHA: f32 = 0.72;
+pub(crate) const TRACK_EDGE: Color = to_srgb(GREY_152);
+pub(crate) const TRACK_CENTERLINE: Color = to_srgb(GREEN);
+pub(crate) const SUBDUED_TRACK_EDGE: Color = to_srgba(GREY_152, 0.18);
+pub(crate) const SUBDUED_TRACK_CENTERLINE: Color = to_srgba(GREEN, 0.14);
+pub(crate) const TRACK_STATION: Color = to_srgba(GREY_152, 0.2);
+pub(crate) const GRID_MINOR: LinearRgba = to_linear_rgba(GREY_152, 0.1);
+pub(crate) const GRID_MAJOR: LinearRgba = to_linear_rgba(GREY_048, 0.2);
+pub(crate) const EGO_VEHICLE: Color = to_srgb(GREY_024);
+pub(crate) const ACTOR_VEHICLE: Color = to_srgb(GREY_080);
+pub(crate) const VEHICLE_TIRE: Color = to_srgb(GREY_008);
+pub(crate) const DIAGNOSTICS: Color = to_srgba(BLACK, 0.4);
 
-pub(crate) fn carpet_color([red, green, blue, _]: [u8; 4]) -> Color {
-    Color::Srgba(Srgba::new(
-        red as f32 / 255.0,
-        green as f32 / 255.0,
-        blue as f32 / 255.0,
-        CARPET_ALPHA,
-    ))
-}
+pub(crate) const CARPET_ALPHA: f32 = 0.72;
 
 const GUPPY_COLORS: [&str; 29] = [
     "#fe6b2c", "#fe541c", "#fd3913", "#f8181c", "#ec022e", "#dd083d", "#cc1349", "#bc1a53",

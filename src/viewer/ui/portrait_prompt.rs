@@ -1,7 +1,7 @@
 use crate::common::math::smoothstep;
 use bevy_egui::egui;
 
-use super::super::colors::{DIM, FAINT, ORANGE, PANEL, SURFACE, TEXT};
+use super::super::colors::{DIM_TEXT, FAINT, ORANGE, PANEL, SURFACE, TEXT};
 use super::super::{MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH};
 use super::style::caps_font;
 
@@ -83,7 +83,7 @@ pub(super) fn show(root: &mut egui::Ui) {
                                 } else {
                                     BODY_FONT_SIZE
                                 })
-                                .color(DIM),
+                                .color(DIM_TEXT),
                         );
                     });
                 });

@@ -13,6 +13,7 @@ use bevy::render::{
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 
+mod color_conversion;
 mod colors;
 mod live;
 mod ui;

@@ -4,7 +4,7 @@ use crate::simulation::State;
 use crate::track::Path;
 use bevy_egui::egui;
 
-use super::super::super::colors::{DIM, TEXT};
+use super::super::super::colors::{DIM_TEXT, TEXT};
 use super::super::style::caps_font;
 use crate::viewer::live::Live;
 
@@ -42,7 +42,14 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
 }
 
 fn metric(ui: &mut egui::Ui, label: &str, value: String) {
-    ui.add(egui::Label::new(egui::RichText::new(label).font(caps_font(11.0)).color(DIM)).wrap());
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .font(caps_font(11.0))
+                .color(DIM_TEXT),
+        )
+        .wrap(),
+    );
     ui.add(egui::Label::new(egui::RichText::new(value).monospace()).wrap());
     ui.add_space(4.0);
 }

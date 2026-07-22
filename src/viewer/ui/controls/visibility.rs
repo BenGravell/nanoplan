@@ -2,7 +2,7 @@ use bevy_egui::egui;
 
 use crate::planning::PLANNING_HORIZON_S;
 
-use super::super::super::colors::{DIM, ORANGE};
+use super::super::super::colors::{DIM_TEXT, ORANGE};
 use super::super::style::caps_font;
 use crate::viewer::{CarpetVisualization, UiState};
 
@@ -30,7 +30,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
         egui::Label::new(
             egui::RichText::new("FUTURE PREVIEW [S]")
                 .font(caps_font(11.0))
-                .color(DIM),
+                .color(DIM_TEXT),
         )
         .wrap(),
     );

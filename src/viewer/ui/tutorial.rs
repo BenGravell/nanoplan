@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::super::colors::{DIM, ORANGE, SURFACE, TEXT};
+use super::super::colors::{DIM_TEXT, ORANGE, SURFACE, TEXT};
 use super::style::caps_font;
 
 const CAMERA_CONTROLS: [(&str, &str); 5] = [
@@ -44,7 +44,11 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
                 .spacing(egui::vec2(40.0, if compact { 4.0 } else { 14.0 }))
                 .show(ui, |ui| {
                     for (input, action) in CAMERA_CONTROLS {
-                        ui.label(egui::RichText::new(input).font(caps_font(14.0)).color(DIM));
+                        ui.label(
+                            egui::RichText::new(input)
+                                .font(caps_font(14.0))
+                                .color(DIM_TEXT),
+                        );
                         ui.monospace(action);
                         ui.end_row();
                     }

@@ -14,7 +14,7 @@ use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LO
 use crate::viewer::colors::GUPPY_ORANGE;
 use crate::viewer::{
     CarpetVisualization,
-    colors::{GUPPY, GUPPY_BLUE, carpet_color},
+    colors::{CARPET_ALPHA, GUPPY, GUPPY_BLUE},
 };
 
 use super::super::Live;
@@ -56,11 +56,8 @@ pub(crate) fn draw(
 
     for band in bands {
         let index = (band.time / dt).round() as usize;
-        let color = carpet_color(
-            colormap
-                .at(values[index.min(values.len() - 1)] as f32)
-                .to_rgba8(),
-        );
+        let sample = colormap.at(values[index.min(values.len() - 1)] as f32);
+        let color = Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA);
         let forward = Vec2::new(band.state.yaw.cos() as f32, band.state.yaw.sin() as f32);
         let left = Vec2::new(-forward.y, forward.x);
         let center = px(&band.state);

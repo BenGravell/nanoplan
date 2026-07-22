@@ -4,13 +4,18 @@ use bevy_egui::egui;
 use colorgrad::Gradient;
 
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
-use crate::viewer::colors::{DIM, FAINT, GUPPY, TEXT};
+use crate::viewer::colors::{DIM_TEXT, FAINT, GUPPY, TEXT};
 
 const REFERENCE_HEIGHT: f32 = 121.0;
 const LOW_THICKNESS: f32 = 11.0;
 const HIGH_THICKNESS: f32 = 21.0;
 const CHAMFER: f32 = 30.0;
 const INSET: f32 = 3.0;
+const VALUE_FONT_SIZE: f32 = 30.0;
+const UNIT_FONT_SIZE: f32 = 12.0;
+const CORNER_BLEND_SEGMENT_FRACTION: f32 = 0.2;
+const GEOMETRY_EPSILON: f32 = 1e-4;
+const MIN_MITER_ALIGNMENT: f32 = 0.5;
 
 pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
     let speed = velocity.abs();
@@ -34,7 +39,7 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
     let free_area = free_area(rect, scale);
     let center = free_area.center();
     let value = format!("{speed:04.1}");
-    let mut value_font = egui::FontId::monospace(30.0 * scale);
+    let mut value_font = egui::FontId::monospace(VALUE_FONT_SIZE * scale);
     let value_width = painter
         .layout_no_wrap(value.clone(), value_font.clone(), TEXT)
         .size()
@@ -48,8 +53,8 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
         egui::pos2(center.x, value_bottom),
         egui::Align2::CENTER_TOP,
         "m/s",
-        egui::FontId::monospace(12.0 * scale),
-        DIM,
+        egui::FontId::monospace(UNIT_FONT_SIZE * scale),
+        DIM_TEXT,
     );
 }
 
@@ -154,13 +159,22 @@ fn ribbon_sections(outer: &[egui::Pos2], inner: &[egui::Pos2]) -> Vec<(egui::Pos
     for index in 1..outer.len() - 1 {
         let blend = outer[index]
             .distance(inner[index])
-            .min(outer[index - 1].distance(outer[index]) * 0.45)
-            .min(outer[index].distance(outer[index + 1]) * 0.45)
-            .min(inner[index - 1].distance(inner[index]) * 0.45)
-            .min(inner[index].distance(inner[index + 1]) * 0.45);
+            .min(outer[index - 1].distance(outer[index]) * CORNER_BLEND_SEGMENT_FRACTION)
+            .min(outer[index].distance(outer[index + 1]) * CORNER_BLEND_SEGMENT_FRACTION)
+            .min(inner[index - 1].distance(inner[index]) * CORNER_BLEND_SEGMENT_FRACTION)
+            .min(inner[index].distance(inner[index + 1]) * CORNER_BLEND_SEGMENT_FRACTION);
         let inner_before = point_before(inner[index], inner[index - 1], blend);
         let outer_before = project_onto_segment(inner_before, outer[index - 1], outer[index]);
-        let outer_after = point_before(outer[index], outer[index + 1], blend);
+        let requested_outer_after = point_before(outer[index], outer[index + 1], blend);
+        let first_square_outer_after =
+            project_onto_segment(inner[index], outer[index], outer[index + 1]);
+        let outer_after = if requested_outer_after.distance(outer[index])
+            >= first_square_outer_after.distance(outer[index])
+        {
+            requested_outer_after
+        } else {
+            first_square_outer_after
+        };
         let inner_after = project_onto_segment(outer_after, inner[index], inner[index + 1]);
 
         // The edge is perpendicular on either side of the corner. Within the
@@ -173,7 +187,7 @@ fn ribbon_sections(outer: &[egui::Pos2], inner: &[egui::Pos2]) -> Vec<(egui::Pos
         stops.push(path_corner_fraction(&outer_transition));
         stops.push(path_corner_fraction(&inner_transition));
         stops.sort_by(f32::total_cmp);
-        stops.dedup_by(|a, b| (*a - *b).abs() < 1e-5);
+        stops.dedup_by(|a, b| (*a - *b).abs() < GEOMETRY_EPSILON);
         sections.extend(stops.into_iter().skip(1).map(|fraction| {
             (
                 trace_path(&outer_transition, fraction),
@@ -226,7 +240,7 @@ fn inward_miter(path: &[egui::Pos2], index: usize) -> egui::Vec2 {
     let before = inward_normal(path[index] - path[index - 1]);
     let after = inward_normal(path[index + 1] - path[index]);
     let miter = (before + after).normalized();
-    miter / miter.dot(after).max(0.5)
+    miter / miter.dot(after).max(MIN_MITER_ALIGNMENT)
 }
 
 fn gauge_color(fraction: f32) -> egui::Color32 {
@@ -321,20 +335,20 @@ mod tests {
         let sections = ribbon_sections(&path, &inner);
 
         assert!(sections.len() >= 5);
-        assert!((sections[0].0.x - sections[0].1.x).abs() < 1e-5);
-        assert!((sections[1].0.x - sections[1].1.x).abs() < 1e-5);
+        assert!((sections[0].0.x - sections[0].1.x).abs() < GEOMETRY_EPSILON);
+        assert!((sections[1].0.x - sections[1].1.x).abs() < GEOMETRY_EPSILON);
         let diagonal = (path[2] - path[1]).normalized();
         assert!(
             diagonal
                 .dot(sections[sections.len() - 2].0 - sections[sections.len() - 2].1)
                 .abs()
-                < 1e-5
+                < GEOMETRY_EPSILON
         );
         assert!(
             diagonal
                 .dot(sections[sections.len() - 1].0 - sections[sections.len() - 1].1)
                 .abs()
-                < 1e-5
+                < GEOMETRY_EPSILON
         );
         assert!(sections[2].0.distance(sections[1].0) > 0.0);
         assert!(sections[2].1.distance(sections[1].1) > 0.0);
@@ -363,10 +377,16 @@ mod tests {
             .collect();
         let sections = ribbon_sections(&path, &inner);
 
-        assert!((sections[0].0.x - sections[0].1.x).abs() < 1e-5);
-        assert!((sections[1].0.x - sections[1].1.x).abs() < 1e-5);
-        assert!((sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs() < 1e-5);
-        assert!((sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs() < 1e-5);
+        assert!((sections[0].0.x - sections[0].1.x).abs() < GEOMETRY_EPSILON);
+        assert!((sections[1].0.x - sections[1].1.x).abs() < GEOMETRY_EPSILON);
+        assert!(
+            (sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs()
+                < GEOMETRY_EPSILON
+        );
+        assert!(
+            (sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs()
+                < GEOMETRY_EPSILON
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use bevy_egui::egui;
 
-use crate::viewer::colors::{DIM, TEXT};
+use crate::viewer::colors::{DIM_TEXT, TEXT};
 use crate::viewer::live::LapStats;
 
 use super::super::style::caps_font;
@@ -19,7 +19,7 @@ pub(crate) fn draw(
         egui::Align2::LEFT_TOP,
         "LAP STATS",
         caps_font(10.0 * scale),
-        DIM,
+        DIM_TEXT,
     );
     painter.text(
         rect.right_top(),
@@ -48,7 +48,7 @@ pub(crate) fn draw(
             egui::Align2::LEFT_TOP,
             label,
             label_font.clone(),
-            DIM,
+            DIM_TEXT,
         );
         painter.text(
             egui::pos2(rect.right(), y),
