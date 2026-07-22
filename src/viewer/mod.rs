@@ -125,7 +125,6 @@ pub(crate) fn run() {
         .add_plugins(ResizeDebouncePlugin)
         .insert_resource(RenderErrorHandler(recover_failed_resize))
         .add_plugins(EguiPlugin::default())
-        .init_gizmo_group::<live::EgoCarpetGizmos>()
         .init_gizmo_group::<live::PlannedTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
         .init_gizmo_group::<live::DiagnosticPointGizmos>()
@@ -145,6 +144,7 @@ pub(crate) fn run() {
                 },
                 live::setup_grid,
                 live::setup_road_surface,
+                live::setup_carpet,
             ),
         )
         .add_systems(EguiPrimaryContextPass, ui::ui)
@@ -153,7 +153,6 @@ pub(crate) fn run() {
             (
                 live::camera_input,
                 live::update,
-                live::configure_carpet,
                 live::configure_diagnostics,
                 live::configure_plan,
                 live::draw,

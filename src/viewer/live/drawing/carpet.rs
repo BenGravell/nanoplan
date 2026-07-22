@@ -1,7 +1,8 @@
 //! Time-colored swept ego footprint.
 
-use bevy::gizmos::config::GizmoConfigStore;
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::PrimitiveTopology;
 use colorgrad::Gradient;
 
 use crate::common::differencing::forward_difference;
@@ -17,14 +18,16 @@ use crate::viewer::{
     colors::{CARPET_ALPHA, GUPPY, GUPPY_BLUE},
 };
 
-use super::super::Live;
-use super::super::screen::{PX_PER_M, px};
+use super::super::screen::PX_PER_M;
 
-const BAND_M: f64 = 0.35;
+const BAND_M: f64 = 0.5;
 const FOOTPRINT_EPSILON_M: f64 = 1e-9;
 
-#[derive(Default, Reflect, GizmoConfigGroup)]
-pub(crate) struct EgoCarpetGizmos;
+#[derive(Resource)]
+pub(crate) struct EgoCarpetMesh {
+    handle: Handle<Mesh>,
+    populated: bool,
+}
 
 #[derive(Clone, Copy)]
 struct TimedState {
@@ -32,13 +35,40 @@ struct TimedState {
     time: f64,
 }
 
-pub(crate) fn configure(live: NonSend<Live>, mut configs: ResMut<GizmoConfigStore>) {
-    configs.config_mut::<EgoCarpetGizmos>().0.line.width =
-        BAND_M as f32 * PX_PER_M * live.camera.zoom * 1.05;
+#[derive(Clone, Copy)]
+struct CrossSection {
+    right: [f64; 2],
+    left: [f64; 2],
+    time: f64,
+}
+
+#[derive(Clone, Copy)]
+struct CarpetPatch {
+    rear: CrossSection,
+    front: CrossSection,
+    time: f64,
+}
+
+pub(crate) fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let handle = meshes.add(empty_mesh());
+    commands.spawn((
+        Mesh2d(handle.clone()),
+        MeshMaterial2d(materials.add(ColorMaterial::default())),
+        Transform::from_xyz(0.0, 0.0, -0.5),
+    ));
+    commands.insert_resource(EgoCarpetMesh {
+        handle,
+        populated: false,
+    });
 }
 
 pub(crate) fn draw(
-    gizmos: &mut Gizmos<EgoCarpetGizmos>,
+    meshes: &mut Assets<Mesh>,
+    carpet: &mut EgoCarpetMesh,
     ego: State,
     plan: &[State],
     dt: f64,
@@ -46,7 +76,7 @@ pub(crate) fn draw(
     metrics: Option<&Metrics>,
 ) {
     let footprints = sample_footprints(ego, plan, dt);
-    let bands = carpet_bands(&footprints);
+    let patches = carpet_patches(&footprints);
     let values = visualization_values(ego, plan, dt, visualization, metrics);
     let colormap = match visualization {
         CarpetVisualization::Time => &*GUPPY_BLUE,
@@ -54,19 +84,31 @@ pub(crate) fn draw(
         _ => &*GUPPY,
     };
 
-    for band in bands {
-        let index = (band.time / dt).round() as usize;
+    let mut vertices = Vec::with_capacity(patches.len() * 6);
+    let mut colors = Vec::with_capacity(vertices.capacity());
+    for patch in patches {
+        let index = (patch.time / dt).round() as usize;
         let sample = colormap.at(values[index.min(values.len() - 1)] as f32);
         let color = Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA);
-        let forward = Vec2::new(band.state.yaw.cos() as f32, band.state.yaw.sin() as f32);
-        let left = Vec2::new(-forward.y, forward.x);
-        let center = px(&band.state);
-        let half_width = 0.5 * EGO_FOOTPRINT.width as f32 * PX_PER_M;
-        gizmos.line_2d(
-            center - left * half_width,
-            center + left * half_width,
-            color,
-        );
+        push_patch(&mut vertices, &mut colors, patch, color);
+    }
+
+    let mut mesh = empty_mesh();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    if let Some(mut existing) = meshes.get_mut(&carpet.handle) {
+        *existing = mesh;
+        carpet.populated = true;
+    }
+}
+
+pub(crate) fn clear(meshes: &mut Assets<Mesh>, carpet: &mut EgoCarpetMesh) {
+    if !carpet.populated {
+        return;
+    }
+    if let Some(mut mesh) = meshes.get_mut(&carpet.handle) {
+        *mesh = empty_mesh();
+        carpet.populated = false;
     }
 }
 
@@ -135,15 +177,19 @@ fn padded_forward(states: &[State], f: impl Fn(&State, &State) -> f64) -> Vec<f6
 }
 
 fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
-    let max_dt = (0.5 * EGO_FOOTPRINT.length / *MAX_TERMINAL_SPEED_MPS).min(dt);
-    let steps = (dt / max_dt).ceil() as usize;
-    let mut samples = Vec::with_capacity(plan.len() * steps + 1);
+    let mut samples = Vec::new();
     samples.push(TimedState {
         state: ego,
         time: 0.0,
     });
     let mut previous = ego;
     for (i, &next) in plan.iter().enumerate() {
+        let translation = (next.x - previous.x).hypot(next.y - previous.y);
+        let yaw_delta = wrap_angle(next.yaw - previous.yaw).abs();
+        let corner_sweep = yaw_delta * 0.5 * EGO_FOOTPRINT.length.hypot(EGO_FOOTPRINT.width);
+        let steps = ((translation + corner_sweep) / (0.5 * BAND_M))
+            .ceil()
+            .max(1.0) as usize;
         for step in 1..=steps {
             let alpha = step as f64 / steps as f64;
             samples.push(TimedState {
@@ -156,69 +202,110 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
     samples
 }
 
-fn carpet_bands(footprints: &[TimedState]) -> Vec<TimedState> {
-    let front_edges: Vec<_> = footprints
-        .iter()
-        .map(|&footprint| offset_state(footprint, EGO_FOOTPRINT.length))
-        .collect();
-    let Some(&first) = front_edges.first() else {
-        return vec![];
-    };
-    let mut centers = Vec::new();
-    centers.push(first);
-    let mut traversed = 0.0;
-    let mut next_band = BAND_M;
-    for pair in front_edges.windows(2) {
-        let distance = (pair[1].state.x - pair[0].state.x).hypot(pair[1].state.y - pair[0].state.y);
-        while distance > f64::EPSILON && next_band <= traversed + distance {
-            let alpha = (next_band - traversed) / distance;
-            centers.push(TimedState {
-                state: interpolate_state(pair[0].state, pair[1].state, alpha),
-                time: pair[0].time + (pair[1].time - pair[0].time) * alpha,
-            });
-            next_band += BAND_M;
-        }
-        traversed += distance;
-    }
-    let last = *front_edges.last().unwrap();
-    if traversed > 0.0 && next_band - traversed < BAND_M * 0.5 {
-        centers.push(last);
-    }
-
-    centers
+fn carpet_patches(footprints: &[TimedState]) -> Vec<CarpetPatch> {
+    footprint_stations(footprints)
         .into_iter()
-        .filter_map(|mut band| {
-            band.time = mean_occupancy_time(band.state, footprints)?;
-            Some(band)
+        .filter_map(|station| cross_section(station, footprints))
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|sections| CarpetPatch {
+            rear: sections[0],
+            front: sections[1],
+            time: 0.5 * (sections[0].time + sections[1].time),
         })
         .collect()
 }
 
-fn offset_state(mut timed: TimedState, distance: f64) -> TimedState {
-    timed.state.x += distance * timed.state.yaw.cos();
-    timed.state.y += distance * timed.state.yaw.sin();
-    timed
+fn footprint_stations(footprints: &[TimedState]) -> Vec<State> {
+    let Some(first) = footprints.first() else {
+        return vec![];
+    };
+    let mut path: Vec<_> = footprints.iter().map(|sample| sample.state).collect();
+    let mut terminal_front = footprints.last().unwrap().state;
+    terminal_front.x += EGO_FOOTPRINT.length * terminal_front.yaw.cos();
+    terminal_front.y += EGO_FOOTPRINT.length * terminal_front.yaw.sin();
+    path.push(terminal_front);
+
+    let mut stations = vec![first.state];
+    let mut traversed = 0.0;
+    let mut next_station = BAND_M;
+    for pair in path.windows(2) {
+        let distance = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+        while distance > f64::EPSILON && next_station <= traversed + distance {
+            stations.push(interpolate_state(
+                pair[0],
+                pair[1],
+                (next_station - traversed) / distance,
+            ));
+            next_station += BAND_M;
+        }
+        traversed += distance;
+    }
+    if stations.last().is_none_or(|station| {
+        (station.x - terminal_front.x).hypot(station.y - terminal_front.y) > FOOTPRINT_EPSILON_M
+    }) {
+        stations.push(terminal_front);
+    }
+    stations
 }
 
-fn mean_occupancy_time(point: State, footprints: &[TimedState]) -> Option<f64> {
-    let mut total = 0.0;
-    let mut count = 0;
-    for sample in footprints {
-        let dx = point.x - sample.state.x;
-        let dy = point.y - sample.state.y;
-        let c = sample.state.yaw.cos();
-        let s = sample.state.yaw.sin();
-        let longitudinal = dx * c + dy * s;
-        let lateral = -dx * s + dy * c;
-        if (-FOOTPRINT_EPSILON_M..=EGO_FOOTPRINT.length + FOOTPRINT_EPSILON_M)
-            .contains(&longitudinal)
-            && lateral.abs() <= EGO_FOOTPRINT.width * 0.5 + FOOTPRINT_EPSILON_M
-        {
-            total += sample.time;
-            count += 1;
+fn cross_section(station: State, footprints: &[TimedState]) -> Option<CrossSection> {
+    let forward = [station.yaw.cos(), station.yaw.sin()];
+    let left = [-forward[1], forward[0]];
+    let mut right = f64::INFINITY;
+    let mut leftmost = f64::NEG_INFINITY;
+    let mut total_time = 0.0;
+    let mut occupants = 0;
+
+    for footprint in footprints {
+        let footprint_corners = EGO_FOOTPRINT.corners(footprint.state.pose());
+        let corners = [
+            footprint_corners[0],
+            footprint_corners[1],
+            footprint_corners[3],
+            footprint_corners[2],
+        ];
+        let local = corners.map(|point| {
+            let delta = [point[0] - station.x, point[1] - station.y];
+            [
+                delta[0] * forward[0] + delta[1] * forward[1],
+                delta[0] * left[0] + delta[1] * left[1],
+            ]
+        });
+        let mut intersections = Vec::with_capacity(4);
+        for i in 0..4 {
+            let a = local[i];
+            let b = local[(i + 1) % 4];
+            if a[0].abs() <= FOOTPRINT_EPSILON_M {
+                intersections.push(a[1]);
+            }
+            if (a[0] < -FOOTPRINT_EPSILON_M && b[0] > FOOTPRINT_EPSILON_M)
+                || (a[0] > FOOTPRINT_EPSILON_M && b[0] < -FOOTPRINT_EPSILON_M)
+            {
+                let alpha = -a[0] / (b[0] - a[0]);
+                intersections.push(a[1] + alpha * (b[1] - a[1]));
+            }
+        }
+        if intersections.len() >= 2 {
+            right = right.min(intersections.iter().copied().fold(f64::INFINITY, f64::min));
+            leftmost = leftmost.max(
+                intersections
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, f64::max),
+            );
+            total_time += footprint.time;
+            occupants += 1;
         }
     }
-    (count > 0).then_some(total / count as f64)
+    (occupants > 0).then(|| CrossSection {
+        right: [station.x + right * left[0], station.y + right * left[1]],
+        left: [
+            station.x + leftmost * left[0],
+            station.y + leftmost * left[1],
+        ],
+        time: total_time / occupants as f64,
+    })
 }
 
 fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
@@ -231,6 +318,34 @@ fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
         yaw: previous.yaw + yaw_delta * alpha,
         speed: previous.speed + (current.speed - previous.speed) * alpha,
     }
+}
+
+fn empty_mesh() -> Mesh {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 3]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0; 4]; 3]);
+    mesh
+}
+
+fn push_patch(
+    vertices: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    patch: CarpetPatch,
+    color: Color,
+) {
+    let point = |point: [f64; 2]| [point[0] as f32 * PX_PER_M, point[1] as f32 * PX_PER_M, 0.0];
+    vertices.extend([
+        point(patch.rear.left),
+        point(patch.rear.right),
+        point(patch.front.right),
+        point(patch.rear.left),
+        point(patch.front.right),
+        point(patch.front.left),
+    ]);
+    colors.extend(std::iter::repeat_n(color.to_linear().to_f32_array(), 6));
 }
 
 #[cfg(test)]
@@ -263,59 +378,89 @@ mod tests {
 
     #[test]
     fn uses_mean_time_for_repeated_occupancy() {
-        let point = State::default();
-        let footprints = [
-            TimedState {
-                state: point,
-                time: 0.0,
-            },
-            TimedState {
-                state: point,
-                time: 2.0,
-            },
-        ];
-
-        assert_eq!(mean_occupancy_time(point, &footprints), Some(1.0));
-    }
-
-    #[test]
-    fn keeps_the_terminal_footprint_band_at_rotated_headings() {
-        let state = State {
-            yaw: 0.7,
-            ..Default::default()
-        };
-        let nose = offset_state(TimedState { state, time: 0.0 }, EGO_FOOTPRINT.length);
-
-        assert_eq!(
-            mean_occupancy_time(nose.state, &[TimedState { state, time: 0.0 }]),
-            Some(0.0)
-        );
-    }
-
-    #[test]
-    fn carpet_starts_at_the_current_front_edge() {
         let footprints = [
             TimedState {
                 state: State::default(),
                 time: 0.0,
             },
             TimedState {
-                state: State {
-                    x: EGO_FOOTPRINT.length * 2.0,
-                    ..Default::default()
-                },
-                time: 1.0,
+                state: State::default(),
+                time: 2.0,
             },
         ];
+        let patches = carpet_patches(&footprints);
 
-        let bands = carpet_bands(&footprints);
+        assert!(!patches.is_empty());
+        assert!(patches.iter().all(|patch| patch.time == 1.0));
+    }
 
-        assert!(!bands.is_empty());
-        assert!(
-            bands
-                .iter()
-                .all(|band| band.state.x >= EGO_FOOTPRINT.length)
-        );
+    #[test]
+    fn covers_rotated_footprints() {
+        let state = State {
+            yaw: 0.7,
+            ..Default::default()
+        };
+        let patches = carpet_patches(&[TimedState { state, time: 0.0 }]);
+        let rear = patches.first().unwrap().rear;
+        let width = (rear.left[0] - rear.right[0]).hypot(rear.left[1] - rear.right[1]);
+
+        assert!((width - EGO_FOOTPRINT.width).abs() < 1e-9);
+    }
+
+    #[test]
+    fn carpet_includes_the_entire_current_and_terminal_footprints() {
+        let terminal = State {
+            x: EGO_FOOTPRINT.length * 2.0,
+            ..Default::default()
+        };
+        let footprints = sample_footprints(State::default(), &[terminal], 1.0);
+
+        let patches = carpet_patches(&footprints);
+        let rear = patches
+            .iter()
+            .flat_map(|patch| [patch.rear.right[0], patch.rear.left[0]])
+            .fold(f64::INFINITY, f64::min);
+        let front = patches
+            .iter()
+            .flat_map(|patch| [patch.front.right[0], patch.front.left[0]])
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        assert!(!patches.is_empty());
+        assert!(rear <= FOOTPRINT_EPSILON_M);
+        assert!(front >= terminal.x + EGO_FOOTPRINT.length - FOOTPRINT_EPSILON_M);
+    }
+
+    #[test]
+    fn carpet_patches_are_disjoint() {
+        use crate::geometry::polygons_overlap;
+
+        let plan = [
+            State::default(),
+            State {
+                x: 2.0,
+                y: 1.0,
+                yaw: 0.4,
+                ..Default::default()
+            },
+        ];
+        let footprints = sample_footprints(State::default(), &plan, 0.5);
+        let patches = carpet_patches(&footprints);
+
+        assert!(patches.windows(2).all(|pair| {
+            pair[0].front.right == pair[1].rear.right && pair[0].front.left == pair[1].rear.left
+        }));
+        for i in 0..patches.len() {
+            let a = [
+                patches[i].rear.right,
+                patches[i].rear.left,
+                patches[i].front.left,
+                patches[i].front.right,
+            ];
+            for b in patches.iter().skip(i + 2) {
+                let b = [b.rear.right, b.rear.left, b.front.left, b.front.right];
+                assert!(!polygons_overlap(&a, &b));
+            }
+        }
     }
 
     #[test]

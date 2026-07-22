@@ -65,8 +65,7 @@ After selecting track then dive into the driving app mode.
 --
 ego carpet
 rendering issues
-1. flickering of one box about 4 boxes from the end
-2. patches are not the correct thickness on mobile
+patches are not the correct thickness on mobile
 
 --
 Show the predicted future poses of actors in the viewer.

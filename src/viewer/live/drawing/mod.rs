@@ -5,7 +5,7 @@ pub(super) mod plan;
 pub(super) mod track;
 pub(super) mod vehicles;
 
-pub(crate) use carpet::{EgoCarpetGizmos, configure as configure_carpet};
+pub(crate) use carpet::{EgoCarpetMesh, setup as setup_carpet};
 pub(crate) use diagnostics::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, configure as configure_diagnostics,
 };

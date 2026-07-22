@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use super::Live;
 use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetGizmos, GridMesh,
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh,
     PlannedTrajectoryGizmos, RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
@@ -38,7 +38,7 @@ pub(crate) fn draw(
     mut grid_mesh: ResMut<GridMesh>,
     mut road_surface: ResMut<RoadSurfaceMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut carpet_gizmos: Gizmos<EgoCarpetGizmos>,
+    mut carpet_mesh: ResMut<EgoCarpetMesh>,
     mut planned_trajectory: Gizmos<PlannedTrajectoryGizmos>,
     mut diagnostic_trajectories: Gizmos<DiagnosticTrajectoryGizmos>,
     mut diagnostic_points: Gizmos<DiagnosticPointGizmos>,
@@ -103,13 +103,16 @@ pub(crate) fn draw(
     );
     if state.show_carpet && !world.plan.is_empty() {
         carpet::draw(
-            &mut carpet_gizmos,
+            &mut meshes,
+            &mut carpet_mesh,
             ego,
             &world.plan,
             world.dt(),
             state.carpet_visualization,
             carpet_metrics.as_ref(),
         );
+    } else {
+        carpet::clear(&mut meshes, &mut carpet_mesh);
     }
     diagnostics::draw(
         &mut diagnostic_trajectories,
