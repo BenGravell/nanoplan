@@ -16,15 +16,16 @@ pub(crate) const HOVER: egui::Color32 = egui::Color32::from_rgb(255, 210, 105);
 pub(crate) const TEXT: egui::Color32 = egui::Color32::from_rgb(25, 29, 30);
 pub(crate) const DIM: egui::Color32 = egui::Color32::from_rgb(95, 108, 111);
 pub(crate) const PANEL: egui::Color32 = egui::Color32::from_rgb(250, 250, 246);
+// Keep the controls legible while letting the road remain visible beneath the overlays.
 pub(crate) const SIDE_PANEL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(230, 230, 227, 235);
+    egui::Color32::from_rgba_premultiplied(200, 200, 200, 205);
 pub(crate) const SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 252);
 pub(crate) const CONTROL: egui::Color32 = egui::Color32::from_rgb(232, 235, 229);
 pub(crate) const FAINT: egui::Color32 = egui::Color32::from_rgb(224, 229, 223);
 
 // Live viewer colors
 pub(crate) const CANVAS_RGB: (u8, u8, u8) = (237, 242, 235);
-pub(crate) const NON_DRIVABLE_RGB: (u8, u8, u8) = (218, 224, 216);
+pub(crate) const NON_DRIVABLE_RGB: (u8, u8, u8) = (190, 196, 193);
 pub(crate) const ROAD_SURFACE: Color = Color::srgb_u8(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2);
 pub(crate) const TRACK_EDGE: Color = Color::srgb(0.6, 0.6, 0.6);
 pub(crate) const TRACK_CENTERLINE: Color = Color::srgb(0.25, 0.5, 0.35);

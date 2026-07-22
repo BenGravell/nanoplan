@@ -9,8 +9,8 @@ use super::screen::{PX_PER_M, px};
 use crate::viewer::DrivingCanvas;
 
 pub(super) const DEFAULT_ZOOM: f32 = 1.0;
-pub(crate) const MIN_ZOOM: f32 = 0.01;
-pub(crate) const MAX_ZOOM: f32 = 6.0;
+pub(crate) const MIN_ZOOM: f32 = 0.02;
+pub(crate) const MAX_ZOOM: f32 = 10.0;
 pub(super) const CAMERA_BOTTOM_PADDING_PX: f32 = 48.0;
 
 #[derive(Clone, Copy)]
@@ -24,11 +24,11 @@ pub(crate) struct CameraState {
 }
 
 impl CameraState {
-    pub(super) fn reset(&mut self, ego: Vec2) {
+    pub(super) fn reset(&mut self, ego: State) {
         *self = Self {
-            center: ego,
+            center: px(&ego),
             zoom: DEFAULT_ZOOM,
-            rotation: 0.0,
+            rotation: ego.yaw as f32 - std::f32::consts::FRAC_PI_2,
             follow: true,
             align_heading: true,
             smooth: true,

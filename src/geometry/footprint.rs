@@ -22,6 +22,29 @@ impl Footprint {
         )
     }
 
+    /// World-space corners for a pose whose position is the rear of the vehicle.
+    pub(crate) fn corners(self, pose: Pose) -> [[f64; 2]; 4] {
+        let forward = [pose.yaw.cos(), pose.yaw.sin()];
+        let left = [-forward[1], forward[0]];
+        let front = [
+            pose.x + self.length * forward[0],
+            pose.y + self.length * forward[1],
+        ];
+        let half_width = self.width / 2.0;
+        [
+            [pose.x + half_width * left[0], pose.y + half_width * left[1]],
+            [pose.x - half_width * left[0], pose.y - half_width * left[1]],
+            [
+                front[0] + half_width * left[0],
+                front[1] + half_width * left[1],
+            ],
+            [
+                front[0] - half_width * left[0],
+                front[1] - half_width * left[1],
+            ],
+        ]
+    }
+
     /// Furthest extent from the rear reference point along a world-space axis.
     pub(crate) fn support(self, yaw: f64, axis: [f64; 2]) -> f64 {
         let n = axis[0].hypot(axis[1]).max(1e-9);

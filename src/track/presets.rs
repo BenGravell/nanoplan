@@ -8,23 +8,37 @@ use crate::vehicle::{
 };
 
 const STRAIGHT_HALF_WIDTH_M: f64 = 10.0;
-const CURVED_HALF_WIDTH_M: f64 = 3.5;
-const HALF_SEPARATION_M: f64 = 110.0;
-const END_CAP_REACH_M: f64 = 180.0;
-const SUPERELLIPSE_POWER: f64 = 4.0;
+const CURVED_HALF_WIDTH_M: f64 = 5.0;
+const LARGE_HALF_SEPARATION_M: f64 = 320.0;
+const LARGE_END_CAP_REACH_M: f64 = 480.0;
+const SMALL_HALF_SEPARATION_M: f64 = 45.0;
+const SMALL_END_CAP_REACH_M: f64 = 60.0;
+const SMALL_STRAIGHT_LENGTH_M: f64 = 187.0;
+const SUPERELLIPSE_EXPONENT: f64 = 0.75;
+#[cfg(test)]
+const SMALL_REFERENCE_SPEED_FRACTION: f64 = 0.25;
+#[cfg(test)]
+const SMALL_TARGET_LAP_TIME_S: f64 = 30.0;
 const SAMPLE_STEP_M: f64 = 2.0;
 const TERMINAL_SPEED_FRACTION: f64 = 0.95;
 const CHIRP_CYCLES: f64 = 16.0;
 const CHIRP_START_FREQUENCY_RATIO: f64 = 0.1;
-const CHIRP_EASE_FRACTION: f64 = 0.06;
-const CHIRP_TARGET_CURVATURE: f64 = 0.5 * MAX_ABS_CURVATURE;
+const CHIRP_PERIOD_EASE_FRACTION: f64 = 0.30;
+const CHIRP_TARGET_CURVATURE: f64 = 0.75 * MAX_ABS_CURVATURE;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PresetInfo {
     pub(crate) name: &'static str,
 }
 
-pub(crate) const TRACK_PRESETS: [PresetInfo; 1] = [PresetInfo { name: "Test Track" }];
+pub(crate) const TRACK_PRESETS: [PresetInfo; 2] = [
+    PresetInfo {
+        name: "Test Track (large)",
+    },
+    PresetInfo {
+        name: "Test Track (small)",
+    },
+];
 
 /// Distance needed to reach a fraction of drag-limited terminal speed from rest
 /// under maximum thrust acceleration.
@@ -36,37 +50,64 @@ fn acceleration_distance(speed_fraction: f64) -> f64 {
 
 pub(crate) fn generate(index: usize) -> GeneratedTrack {
     let _preset = TRACK_PRESETS[index];
+    match index {
+        0 => generate_large(),
+        1 => generate_small(),
+        _ => unreachable!(),
+    }
+}
+
+fn generate_large() -> GeneratedTrack {
     let straight_length = acceleration_distance(TERMINAL_SPEED_FRACTION).ceil();
     let half_length = straight_length / 2.0;
     let mut points = Vec::new();
 
     // The top straight is deliberately unobstructed: it is the acceleration run.
     sample(&mut points, straight_length, |u| {
-        [-half_length + straight_length * u, HALF_SEPARATION_M]
+        [-half_length + straight_length * u, LARGE_HALF_SEPARATION_M]
     });
     let acceleration_straight_samples = points.len();
     sample(
         &mut points,
-        PI * (END_CAP_REACH_M + HALF_SEPARATION_M) / 2.0,
-        |u| superellipse_cap(half_length, PI / 2.0 - PI * u, 1.0),
+        cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M),
+        |u| {
+            superellipse_cap(
+                half_length,
+                PI / 2.0 - PI * u,
+                1.0,
+                LARGE_END_CAP_REACH_M,
+                LARGE_HALF_SEPARATION_M,
+                SUPERELLIPSE_EXPONENT,
+            )
+        },
     );
     let right_cap_end = points.len();
 
-    // A continuous chirped sine contracts its wavelength along the return
-    // straight. Smoothstep envelopes join it tangent to both end caps.
+    // Alternating chirp periods are straight, providing room to accelerate and
+    // brake between increasingly tight corners. Smootherstep envelopes make each
+    // sine period tangent to the neighboring straights and end caps.
     let amplitude = chirp_amplitude(straight_length);
     sample(&mut points, straight_length, |u| {
         let along = straight_length * u;
         [
             half_length - along,
-            -HALF_SEPARATION_M + chirp_offset(along, straight_length, amplitude),
+            -LARGE_HALF_SEPARATION_M + chirp_offset(along, straight_length, amplitude),
         ]
     });
     let return_straight_end = points.len();
     sample(
         &mut points,
-        PI * (END_CAP_REACH_M + HALF_SEPARATION_M) / 2.0,
-        |u| superellipse_cap(-half_length, -PI / 2.0 + PI * u, -1.0),
+        cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M),
+        |u| {
+            superellipse_cap(
+                -half_length,
+                -PI / 2.0 + PI * u,
+                -1.0,
+                LARGE_END_CAP_REACH_M,
+                LARGE_HALF_SEPARATION_M,
+                SUPERELLIPSE_EXPONENT,
+            )
+        },
     );
 
     let mut widths = vec![CURVED_HALF_WIDTH_M; points.len()];
@@ -94,6 +135,51 @@ pub(crate) fn generate(index: usize) -> GeneratedTrack {
         right: widths.clone(),
         left: widths,
     }
+}
+
+fn generate_small() -> GeneratedTrack {
+    let straight_length = SMALL_STRAIGHT_LENGTH_M;
+    let half_length = straight_length / 2.0;
+    let cap_length = cap_length_estimate(SMALL_END_CAP_REACH_M, SMALL_HALF_SEPARATION_M);
+    let mut points = Vec::new();
+
+    sample(&mut points, straight_length, |u| {
+        [-half_length + straight_length * u, SMALL_HALF_SEPARATION_M]
+    });
+    sample(&mut points, cap_length, |u| {
+        superellipse_cap(
+            half_length,
+            PI / 2.0 - PI * u,
+            1.0,
+            SMALL_END_CAP_REACH_M,
+            SMALL_HALF_SEPARATION_M,
+            SUPERELLIPSE_EXPONENT,
+        )
+    });
+    sample(&mut points, straight_length, |u| {
+        [half_length - straight_length * u, -SMALL_HALF_SEPARATION_M]
+    });
+    sample(&mut points, cap_length, |u| {
+        superellipse_cap(
+            -half_length,
+            -PI / 2.0 + PI * u,
+            -1.0,
+            SMALL_END_CAP_REACH_M,
+            SMALL_HALF_SEPARATION_M,
+            SUPERELLIPSE_EXPONENT,
+        )
+    });
+
+    let widths = vec![CURVED_HALF_WIDTH_M; points.len()];
+    GeneratedTrack {
+        points,
+        right: widths.clone(),
+        left: widths,
+    }
+}
+
+fn cap_length_estimate(reach: f64, half_separation: f64) -> f64 {
+    PI * (reach + half_separation) / 2.0
 }
 
 fn transition_widths(
@@ -129,23 +215,21 @@ fn chirp_offset(along: f64, length: f64, amplitude: f64) -> f64 {
     let u = (along / length).clamp(0.0, 1.0);
     let frequency_ramp =
         CHIRP_START_FREQUENCY_RATIO * u + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
-    let phase = 2.0 * PI * CHIRP_CYCLES * frequency_ramp;
-    amplitude * chirp_envelope(u) * phase.sin()
-}
-
-fn chirp_envelope(u: f64) -> f64 {
-    if u < CHIRP_EASE_FRACTION {
-        smoothstep(u / CHIRP_EASE_FRACTION)
-    } else if u > 1.0 - CHIRP_EASE_FRACTION {
-        smoothstep((1.0 - u) / CHIRP_EASE_FRACTION)
-    } else {
-        1.0
+    let phase_cycles = CHIRP_CYCLES * frequency_ramp;
+    let period = phase_cycles.floor() as usize;
+    if period % 2 == 1 || phase_cycles >= CHIRP_CYCLES {
+        return 0.0;
     }
+
+    let period_u = phase_cycles.fract();
+    let period_envelope = smootherstep(period_u.min(1.0 - period_u) / CHIRP_PERIOD_EASE_FRACTION);
+    let phase = 2.0 * PI * phase_cycles;
+    amplitude * period_envelope * phase.sin()
 }
 
-fn smoothstep(u: f64) -> f64 {
+fn smootherstep(u: f64) -> f64 {
     let u = u.clamp(0.0, 1.0);
-    u * u * (3.0 - 2.0 * u)
+    u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
 }
 
 fn chirp_amplitude(length: f64) -> f64 {
@@ -187,18 +271,24 @@ fn sample(points: &mut Vec<[f64; 2]>, approximate_length: f64, point: impl Fn(f6
     points.extend((0..count).map(|i| point(i as f64 / count as f64)));
 }
 
-fn superellipse_cap(center_x: f64, angle: f64, side: f64) -> [f64; 2] {
-    let exponent = 2.0 / SUPERELLIPSE_POWER;
+fn superellipse_cap(
+    center_x: f64,
+    angle: f64,
+    side: f64,
+    reach: f64,
+    half_separation: f64,
+    exponent: f64,
+) -> [f64; 2] {
     [
-        center_x + side * END_CAP_REACH_M * angle.cos().abs().powf(exponent),
-        HALF_SEPARATION_M * angle.sin().signum() * angle.sin().abs().powf(exponent),
+        center_x + side * reach * angle.cos().abs().powf(exponent),
+        half_separation * angle.sin().signum() * angle.sin().abs().powf(exponent),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vehicle::MAX_TERMINAL_SPEED_MPS;
+    use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_TERMINAL_SPEED_MPS};
 
     #[test]
     fn acceleration_straight_reaches_ninety_five_percent_terminal_speed() {
@@ -211,86 +301,167 @@ mod tests {
     }
 
     #[test]
-    fn preset_has_the_required_straight_width_transitions_and_chirp() {
+    fn large_track_has_the_required_straight_width_transitions_and_chirp() {
         let required = acceleration_distance(TERMINAL_SPEED_FRACTION);
-        for (index, _preset) in TRACK_PRESETS.iter().enumerate() {
-            let generated = generate(index);
-            let top = generated
-                .points
+        let generated = generate(0);
+        let top = generated
+            .points
+            .iter()
+            .filter(|point| (point[1] - LARGE_HALF_SEPARATION_M).abs() < 1e-12)
+            .map(|point| point[0]);
+        let (min_x, max_x) = top.fold((f64::INFINITY, f64::NEG_INFINITY), |bounds, x| {
+            (bounds.0.min(x), bounds.1.max(x))
+        });
+        assert!(max_x - min_x >= required);
+        let straight_samples = (required.ceil() / SAMPLE_STEP_M).ceil() as usize;
+        assert!(
+            generated.right[..straight_samples]
                 .iter()
-                .filter(|point| (point[1] - HALF_SEPARATION_M).abs() < 1e-12)
-                .map(|point| point[0]);
-            let (min_x, max_x) = top.fold((f64::INFINITY, f64::NEG_INFINITY), |bounds, x| {
-                (bounds.0.min(x), bounds.1.max(x))
-            });
-            assert!(max_x - min_x >= required);
-            let straight_samples = (required.ceil() / SAMPLE_STEP_M).ceil() as usize;
-            assert!(
-                generated.right[..straight_samples]
-                    .iter()
-                    .chain(&generated.left[..straight_samples])
-                    .all(|&width| width == STRAIGHT_HALF_WIDTH_M)
-            );
+                .chain(&generated.left[..straight_samples])
+                .all(|&width| width == STRAIGHT_HALF_WIDTH_M)
+        );
 
-            let cap_samples =
-                (PI * (END_CAP_REACH_M + HALF_SEPARATION_M) / 2.0 / SAMPLE_STEP_M).ceil() as usize;
-            let right_cap = &generated.right[straight_samples..straight_samples + cap_samples];
-            assert_eq!(right_cap[0], STRAIGHT_HALF_WIDTH_M);
-            assert!(right_cap.windows(2).all(|pair| pair[1] < pair[0]));
-            assert!(right_cap.last().unwrap() > &CURVED_HALF_WIDTH_M);
-            assert_eq!(
-                generated.right[straight_samples + cap_samples],
-                CURVED_HALF_WIDTH_M
-            );
+        let cap_samples = (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M)
+            / SAMPLE_STEP_M)
+            .ceil() as usize;
+        let right_cap = &generated.right[straight_samples..straight_samples + cap_samples];
+        assert_eq!(right_cap[0], STRAIGHT_HALF_WIDTH_M);
+        assert!(right_cap.windows(2).all(|pair| pair[1] < pair[0]));
+        assert!(right_cap.last().unwrap() > &CURVED_HALF_WIDTH_M);
+        assert_eq!(
+            generated.right[straight_samples + cap_samples],
+            CURVED_HALF_WIDTH_M
+        );
 
-            let left_cap = &generated.right[generated.right.len() - cap_samples..];
-            assert_eq!(left_cap[0], CURVED_HALF_WIDTH_M);
-            assert!(left_cap.windows(2).all(|pair| pair[1] > pair[0]));
-            assert!(left_cap.last().unwrap() < &STRAIGHT_HALF_WIDTH_M);
+        let left_cap = &generated.right[generated.right.len() - cap_samples..];
+        assert_eq!(left_cap[0], CURVED_HALF_WIDTH_M);
+        assert!(left_cap.windows(2).all(|pair| pair[1] > pair[0]));
+        assert!(left_cap.last().unwrap() < &STRAIGHT_HALF_WIDTH_M);
 
-            let length = required.ceil();
-            let amplitude = chirp_amplitude(length);
-            let peak = sampled_chirp_peak(length, amplitude);
-            assert!((peak - CHIRP_TARGET_CURVATURE).abs() < 1e-9);
-            assert_eq!(chirp_offset(0.0, length, amplitude), 0.0);
-            assert!(chirp_offset(length, length, amplitude).abs() < 1e-12);
-            let epsilon = 1e-3;
-            assert!((chirp_offset(epsilon, length, amplitude) / epsilon).abs() < 1e-6);
-            assert!((chirp_offset(length - epsilon, length, amplitude) / epsilon).abs() < 1e-6);
+        let length = required.ceil();
+        let amplitude = chirp_amplitude(length);
+        let peak = sampled_chirp_peak(length, amplitude);
+        assert!((peak - CHIRP_TARGET_CURVATURE).abs() < 1e-9);
+        assert_eq!(chirp_offset(0.0, length, amplitude), 0.0);
+        assert!(chirp_offset(length, length, amplitude).abs() < 1e-12);
+        let epsilon = 1e-3;
+        assert!((chirp_offset(epsilon, length, amplitude) / epsilon).abs() < 1e-6);
+        assert!((chirp_offset(length - epsilon, length, amplitude) / epsilon).abs() < 1e-6);
 
-            let initial_frequency = CHIRP_START_FREQUENCY_RATIO;
-            let final_frequency = 2.0 - CHIRP_START_FREQUENCY_RATIO;
-            assert!(final_frequency > initial_frequency);
+        let initial_frequency = CHIRP_START_FREQUENCY_RATIO;
+        let final_frequency = 2.0 - CHIRP_START_FREQUENCY_RATIO;
+        assert!(final_frequency > initial_frequency);
 
-            let count = (length / SAMPLE_STEP_M).ceil() as usize;
-            let chirp = (0..=count)
-                .map(|i| {
-                    let along = length * i as f64 / count as f64;
-                    [along, chirp_offset(along, length, amplitude)]
-                })
-                .collect::<Vec<_>>();
-            let ramp_end = 1.0 - CHIRP_EASE_FRACTION;
-            let bin_peaks = (0..8)
-                .map(|bin| {
-                    let from = ramp_end * bin as f64 / 8.0;
-                    let to = ramp_end * (bin + 1) as f64 / 8.0;
-                    chirp
-                        .windows(3)
-                        .enumerate()
-                        .filter(|(i, _)| {
-                            let u = (*i + 1) as f64 / count as f64;
-                            (from..to).contains(&u)
-                        })
-                        .map(|(_, points)| polyline_curvature(points[0], points[1], points[2]))
-                        .fold(0.0, f64::max)
-                })
-                .collect::<Vec<_>>();
-            assert!(
-                bin_peaks.windows(2).all(|pair| pair[1] > pair[0]),
-                "curvature peaks must ramp up: {bin_peaks:?}"
-            );
-            assert!(bin_peaks[0] < 0.1 * CHIRP_TARGET_CURVATURE);
-            assert!(bin_peaks[7] > 0.9 * CHIRP_TARGET_CURVATURE);
+        let u_for_phase_cycles = |phase_cycles: f64| {
+            let ramp = phase_cycles / CHIRP_CYCLES;
+            (-(CHIRP_START_FREQUENCY_RATIO)
+                + (CHIRP_START_FREQUENCY_RATIO.powi(2)
+                    + 4.0 * (1.0 - CHIRP_START_FREQUENCY_RATIO) * ramp)
+                    .sqrt())
+                / (2.0 * (1.0 - CHIRP_START_FREQUENCY_RATIO))
+        };
+        for period in 0..CHIRP_CYCLES as usize {
+            let u = u_for_phase_cycles(period as f64 + 0.25);
+            let offset = chirp_offset(u * length, length, amplitude);
+            if period % 2 == 0 {
+                assert!(offset.abs() > 0.1 * amplitude);
+            } else {
+                assert_eq!(offset, 0.0, "period {period} must be straight");
+            }
         }
+        for boundary in 1..CHIRP_CYCLES as usize {
+            let along = u_for_phase_cycles(boundary as f64) * length;
+            let epsilon = 1e-3;
+            assert!((chirp_offset(along - epsilon, length, amplitude) / epsilon).abs() < 1e-6);
+            assert!((chirp_offset(along + epsilon, length, amplitude) / epsilon).abs() < 1e-6);
+        }
+
+        let count = (length / SAMPLE_STEP_M).ceil() as usize;
+        let chirp = (0..=count)
+            .map(|i| {
+                let along = length * i as f64 / count as f64;
+                [along, chirp_offset(along, length, amplitude)]
+            })
+            .collect::<Vec<_>>();
+        let active_period_peaks = (0..CHIRP_CYCLES as usize)
+            .step_by(2)
+            .map(|period| {
+                let from = period as f64 / CHIRP_CYCLES;
+                let to = (period + 1) as f64 / CHIRP_CYCLES;
+                chirp
+                    .windows(3)
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        let u = (*i + 1) as f64 / count as f64;
+                        let ramp = CHIRP_START_FREQUENCY_RATIO * u
+                            + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
+                        (from..to).contains(&ramp)
+                    })
+                    .map(|(_, points)| polyline_curvature(points[0], points[1], points[2]))
+                    .fold(0.0, f64::max)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            active_period_peaks.windows(2).all(|pair| pair[1] > pair[0]),
+            "curvature peaks must ramp up: {active_period_peaks:?}"
+        );
+        assert!(
+            active_period_peaks[0] < 0.15 * CHIRP_TARGET_CURVATURE,
+            "curvature peaks: {active_period_peaks:?}"
+        );
+        assert!(active_period_peaks[7] > 0.9 * CHIRP_TARGET_CURVATURE);
+    }
+
+    #[test]
+    fn large_end_caps_support_fifty_percent_of_terminal_speed() {
+        let generated = generate(0);
+        let straight_samples =
+            (acceleration_distance(TERMINAL_SPEED_FRACTION).ceil() / SAMPLE_STEP_M).ceil() as usize;
+        let cap_samples = (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M)
+            / SAMPLE_STEP_M)
+            .ceil() as usize;
+        let peak_curvature = generated.points[straight_samples..straight_samples + cap_samples]
+            .windows(3)
+            .map(|points| polyline_curvature(points[0], points[1], points[2]))
+            .fold(0.0, f64::max);
+        let sustainable_speed = (MAX_ABS_LAT_ACCEL / peak_curvature).sqrt();
+        let fraction = sustainable_speed / *MAX_TERMINAL_SPEED_MPS;
+        assert!(
+            (0.50..=0.55).contains(&fraction),
+            "speed fraction: {fraction}"
+        );
+    }
+
+    #[test]
+    fn small_track_is_two_straights_with_a_thirty_second_reference_lap() {
+        let generated = generate(1);
+        let straight_samples = (SMALL_STRAIGHT_LENGTH_M / SAMPLE_STEP_M).ceil() as usize;
+        let cap_samples = (cap_length_estimate(SMALL_END_CAP_REACH_M, SMALL_HALF_SEPARATION_M)
+            / SAMPLE_STEP_M)
+            .ceil() as usize;
+        assert_eq!(generated.points.len(), 2 * (straight_samples + cap_samples));
+        assert!(
+            generated.points[..straight_samples]
+                .iter()
+                .all(|point| point[1] == SMALL_HALF_SEPARATION_M)
+        );
+        let lower_start = straight_samples + cap_samples;
+        assert!(
+            generated.points[lower_start..lower_start + straight_samples]
+                .iter()
+                .all(|point| point[1] == -SMALL_HALF_SEPARATION_M)
+        );
+
+        let lap_length = generated
+            .points
+            .iter()
+            .zip(generated.points.iter().cycle().skip(1))
+            .map(|(&a, &b)| point_distance(a, b))
+            .sum::<f64>();
+        let lap_time = lap_length / (SMALL_REFERENCE_SPEED_FRACTION * *MAX_TERMINAL_SPEED_MPS);
+        assert!(
+            (lap_time - SMALL_TARGET_LAP_TIME_S).abs() < 0.1,
+            "lap time: {lap_time}"
+        );
     }
 }

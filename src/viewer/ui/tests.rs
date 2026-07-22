@@ -6,8 +6,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use super::controls::metrics::preview_metrics;
 use super::style::desktop_zoom;
 use super::{
-    ControlTab, UiState, compact_layout, compact_rail_widths, configure, desktop_rail_widths,
-    landing, portrait_prompt, tutorial, viewer_layout,
+    ControlTab, UiState, center_rail_rect, compact_layout, configure, landing, portrait_prompt,
+    side_rail_widths, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -405,13 +405,13 @@ fn future_controls_live_together_in_the_viz_menu() {
         );
     harness.run_steps(2);
 
-    assert!(harness.query_by_label("future preview [s]").is_none());
+    assert!(harness.query_by_label("Future preview").is_none());
     harness.state_mut().tab = ControlTab::Visibility;
     harness.run();
 
     for label in [
-        "FUTURE",
-        "future preview [s]",
+        "FUTURE PREVIEW [S]",
+        "Future preview",
         "Ego carpet",
         "Planned path",
         "Search points",
@@ -441,10 +441,14 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
+    harness.state_mut().live.camera.zoom = 2.0;
+    let ego = harness.state().live.world.ego();
     harness.state_mut().tab = ControlTab::Opponents;
     harness.run();
 
     assert!(harness.query_by_label("OPPONENTS").is_some());
+    assert_eq!(harness.state().live.world.ego(), ego);
+    assert_eq!(harness.state().live.camera.zoom, 2.0);
     let slider = harness.get_by_role(egui::accesskit::Role::Slider).rect();
     let left = slider.left_center() + egui::vec2(1.0, 0.0);
     let right = slider.right_center() - egui::vec2(1.0, 0.0);
@@ -543,11 +547,40 @@ fn pause_rail_opens_navigation_modal() {
 }
 
 #[test]
+fn driving_canvas_covers_the_viewport_beneath_overlay_rails() {
+    let size = egui::vec2(1280.0, 720.0);
+    let mut harness = Harness::builder().with_size(size).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            let viewport = ui.max_rect();
+            let (canvas, _) = viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            assert_eq!(canvas, viewport);
+        },
+        ViewerHarnessState::default(),
+    );
+
+    harness.run_steps(2);
+}
+
+#[test]
+fn pause_rail_fits_exactly_between_the_side_overlays() {
+    let canvas = egui::Rect::from_min_size(egui::pos2(12.0, 8.0), egui::vec2(1280.0, 720.0));
+    let pause = center_rail_rect(canvas, 372.0, 384.0);
+
+    assert_eq!(pause.left(), canvas.left() + 372.0);
+    assert_eq!(pause.right(), canvas.right() - 384.0);
+    assert_eq!(pause.y_range(), canvas.y_range());
+}
+
+#[test]
 fn layout_only_compacts_for_phone_sized_viewports() {
     for (_, phone) in PHONE_LANDSCAPE_SIZES {
         assert!(compact_layout(phone));
-        let (left, right) = compact_rail_widths(phone);
-        assert_eq!(left, right);
     }
     assert!(compact_layout(egui::vec2(960.0, 540.0)));
     assert!(!compact_layout(egui::vec2(1920.0, 1080.0)));
@@ -556,32 +589,28 @@ fn layout_only_compacts_for_phone_sized_viewports() {
 }
 
 #[test]
-fn compact_layout_gives_narrow_phones_more_road_space() {
-    let road_width = |viewport: egui::Vec2| {
-        let (left, right) = compact_rail_widths(viewport);
-        viewport.x - left - right
-    };
-
-    assert!((road_width(PHONE_LANDSCAPE_SIZES[0].1) - 237.5).abs() < 0.001);
-    assert!((road_width(PHONE_LANDSCAPE_SIZES[1].1) - 294.0).abs() < 0.001);
-    assert!((road_width(PHONE_LANDSCAPE_SIZES[3].1) - 480.0).abs() < 0.001);
+fn side_menus_are_each_three_eighths_of_the_viewport_height() {
+    for viewport in [
+        egui::vec2(1920.0, 1080.0),
+        egui::vec2(3440.0, 1440.0),
+        egui::vec2(3840.0, 2160.0),
+    ]
+    .into_iter()
+    .chain(PHONE_LANDSCAPE_SIZES.map(|(_, size)| size))
+    {
+        let expected = viewport.y * 0.375;
+        assert_eq!(side_rail_widths(viewport), (expected, expected));
+    }
 }
 
 #[test]
-fn desktop_menu_scales_with_display_height() {
-    let at_1080p = desktop_rail_widths(egui::vec2(1920.0, 1080.0));
-    let at_1440p = desktop_rail_widths(egui::vec2(2560.0, 1440.0));
-    let at_2160p = desktop_rail_widths(egui::vec2(3840.0, 2160.0));
-    let ultrawide = desktop_rail_widths(egui::vec2(3440.0, 1440.0));
+fn supported_viewport_aspect_ratio_guarantees_a_square_or_wider_center_canvas() {
+    let height = 1000.0;
+    let viewport = egui::vec2(height * MIN_VIEWPORT_ASPECT_RATIO, height);
+    let (left, right) = side_rail_widths(viewport);
+    let center_aspect_ratio = (viewport.x - left - right) / viewport.y;
 
-    let close = |actual: (f32, f32), expected: (f32, f32)| {
-        assert!((actual.0 - expected.0).abs() < 0.001);
-        assert!((actual.1 - expected.1).abs() < 0.001);
-    };
-    close(at_1080p, (384.0, 384.0));
-    close(at_1440p, (512.0, 512.0));
-    close(at_2160p, (768.0, 768.0));
-    assert_eq!(ultrawide, at_1440p);
+    assert!(center_aspect_ratio >= 1.0);
 }
 
 #[test]
@@ -638,11 +667,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size * pixels_per_point);
         let compact = compact_layout(size);
-        let (control_width, rail_width) = if compact {
-            compact_rail_widths(size)
-        } else {
-            desktop_rail_widths(size)
-        };
+        let (control_width, rail_width) = side_rail_widths(size);
         for label in ["OPTIONS", "ACTIVE PLANNER"] {
             let nodes: Vec<_> = harness
                 .get_all_by_label(label)
@@ -673,6 +698,25 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             rail.contains_rect(hud),
             "HUD is outside the right rail at {name}: {hud:?}"
         );
+        let sections: Vec<_> = ["Lap stats", "Friction box", "Speed gauge"]
+            .map(|label| harness.get_by_label(label).rect())
+            .into_iter()
+            .collect();
+        for section in &sections {
+            assert!(
+                hud.contains_rect(*section) && section.is_positive(),
+                "HUD section spills outside its container at {name}: {section:?} outside {hud:?}"
+            );
+        }
+        assert!(
+            sections[0].bottom() < sections[1].top() && sections[1].bottom() < sections[2].top(),
+            "HUD sections have no gutters at {name}: {sections:?}"
+        );
+        assert!(
+            sections[0].center().y < sections[1].center().y
+                && sections[1].center().y < sections[2].center().y,
+            "HUD sections lost top/middle/bottom alignment at {name}: {sections:?}"
+        );
 
         let selector = harness
             .get_by_role_and_label(egui::accesskit::Role::ComboBox, "OPTIONS")
@@ -696,6 +740,137 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             (selector.right() - (control_width * pixels_per_point - margin)).abs() <= 1.0,
             "selector does not end at the right menu margin at {name}: {selector:?}"
         );
+
+        harness.state_mut().tab = ControlTab::Camera;
+        harness.run();
+        let control_deck = harness.get_by_label("Control deck").rect();
+        let control_rail = egui::Rect::from_min_max(
+            screen.left_top(),
+            egui::pos2(control_width * pixels_per_point, screen.bottom()),
+        );
+        assert!(
+            control_rail.contains_rect(control_deck) && control_deck.is_positive(),
+            "control deck spills outside the viewport at {name}: {control_deck:?}"
+        );
+        let camera_labels = if compact {
+            [
+                "FOLLOW",
+                "Follow",
+                "Align heading",
+                "Smooth",
+                "ZOOM",
+                "Zoom control",
+                "-15°",
+                "NORTH",
+                "+15°",
+                "RESET",
+            ]
+        } else {
+            [
+                "FOLLOW",
+                "Follow camera",
+                "Align to ego heading",
+                "Smooth motion",
+                "ZOOM",
+                "Zoom control",
+                "-15°",
+                "NORTH UP",
+                "+15°",
+                "RESET",
+            ]
+        };
+        for label in camera_labels {
+            let nodes: Vec<_> = harness.get_all_by_label(label).collect();
+            assert!(
+                !nodes.is_empty(),
+                "camera control {label:?} missing at {name}"
+            );
+            for node in nodes {
+                let rect = node.rect();
+                assert!(
+                    control_rail.contains_rect(rect) && rect.is_positive(),
+                    "camera control {label:?} spills outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+                );
+            }
+        }
+
+        harness.state_mut().tab = ControlTab::Visibility;
+        harness.run();
+        let visibility_labels = if compact {
+            [
+                "FUTURE PREVIEW [S]",
+                "Future preview",
+                "Stations",
+                "Centerline",
+                "Carpet",
+                "Ego carpet color",
+                "Path",
+            ]
+        } else {
+            [
+                "FUTURE PREVIEW [S]",
+                "Future preview",
+                "Track stations",
+                "Track centerline",
+                "Ego carpet",
+                "Ego carpet color",
+                "Planned path",
+            ]
+        };
+        for label in visibility_labels {
+            let nodes: Vec<_> = harness.get_all_by_label(label).collect();
+            assert!(
+                !nodes.is_empty(),
+                "visibility control {label:?} missing at {name}"
+            );
+            for node in nodes {
+                let rect = node.rect();
+                assert!(
+                    rect.left() >= control_rail.left()
+                        && rect.right() <= control_rail.right()
+                        && rect.width() > 0.0,
+                    "visibility control {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+                );
+            }
+        }
+
+        harness.state_mut().tab = ControlTab::Metrics;
+        harness.run();
+        for label in [
+            "PLANNER METRICS",
+            "SAFETY",
+            "PROGRESS",
+            "COMFORT",
+            "OVERALL",
+            "DRIVING",
+            "SPEED",
+            "ACCELERATION",
+            "CURVATURE",
+            "LATEST PLAN",
+            "PLANNER LATENCY SEAMS",
+        ] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.left() >= control_rail.left()
+                    && rect.right() <= control_rail.right()
+                    && rect.width() > 0.0,
+                "metric text {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+            );
+        }
+        let metric_text: Vec<_> = harness
+            .get_all_by_role(egui::accesskit::Role::Label)
+            .filter(|node| node.rect().left() < control_rail.right())
+            .collect();
+        assert!(!metric_text.is_empty(), "metric text missing at {name}");
+        for node in metric_text {
+            let rect = node.rect();
+            assert!(
+                rect.left() >= control_rail.left()
+                    && rect.right() <= control_rail.right()
+                    && rect.width() > 0.0,
+                "metric text spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+            );
+        }
 
         harness
             .render()

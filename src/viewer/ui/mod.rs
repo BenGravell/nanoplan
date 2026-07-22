@@ -86,28 +86,55 @@ fn viewer_layout(
     live: &mut Live,
     active_tab: &mut ControlTab,
 ) -> (egui::Rect, bool) {
-    let viewport = root.max_rect().size();
+    let canvas = root.max_rect();
+    let viewport = canvas.size();
     let compact = compact_layout(viewport);
-    visualization_rail(root, live, right_rail_width(viewport, compact), compact);
+    let (left_width, right_width) = side_rail_widths(viewport);
+
+    let mut right_overlay = overlay_root(root, "visualization_overlay");
+    visualization_rail(&mut right_overlay, live, right_width, compact);
+
     let frame = egui::Frame::new()
         .fill(SIDE_PANEL)
         .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
-    let width = if compact {
-        compact_rail_widths(viewport).0
-    } else {
-        desktop_rail_widths(viewport).0
-    };
+    let mut left_overlay = overlay_root(root, "control_overlay");
     egui::Panel::left("control_deck")
-        .exact_size(width)
+        .exact_size(left_width)
         .resizable(false)
         .frame(frame)
-        .show(root, |ui| {
-            control_deck(ui, state, live, active_tab, compact)
+        .show(&mut left_overlay, |ui| {
+            let rect = ui.max_rect();
+            control_deck(ui, state, live, active_tab, compact);
+            ui.interact(rect, ui.id().with("control_deck"), egui::Sense::hover())
+                .widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Control deck")
+                });
         });
-    pause_rail(root, live, compact);
-    let canvas = root.available_rect_before_wrap();
+
+    let pause_rect = center_rail_rect(canvas, left_width, right_width);
+    let mut pause_overlay = overlay_root_at(root, "pause_overlay", pause_rect);
+    pause_rail(&mut pause_overlay, live, compact);
     let exit_requested = pause_modal(root.ctx(), state, live, compact);
     (canvas, exit_requested)
+}
+
+fn overlay_root(root: &egui::Ui, id: &'static str) -> egui::Ui {
+    overlay_root_at(root, id, root.max_rect())
+}
+
+fn overlay_root_at(root: &egui::Ui, id: &'static str, rect: egui::Rect) -> egui::Ui {
+    egui::Ui::new(
+        root.ctx().clone(),
+        id.into(),
+        egui::UiBuilder::new().max_rect(rect),
+    )
+}
+
+fn center_rail_rect(canvas: egui::Rect, left_width: f32, right_width: f32) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(canvas.left() + left_width, canvas.top()),
+        egui::pos2(canvas.right() - right_width, canvas.bottom()),
+    )
 }
 
 fn pause_rail(root: &mut egui::Ui, live: &mut Live, compact: bool) {
@@ -159,29 +186,13 @@ fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compac
     exit
 }
 
-fn right_rail_width(viewport: egui::Vec2, compact: bool) -> f32 {
-    if compact {
-        compact_rail_widths(viewport).1
-    } else {
-        desktop_rail_widths(viewport).1
-    }
-}
-
-fn desktop_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
-    // Scale against the viewport height so 1440p and 2160p layouts retain the
-    // proportions of a 16:9 1080p display without ballooning on ultrawides.
-    let reference_width = viewport.y * 16.0 / 9.0;
-    let width = (reference_width * 0.2).max(372.0);
+fn side_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
+    let width = viewport.y * 0.375;
     (width, width)
 }
 
 fn compact_layout(viewport: egui::Vec2) -> bool {
     viewport.x < 900.0 || viewport.y < 600.0
-}
-
-fn compact_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
-    let width = (viewport.x * 0.25 + 48.0).min(280.0);
-    (width, width)
 }
 
 #[cfg(test)]

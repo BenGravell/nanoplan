@@ -7,14 +7,26 @@ use crate::viewer::live::LapStats;
 
 use super::super::style::caps_font;
 
-pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, stats: LapStats) {
+pub(crate) fn draw(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    stats: LapStats,
+    grid_position: (usize, usize),
+) {
     let scale = rect.height() / 121.0;
     painter.text(
-        rect.right_top(),
-        egui::Align2::RIGHT_TOP,
+        rect.left_top(),
+        egui::Align2::LEFT_TOP,
         "LAP STATS",
         caps_font(10.0 * scale),
         DIM,
+    );
+    painter.text(
+        rect.right_top(),
+        egui::Align2::RIGHT_TOP,
+        format!("{} / {}", grid_position.0, grid_position.1),
+        egui::FontId::monospace(10.0 * scale),
+        TEXT,
     );
 
     let label_font = caps_font(8.0 * scale);

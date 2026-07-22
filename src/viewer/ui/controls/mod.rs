@@ -41,14 +41,20 @@ pub(super) fn control_deck(
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "OPTIONS"));
     ui.add_space(if compact { 6.0 } else { 9.0 });
 
-    egui::ScrollArea::vertical().show(ui, |ui| match *active_tab {
-        ControlTab::Track => track_controls(ui, state, live, compact),
-        ControlTab::Planner => planner::show(ui, state),
-        ControlTab::Opponents => opponents::show(ui, state, live),
-        ControlTab::Camera => camera::show(ui, live),
-        ControlTab::Visibility => visibility::show(ui, state, compact),
-        ControlTab::Metrics => metrics::show(ui, live),
-    });
+    let content_width = ui.available_width();
+    egui::ScrollArea::vertical()
+        .max_width(content_width)
+        .show(ui, |ui| {
+            ui.set_width(content_width);
+            match *active_tab {
+                ControlTab::Track => track_controls(ui, state, live, compact),
+                ControlTab::Planner => planner::show(ui, state),
+                ControlTab::Opponents => opponents::show(ui, state, live),
+                ControlTab::Camera => camera::show(ui, live, compact, content_width),
+                ControlTab::Visibility => visibility::show(ui, state, compact, content_width),
+                ControlTab::Metrics => metrics::show(ui, live),
+            }
+        });
 }
 
 impl ControlTab {

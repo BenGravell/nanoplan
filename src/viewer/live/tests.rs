@@ -77,11 +77,20 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
         smooth: false,
     };
 
-    camera.reset(Vec2::new(3.0, 4.0));
+    let ego = State {
+        x: 3.0,
+        y: 4.0,
+        yaw: 0.7,
+        ..Default::default()
+    };
+    camera.reset(ego);
 
-    assert_eq!(camera.center, Vec2::new(3.0, 4.0));
+    assert_eq!(camera.center, screen::px(&ego));
     assert_eq!(camera.zoom, DEFAULT_ZOOM);
-    assert_eq!(camera.rotation, 0.0);
+    assert_eq!(
+        camera.rotation,
+        ego.yaw as f32 - std::f32::consts::FRAC_PI_2
+    );
     assert!(camera.follow);
     assert!(camera.align_heading);
     assert!(camera.smooth);
@@ -185,6 +194,11 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
     assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);
     assert_eq!(live.previous.ego.yaw, track_yaw);
+    assert_eq!(
+        live.camera.rotation,
+        track_yaw as f32 - std::f32::consts::FRAC_PI_2
+    );
+    assert_eq!(live.camera.center, screen::px(&live.world.ego()));
     assert_eq!(live.acc, 0.0);
 }
 
@@ -211,4 +225,46 @@ fn regenerating_resets_lap_stats() {
 
     assert_eq!(live.lap_stats.current_s, 0.0);
     assert_eq!(live.lap_stats.completed, 0);
+}
+
+#[test]
+fn changing_actor_count_preserves_world_progress_and_camera() {
+    let mut live = Live::default();
+    live.world.tick_recording_latency(&live.recorder);
+    live.lap_stats.current_s = 12.0;
+    live.camera = CameraState {
+        center: Vec2::new(123.0, 456.0),
+        zoom: 2.0,
+        rotation: 0.7,
+        follow: false,
+        align_heading: false,
+        smooth: false,
+    };
+    let ego = live.world.ego();
+    let progress = live.world.track_progress;
+    let camera = live.camera;
+    let ego_position = live.world.grid_position().0;
+
+    live.set_actor_count(8);
+
+    assert_eq!(live.world.actors.len(), 8);
+    assert_eq!(live.world.grid_position(), (ego_position, 9));
+    assert_eq!(live.world.ego(), ego);
+    assert_eq!(live.world.track_progress, progress);
+    assert_eq!(live.lap_stats.current_s, 12.0);
+    assert_eq!(live.camera.center, camera.center);
+    assert_eq!(live.camera.zoom, camera.zoom);
+    assert_eq!(live.camera.rotation, camera.rotation);
+    assert_eq!(live.camera.follow, camera.follow);
+    assert_eq!(live.camera.align_heading, camera.align_heading);
+    assert_eq!(live.camera.smooth, camera.smooth);
+
+    live.set_actor_count(5);
+
+    assert_eq!(live.world.actors.len(), 5);
+    assert_eq!(live.world.grid_position(), (ego_position, 6));
+    assert_eq!(live.world.ego(), ego);
+    assert_eq!(live.world.track_progress, progress);
+    assert_eq!(live.lap_stats.current_s, 12.0);
+    assert_eq!(live.camera.center, camera.center);
 }

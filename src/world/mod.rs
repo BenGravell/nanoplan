@@ -3,7 +3,7 @@
 use web_time::Instant;
 
 use crate::common::rng::Rng;
-use crate::geometry::CAR_FOOTPRINT;
+use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::{
     Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
@@ -138,6 +138,66 @@ impl LiveWorld {
         }
     }
 
+    pub(crate) fn set_actor_count(&mut self, seed: u64, actor_count: usize) {
+        let actor_count = actor_count.min(15);
+        while self.actors.len() > actor_count {
+            let least_progress = self
+                .actors
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.track_x.total_cmp(&b.track_x))
+                .map(|(index, _)| index)
+                .expect("non-empty traffic has a least-progress racer");
+            self.actors.remove(least_progress);
+        }
+
+        let mut slot = 0;
+        while self.actors.len() < actor_count {
+            let next_id = (0..)
+                .find(|id| self.actors.iter().all(|actor| actor.id != *id))
+                .expect("there is always another actor id");
+            let x = loop {
+                let offset = -45.0 * (slot + 1) as f64;
+                slot += 1;
+                let candidate = self.track_progress + offset;
+                if self
+                    .actors
+                    .iter()
+                    .all(|actor| (actor.track_x - candidate).abs() > ACTOR_MARGIN_M)
+                {
+                    break candidate;
+                }
+            };
+            let mut rng = Rng(seed.max(1));
+            for _ in 0..next_id * 4 {
+                rng.uniform();
+            }
+            let personality = Personality {
+                aggressiveness: rng.uniform(),
+                sloppiness: rng.uniform(),
+            };
+            let mut actor_rng = Rng(rng.0.max(1));
+            let lateral =
+                lateral_target(personality, self.track.half_width(x), actor_rng.uniform());
+            let (p, yaw) = self.track.pose(x);
+            self.actors.push(SmartActor {
+                id: next_id,
+                state: State {
+                    x: p[0] - lateral * yaw.sin(),
+                    y: p[1] + lateral * yaw.cos(),
+                    yaw,
+                    speed: 5.0 + 4.0 * rng.uniform(),
+                },
+                personality,
+                track_x: x,
+                lateral,
+                lateral_target: lateral,
+                next_wander_x: x + 15.0 + 25.0 * actor_rng.uniform(),
+                rng: actor_rng,
+            });
+        }
+    }
+
     pub(crate) fn actuation(&self) -> Control {
         self.simulator.actuation()
     }
@@ -148,6 +208,21 @@ impl LiveWorld {
 
     pub(crate) fn dt(&self) -> f64 {
         self.simulator.dt
+    }
+
+    /// Ego's race position and the total number of racers.
+    pub(crate) fn grid_position(&self) -> (usize, usize) {
+        let ego_progress =
+            racer_progress(&self.track, self.ego(), EGO_FOOTPRINT, self.track_progress);
+        let ahead = self
+            .actors
+            .iter()
+            .filter(|actor| {
+                racer_progress(&self.track, actor.state, CAR_FOOTPRINT, actor.track_x)
+                    > ego_progress
+            })
+            .count();
+        (ahead + 1, self.actors.len() + 1)
     }
 
     pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) {
@@ -328,6 +403,15 @@ impl LiveWorld {
     }
 }
 
+fn racer_progress(track: &Track, state: State, footprint: Footprint, hint: f64) -> f64 {
+    footprint
+        .corners(state.pose())
+        .into_iter()
+        .map(|corner| track.project_progress(corner, hint))
+        .max_by(f64::total_cmp)
+        .expect("a car footprint always has corners")
+}
+
 fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64 {
     let room = (half_width - CAR_FOOTPRINT.width / 2.0 - 0.3).max(0.0);
     let timid_bias = -0.65 * (1.0 - personality.aggressiveness).powi(2) * room;
@@ -366,8 +450,6 @@ fn timed<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::EGO_FOOTPRINT;
-
     #[test]
     fn world_keeps_driving_without_a_route_or_goal() {
         let mut world = LiveWorld::with_track(0, 1, PlannerKind::BezierToppra, 0, 0.1);
@@ -376,6 +458,62 @@ mod tests {
         }
         assert!(world.track_progress > 5.0);
         assert!(world.road.centerline().len() > 10);
+    }
+
+    #[test]
+    fn grid_position_ranks_ego_against_every_racer() {
+        let world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 2, 0.1);
+
+        assert_eq!(world.grid_position(), (2, 3));
+    }
+
+    #[test]
+    fn racer_progress_uses_the_farthest_corner() {
+        let world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
+        let state = world.ego();
+        let corner_progress = CAR_FOOTPRINT
+            .corners(state.pose())
+            .map(|corner| world.track.project_progress(corner, 0.0));
+
+        assert_eq!(
+            racer_progress(&world.track, state, EGO_FOOTPRINT, 0.0),
+            corner_progress.into_iter().max_by(f64::total_cmp).unwrap()
+        );
+        assert!(racer_progress(&world.track, state, EGO_FOOTPRINT, 0.0) > world.track_progress);
+    }
+
+    #[test]
+    fn resizing_traffic_removes_the_farthest_behind_and_adds_only_behind() {
+        let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 5, 0.1);
+        let ego_position = world.grid_position().0;
+        let least_progress_id = world
+            .actors
+            .iter()
+            .min_by(|a, b| a.track_x.total_cmp(&b.track_x))
+            .unwrap()
+            .id;
+
+        world.set_actor_count(1, 4);
+
+        assert_eq!(world.grid_position(), (ego_position, 5));
+        assert!(
+            world
+                .actors
+                .iter()
+                .all(|actor| actor.id != least_progress_id)
+        );
+        let retained_ids: Vec<_> = world.actors.iter().map(|actor| actor.id).collect();
+
+        world.set_actor_count(1, 7);
+
+        assert_eq!(world.grid_position(), (ego_position, 8));
+        assert!(
+            world
+                .actors
+                .iter()
+                .filter(|actor| !retained_ids.contains(&actor.id))
+                .all(|actor| actor.track_x < world.track_progress)
+        );
     }
 
     #[test]

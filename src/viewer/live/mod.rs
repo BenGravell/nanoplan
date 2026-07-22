@@ -19,9 +19,8 @@ pub(crate) use drawing::{
 };
 use rendering::RenderSnapshot;
 pub(crate) use rendering::draw;
-use screen::px;
 
-const DEFAULT_ACTORS: usize = 12;
+const DEFAULT_ACTORS: usize = 5;
 const MAX_TICKS_PER_FRAME: usize = 3;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
 
@@ -96,7 +95,12 @@ impl Live {
     }
 
     pub(crate) fn reset_camera(&mut self) {
-        self.camera.reset(px(&self.world.ego()));
+        self.camera.reset(self.world.ego());
+    }
+
+    pub(crate) fn set_actor_count(&mut self, actor_count: usize) {
+        self.world.set_actor_count(self.seed, actor_count);
+        self.reset_render_history();
     }
 
     pub(crate) fn toggle_pause(&mut self) {
@@ -139,11 +143,10 @@ impl Default for Live {
         let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         let lap_stats = LapStats::new(world.track.lap_length());
+        let mut camera = CameraState::default();
+        camera.reset(world.ego());
         Self {
-            camera: CameraState {
-                center: px(&world.ego()),
-                ..Default::default()
-            },
+            camera,
             world,
             seed: 1,
             paused: false,
