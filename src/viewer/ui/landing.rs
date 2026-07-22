@@ -3,6 +3,7 @@ use bevy_egui::egui;
 use super::super::colors::{ORANGE, SURFACE, WHITE};
 
 const BACKGROUND_ASPECT_RATIO: f32 = 16.0 / 9.0;
+const BOTTOM_LEFT_MIN_ASPECT_RATIO: f32 = 31.0 / 20.0;
 const TITLE_ASPECT_RATIO: f32 = 146.65262 / 23.909071;
 const MENU_ITEMS: [&str; 3] = ["Start", "Tutorial", "Exit"];
 const MENU_INACTIVE: egui::Color32 = egui::Color32::from_rgb(171, 180, 193);
@@ -167,28 +168,57 @@ pub(super) fn background_rect(screen: egui::Rect, anchor: egui::Align2) -> egui:
 }
 
 fn background_graphics(ui: &egui::Ui) {
-    for (image, anchor) in [
-        (
-            egui::Image::new(egui::include_image!(
-                "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
-            )),
-            egui::Align2::RIGHT_BOTTOM,
-        ),
-        (
+    paint_svg(
+        ui,
+        egui::Image::new(egui::include_image!(
+            "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
+        )),
+        background_rect(ui.max_rect(), egui::Align2::RIGHT_BOTTOM),
+    );
+    if show_bottom_left(ui.max_rect().size()) {
+        paint_svg(
+            ui,
             egui::Image::new(egui::include_image!(
                 "../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
             )),
-            egui::Align2::LEFT_BOTTOM,
-        ),
-        (
-            egui::Image::new(egui::include_image!(
-                "../../../assets/landing/nanoplan_bkgd_tp_lf_corner.svg"
-            )),
-            egui::Align2::LEFT_TOP,
-        ),
-    ] {
-        paint_svg(ui, image, background_rect(ui.max_rect(), anchor));
+            background_rect(ui.max_rect(), egui::Align2::LEFT_BOTTOM),
+        );
     }
+    paint_svg(
+        ui,
+        egui::Image::new(egui::include_image!(
+            "../../../assets/landing/nanoplan_bkgd_tp_lf_corner.svg"
+        )),
+        background_rect(ui.max_rect(), egui::Align2::LEFT_TOP),
+    );
+}
+
+pub(super) fn show_bottom_left(size: egui::Vec2) -> bool {
+    size.x / size.y >= BOTTOM_LEFT_MIN_ASPECT_RATIO
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) enum BottomCorner {
+    Left,
+    Right,
+}
+
+#[cfg(test)]
+pub(super) fn paint_bottom_corner(ui: &egui::Ui, corner: BottomCorner) {
+    let image = match corner {
+        BottomCorner::Left => egui::Image::new(egui::include_image!(
+            "../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
+        )),
+        BottomCorner::Right => egui::Image::new(egui::include_image!(
+            "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
+        )),
+    };
+    paint_svg(
+        ui,
+        image,
+        background_rect(ui.max_rect(), egui::Align2::LEFT_TOP),
+    );
 }
 
 pub(super) fn title_rect(screen: egui::Rect) -> egui::Rect {

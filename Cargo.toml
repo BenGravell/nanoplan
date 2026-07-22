@@ -65,7 +65,7 @@ ureq = "3.3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 gloo-net = { version = "0.7", default-features = false, features = ["http"] }
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Storage", "Window"] }
+web-sys = { version = "0.3", features = ["Navigator", "Storage", "Window"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.35", features = ["wgpu"] }

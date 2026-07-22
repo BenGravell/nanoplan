@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
 use super::live::Live;
-use super::{DrivingCanvas, UiState, viewport_supported};
+use super::{DrivingCanvas, UiState, viewport_constraints};
 
 pub(crate) mod controls;
 mod hud;
@@ -43,8 +43,10 @@ pub(crate) fn ui(
         "viewer_ui".into(),
         egui::UiBuilder::new().max_rect(ctx.content_rect()),
     );
-    if !viewport_supported(root.max_rect().width(), root.max_rect().height()) {
-        portrait_prompt::show(&mut root);
+    let viewport_constraints =
+        viewport_constraints(root.max_rect().width(), root.max_rect().height());
+    if !viewport_constraints.satisfied() {
+        portrait_prompt::show(&mut root, is_mobile_device(), viewport_constraints);
         ctx.request_repaint();
         return;
     }
@@ -72,6 +74,29 @@ pub(crate) fn ui(
     ));
 }
 
+#[cfg(not(target_family = "wasm"))]
+fn is_mobile_device() -> bool {
+    false
+}
+
+#[cfg(target_family = "wasm")]
+fn is_mobile_device() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let navigator = window.navigator();
+    let user_agent = navigator
+        .user_agent()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    user_agent.contains("android")
+        || user_agent.contains("iphone")
+        || user_agent.contains("ipad")
+        || user_agent.contains("ipod")
+        || user_agent.contains("mobile")
+        || (user_agent.contains("macintosh") && navigator.max_touch_points() > 1)
+}
+
 fn request_exit(app_exit: &mut MessageWriter<AppExit>) {
     #[cfg(target_family = "wasm")]
     if let Some(window) = web_sys::window() {
@@ -90,13 +115,14 @@ fn viewer_layout(
     let viewport = canvas.size();
     let compact = compact_layout(viewport);
     let (left_width, right_width) = side_rail_widths(viewport);
+    let side_margin = side_panel_margin(viewport);
 
     let mut right_overlay = overlay_root(root, "visualization_overlay");
     visualization_rail(&mut right_overlay, live, right_width, compact);
 
     let frame = egui::Frame::new()
         .fill(SIDE_PANEL)
-        .inner_margin(egui::Margin::same(if compact { 10 } else { 16 }));
+        .inner_margin(egui::Margin::same(side_margin));
     let mut left_overlay = overlay_root(root, "control_overlay");
     egui::Panel::left("control_deck")
         .exact_size(left_width)
@@ -189,6 +215,16 @@ fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compac
 fn side_rail_widths(viewport: egui::Vec2) -> (f32, f32) {
     let width = viewport.y * 0.375;
     (width, width)
+}
+
+fn side_panel_margin(viewport: egui::Vec2) -> i8 {
+    if !compact_layout(viewport) {
+        16
+    } else if viewport.y <= 320.0 {
+        6
+    } else {
+        10
+    }
 }
 
 fn compact_layout(viewport: egui::Vec2) -> bool {

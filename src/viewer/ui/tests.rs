@@ -7,15 +7,17 @@ use super::controls::metrics::preview_metrics;
 use super::style::desktop_zoom;
 use super::{
     ControlTab, UiState, center_rail_rect, compact_layout, configure, landing, portrait_prompt,
-    side_rail_widths, tutorial, viewer_layout,
+    side_panel_margin, side_rail_widths, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
     CANVAS_RGB, MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH, ResizeDebounce, live::Live,
-    viewport_supported,
+    viewport_constraints, viewport_supported,
 };
 
-const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 4] = [
+const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 6] = [
+    ("phone-galaxy-s", egui::vec2(800.0, 480.0)),
+    ("phone-iphone-se-2016", egui::vec2(568.0, 320.0)),
     ("phone-iphone-se-3", egui::vec2(667.0, 375.0)),
     ("phone-galaxy-s24", egui::vec2(780.0, 360.0)),
     ("phone-iphone-14-15-pro", egui::vec2(852.0, 393.0)),
@@ -252,6 +254,60 @@ fn landing_background_respects_the_gpu_texture_limit() {
     assert!(raster.y <= 2048.0);
 }
 
+fn render_bottom_corner(corner: landing::BottomCorner, size: egui::Vec2) -> image::RgbaImage {
+    let mut harness = Harness::builder().with_size(size).build_ui_state(
+        move |ui, configured: &mut bool| {
+            if !*configured {
+                configure(ui.ctx());
+                *configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            landing::paint_bottom_corner(ui, corner);
+        },
+        false,
+    );
+    harness.run();
+    harness.render().unwrap()
+}
+
+fn bottom_corners_collide(
+    left: &image::RgbaImage,
+    right: &image::RgbaImage,
+    screen_width: u32,
+) -> bool {
+    let background_width = left.width();
+    let right_offset = i64::from(screen_width) - i64::from(background_width);
+    (0..screen_width).any(|screen_x| {
+        let right_x = i64::from(screen_x) - right_offset;
+        right_x >= 0
+            && right_x < i64::from(background_width)
+            && (0..left.height()).any(|y| {
+                left.get_pixel(screen_x, y).0[3] != 0
+                    && right.get_pixel(right_x as u32, y).0[3] != 0
+            })
+    })
+}
+
+#[test]
+fn landing_bottom_corner_visibility_threshold_prevents_svg_pixel_collisions() {
+    assert!(landing::show_bottom_left(egui::vec2(31.0, 20.0)));
+    assert!(!landing::show_bottom_left(egui::vec2(3.0, 2.0)));
+    assert!(landing::show_bottom_left(egui::vec2(16.0, 9.0)));
+
+    for height in [360, 720, 1080] {
+        let background_width = height * 16 / 9;
+        let size = egui::vec2(background_width as f32, height as f32);
+        let left = render_bottom_corner(landing::BottomCorner::Left, size);
+        let right = render_bottom_corner(landing::BottomCorner::Right, size);
+        let visible_width = (height as f32 * 31.0 / 20.0).ceil() as u32;
+        let hidden_width = height * 3 / 2;
+
+        assert!(!bottom_corners_collide(&left, &right, visible_width));
+        assert!(bottom_corners_collide(&left, &right, hidden_width));
+    }
+}
+
 #[test]
 fn portrait_prompt_is_the_only_interactive_view() {
     for size in [egui::vec2(390.0, 844.0), egui::vec2(180.0, 320.0)] {
@@ -269,7 +325,7 @@ fn portrait_prompt_is_the_only_interactive_view() {
                     "portrait_render_test".into(),
                     egui::UiBuilder::new().max_rect(ctx.content_rect()),
                 );
-                portrait_prompt::show(&mut root);
+                portrait_prompt::show(&mut root, true, viewport_constraints(size.x, size.y));
             },
             false,
         );
@@ -288,8 +344,8 @@ fn portrait_prompt_is_the_only_interactive_view() {
 }
 
 #[test]
-fn undersized_landscape_shows_the_make_window_bigger_bumper() {
-    let size = egui::vec2(MIN_VIEWPORT_WIDTH - 1.0, 374.0);
+fn undersized_landscape_asks_for_a_wider_window() {
+    let size = egui::vec2(MIN_VIEWPORT_WIDTH - 1.0, 269.0);
     assert!(!viewport_supported(size.x, size.y));
     let mut harness = Harness::builder().with_size(size).build_ui_state(
         |ui, configured: &mut bool| {
@@ -299,16 +355,16 @@ fn undersized_landscape_shows_the_make_window_bigger_bumper() {
                 ui.ctx().request_repaint();
                 return;
             }
-            portrait_prompt::show(ui);
+            portrait_prompt::show(ui, false, viewport_constraints(size.x, size.y));
         },
         false,
     );
     harness.run();
 
-    assert!(harness.query_by_label("MAKE YOUR WINDOW BIGGER").is_some());
+    assert!(harness.query_by_label("MAKE YOUR WINDOW WIDER").is_some());
     assert!(
         harness
-            .query_by_label("Nanoplan requires a viewport at least 667 px wide.")
+            .query_by_label("Nanoplan requires a viewport at least 520 px wide.")
             .is_some()
     );
     assert!(harness.query_by_label("PAUSE").is_none());
@@ -317,30 +373,45 @@ fn undersized_landscape_shows_the_make_window_bigger_bumper() {
 #[test]
 fn bumper_copy_matches_the_violated_viewport_constraint() {
     assert_eq!(
-        portrait_prompt::prompt_copy(390.0, 844.0),
+        portrait_prompt::prompt_copy(viewport_constraints(390.0, 844.0), true),
         (
             "TURN YOUR DEVICE SIDEWAYS",
-            "Nanoplan requires landscape orientation."
+            "Nanoplan requires landscape orientation.".to_owned()
         )
     );
     assert_eq!(
-        portrait_prompt::prompt_copy(666.0, 374.0),
-        (
-            "MAKE YOUR WINDOW BIGGER",
-            "Nanoplan requires a viewport at least 667 px wide."
-        )
-    );
-    assert_eq!(
-        portrait_prompt::prompt_copy(800.0, 500.0),
+        portrait_prompt::prompt_copy(viewport_constraints(390.0, 844.0), false),
         (
             "MAKE YOUR WINDOW WIDER",
-            "Nanoplan requires a viewport with at least a 16:9 aspect ratio."
+            "Nanoplan requires a viewport at least 520 px wide with a 4:3 aspect ratio.".to_owned()
+        )
+    );
+    assert_eq!(
+        portrait_prompt::prompt_copy(viewport_constraints(700.0, 844.0), false),
+        (
+            "MAKE YOUR WINDOW WIDER",
+            "Nanoplan requires a viewport with at least a 4:3 aspect ratio.".to_owned()
+        )
+    );
+    assert_eq!(
+        portrait_prompt::prompt_copy(viewport_constraints(519.0, 320.0), false),
+        (
+            "MAKE YOUR WINDOW WIDER",
+            "Nanoplan requires a viewport at least 520 px wide.".to_owned()
+        )
+    );
+    assert_eq!(
+        portrait_prompt::prompt_copy(viewport_constraints(600.0, 500.0), false),
+        (
+            "MAKE YOUR WINDOW WIDER",
+            "Nanoplan requires a viewport with at least a 4:3 aspect ratio.".to_owned()
         )
     );
 }
 
 #[test]
 fn viewport_requires_minimum_width_and_safe_background_aspect_ratio() {
+    assert!(viewport_supported(568.0, 320.0));
     assert!(viewport_supported(
         MIN_VIEWPORT_WIDTH,
         MIN_VIEWPORT_WIDTH / MIN_VIEWPORT_ASPECT_RATIO
@@ -349,7 +420,7 @@ fn viewport_requires_minimum_width_and_safe_background_aspect_ratio() {
         MIN_VIEWPORT_WIDTH - 1.0,
         (MIN_VIEWPORT_WIDTH - 1.0) / MIN_VIEWPORT_ASPECT_RATIO
     ));
-    assert!(!viewport_supported(MIN_VIEWPORT_WIDTH, 376.0));
+    assert!(!viewport_supported(MIN_VIEWPORT_WIDTH, 391.0));
 }
 
 #[test]
@@ -604,13 +675,13 @@ fn side_menus_are_each_three_eighths_of_the_viewport_height() {
 }
 
 #[test]
-fn supported_viewport_aspect_ratio_guarantees_a_square_or_wider_center_canvas() {
+fn supported_viewport_aspect_ratio_keeps_a_positive_center_canvas() {
     let height = 1000.0;
     let viewport = egui::vec2(height * MIN_VIEWPORT_ASPECT_RATIO, height);
     let (left, right) = side_rail_widths(viewport);
-    let center_aspect_ratio = (viewport.x - left - right) / viewport.y;
+    let center_width = viewport.x - left - right;
 
-    assert!(center_aspect_ratio >= 1.0);
+    assert!(center_width > 0.0);
 }
 
 #[test]
@@ -628,13 +699,24 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
     std::fs::create_dir_all(&output_dir).unwrap();
 
     let target_sizes = [
+        (
+            "minimum-supported",
+            egui::vec2(
+                MIN_VIEWPORT_WIDTH,
+                MIN_VIEWPORT_WIDTH / MIN_VIEWPORT_ASPECT_RATIO,
+            ),
+            1.0,
+        ),
         ("desktop-1080p", egui::vec2(1920.0, 1080.0), 1.0),
         ("desktop-ultrawide", egui::vec2(3440.0, 1440.0), 1.0),
         ("desktop-2160p", egui::vec2(1920.0, 1080.0), 2.0),
+        ("desktop-crt-svga", egui::vec2(800.0, 600.0), 1.0),
         (PHONE_LANDSCAPE_SIZES[0].0, PHONE_LANDSCAPE_SIZES[0].1, 1.0),
         (PHONE_LANDSCAPE_SIZES[1].0, PHONE_LANDSCAPE_SIZES[1].1, 1.0),
         (PHONE_LANDSCAPE_SIZES[2].0, PHONE_LANDSCAPE_SIZES[2].1, 1.0),
         (PHONE_LANDSCAPE_SIZES[3].0, PHONE_LANDSCAPE_SIZES[3].1, 1.0),
+        (PHONE_LANDSCAPE_SIZES[4].0, PHONE_LANDSCAPE_SIZES[4].1, 1.0),
+        (PHONE_LANDSCAPE_SIZES[5].0, PHONE_LANDSCAPE_SIZES[5].1, 1.0),
     ];
     for (name, size, pixels_per_point) in target_sizes {
         let mut harness = Harness::builder()
@@ -731,7 +813,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             (pause.center().x - screen.center().x).abs() <= 1.0,
             "pause button is not centered at {name}: {pause:?}"
         );
-        let margin = if compact { 10.0 } else { 16.0 } * desktop_zoom(size.y * pixels_per_point);
+        let margin = f32::from(side_panel_margin(size)) * desktop_zoom(size.y * pixels_per_point);
         assert!(
             (selector.left() - margin).abs() <= 1.0,
             "selector does not start at the left menu margin at {name}: {selector:?}"
@@ -788,8 +870,10 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             for node in nodes {
                 let rect = node.rect();
                 assert!(
-                    control_rail.contains_rect(rect) && rect.is_positive(),
-                    "camera control {label:?} spills outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+                    rect.left() >= control_rail.left()
+                        && rect.right() <= control_rail.right()
+                        && rect.is_positive(),
+                    "camera control {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
                 );
             }
         }

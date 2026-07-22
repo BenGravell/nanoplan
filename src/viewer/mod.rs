@@ -25,8 +25,23 @@ use colors::NON_DRIVABLE_RGB;
 pub(crate) const DT: f64 = 0.1;
 const VIEW_MSAA: Msaa = Msaa::Sample4;
 const RESIZE_DEBOUNCE_SECONDS: f32 = 0.2;
-pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 667.0;
-pub(crate) const MIN_VIEWPORT_ASPECT_RATIO: f32 = 16.0 / 9.0;
+pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 520.0;
+pub(crate) const MIN_VIEWPORT_ASPECT_WIDTH: u8 = 4;
+pub(crate) const MIN_VIEWPORT_ASPECT_HEIGHT: u8 = 3;
+pub(crate) const MIN_VIEWPORT_ASPECT_RATIO: f32 =
+    MIN_VIEWPORT_ASPECT_WIDTH as f32 / MIN_VIEWPORT_ASPECT_HEIGHT as f32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ViewportConstraints {
+    pub(crate) has_minimum_width: bool,
+    pub(crate) has_minimum_aspect_ratio: bool,
+}
+
+impl ViewportConstraints {
+    pub(crate) fn satisfied(self) -> bool {
+        self.has_minimum_width && self.has_minimum_aspect_ratio
+    }
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct DrivingCanvas {
@@ -299,5 +314,12 @@ fn driving(window: Single<&Window>, state: Res<UiState>) -> bool {
 }
 
 fn viewport_supported(width: f32, height: f32) -> bool {
-    width >= MIN_VIEWPORT_WIDTH && width / height >= MIN_VIEWPORT_ASPECT_RATIO
+    viewport_constraints(width, height).satisfied()
+}
+
+pub(crate) fn viewport_constraints(width: f32, height: f32) -> ViewportConstraints {
+    ViewportConstraints {
+        has_minimum_width: width >= MIN_VIEWPORT_WIDTH,
+        has_minimum_aspect_ratio: width / height >= MIN_VIEWPORT_ASPECT_RATIO,
+    }
 }
