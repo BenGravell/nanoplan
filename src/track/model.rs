@@ -11,6 +11,7 @@ use super::loader::{REVISION, SOURCE};
 pub(crate) const SAMPLE_COUNT: usize = 256;
 const MAX_ATTEMPTS: usize = 64;
 const CURVATURE_WIDTH_BUFFER_M: f64 = 0.25;
+const MAX_WIDTH_SLOPE: f64 = 0.25;
 const MIN_GENERATED_HALF_WIDTH_M: f64 = 2.5;
 const COEFFICIENT_COUNT: usize = SAMPLE_COUNT / 2 + 1;
 const MODEL: &str = include_str!("trained_model.json");
@@ -193,7 +194,11 @@ fn signed_curvature(points: &[[f64; 2]]) -> Vec<f64> {
 }
 
 pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64], left: &mut [f64]) {
-    for ((curvature, right), left) in signed_curvature(points).into_iter().zip(right).zip(left) {
+    for ((curvature, right), left) in signed_curvature(points)
+        .into_iter()
+        .zip(right.iter_mut())
+        .zip(left.iter_mut())
+    {
         let inner_limit = 1.0 / curvature.abs().max(1e-9) - CURVATURE_WIDTH_BUFFER_M;
         if curvature > 0.0 {
             *left = left.min(inner_limit);
@@ -201,6 +206,22 @@ pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64],
             *right = right.min(inner_limit);
         }
     }
+    limit_width_slope(points, right);
+    limit_width_slope(points, left);
+}
+
+fn limit_width_slope(points: &[[f64; 2]], widths: &mut [f64]) {
+    let n = widths.len();
+    let mut smooth = (0..3 * n).map(|i| widths[i % n]).collect::<Vec<_>>();
+    for i in 1..smooth.len() {
+        let step = distance(points[(i - 1) % n], points[i % n]);
+        smooth[i] = smooth[i].min(smooth[i - 1] + MAX_WIDTH_SLOPE * step);
+    }
+    for i in (0..smooth.len() - 1).rev() {
+        let step = distance(points[i % n], points[(i + 1) % n]);
+        smooth[i] = smooth[i].min(smooth[i + 1] + MAX_WIDTH_SLOPE * step);
+    }
+    widths.copy_from_slice(&smooth[n..2 * n]);
 }
 
 #[cfg(test)]
@@ -440,6 +461,26 @@ mod tests {
 
         assert_eq!(right, vec![20.0; 8]);
         assert!(left.iter().all(|width| *width < 10.0));
+    }
+
+    #[test]
+    fn curvature_width_caps_change_smoothly_between_stations() {
+        let points = (0..8)
+            .map(|i| {
+                let angle = TAU * i as f64 / 8.0;
+                [10.0 * angle.cos(), 10.0 * angle.sin()]
+            })
+            .collect::<Vec<_>>();
+        let mut widths = vec![10.0; points.len()];
+        widths[3] = 2.0;
+
+        limit_width_slope(&points, &mut widths);
+
+        assert!((0..points.len()).all(|i| {
+            let next = (i + 1) % points.len();
+            (widths[next] - widths[i]).abs()
+                <= MAX_WIDTH_SLOPE * distance(points[i], points[next]) + 1e-12
+        }));
     }
 
     #[test]

@@ -17,7 +17,7 @@ pub(crate) use road::Road;
 pub(crate) use track::{GENERATED_TRACK_NAME, Track};
 
 /// Shared sampling grid for rendered and physical road boundaries.
-pub(crate) const ROAD_SAMPLE_STEP_M: f64 = 5.0;
+pub(crate) const ROAD_SAMPLE_STEP_M: f64 = 1.0;
 
 #[cfg(test)]
 mod tests {

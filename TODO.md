@@ -45,11 +45,6 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 This works for static obstacles.
 
 
-## road geometry
-
-Centerlines are very coarsely discretized currently, which leads to obvious polygon-ing around high curvature corners.
-As a pre-process step at track generation time, fit a cubic spline through all of the known anchor points (raw track data), then sub-sample them with fairly fine ~1m spacing. End result is still a polygon, but with more points coming from a smooth curve.
-
 ## UX
 
 -- New flow for driving startup.
