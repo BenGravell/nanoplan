@@ -24,9 +24,14 @@ pub(crate) struct Sample {
     pub(crate) xy: [f64; 2],
     /// Signed Frenet offset from the centerline.
     pub(crate) lateral: f64,
+    /// Local signed road bounds when the planner retains varying widths.
+    pub(crate) road_bounds: Option<(f64, f64)>,
     /// Signed heading error from the lane direction at this point.
     pub(crate) heading_err: f64,
     pub(crate) speed: f64,
+    /// Frenet station rate when the planner tracks it directly. Geometry-only
+    /// planners leave this unset and use the heading-projected speed.
+    pub(crate) station_speed: Option<f64>,
     pub(crate) lon_jerk: f64,
     pub(crate) lat_jerk: f64,
     /// Seconds from now this sample is reached, for actor prediction.
@@ -47,11 +52,17 @@ struct DrivableArea {
 
 impl HardConstraint for DrivableArea {
     fn is_violated(&self, sample: &Sample) -> bool {
-        sample.lateral.abs() > self.half_width
+        let (right, left) = sample
+            .road_bounds
+            .unwrap_or((-self.half_width, self.half_width));
+        sample.lateral < right || sample.lateral > left
     }
 
     fn violation_depth(&self, sample: &Sample) -> f64 {
-        (sample.lateral.abs() - self.half_width).max(0.0)
+        let (right, left) = sample
+            .road_bounds
+            .unwrap_or((-self.half_width, self.half_width));
+        (right - sample.lateral).max(0.0) + (sample.lateral - left).max(0.0)
     }
 }
 
@@ -130,7 +141,9 @@ impl<'a> HardConstraints<'a> {
         if self.drivable.is_violated(sample) || self.collision.is_violated_at(sample, actor_time) {
             return f64::INFINITY;
         }
-        let forward_speed = sample.speed * sample.heading_err.cos();
+        let forward_speed = sample
+            .station_speed
+            .unwrap_or(sample.speed * sample.heading_err.cos());
         let tick = (sample.t / self.dt).round().max(0.0) as usize;
         let scores = [
             1.0,

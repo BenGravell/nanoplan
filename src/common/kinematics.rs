@@ -81,6 +81,12 @@ pub(crate) fn net_longitudinal_accel(thrust_accel: f64, speed: f64) -> f64 {
     thrust_accel - longitudinal_resistance_accel(speed)
 }
 
+/// Requested thrust/braking acceleration needed to produce `net_accel`
+/// after passive resistance is applied.
+pub(crate) fn commanded_accel_for_net(net_accel: f64, speed: f64) -> f64 {
+    net_accel + longitudinal_resistance_accel(speed)
+}
+
 /// State curvature bound for a given speed.
 pub(crate) fn curvature_limit(speed: f64) -> f64 {
     MAX_ABS_CURVATURE.min(curvature_from_lateral_acceleration(
@@ -183,6 +189,15 @@ mod tests {
         assert!(longitudinal_resistance_accel(terminal * 0.5) < MAX_LON_ACCEL);
         assert!(longitudinal_resistance_accel(terminal * 1.2) > MAX_LON_ACCEL);
         assert!(longitudinal_resistance_accel(-10.0) < 0.0);
+    }
+
+    #[test]
+    fn commanded_and_net_longitudinal_acceleration_round_trip() {
+        let speed = 30.0;
+        for net_accel in [-5.0, 0.0, 4.0] {
+            let commanded = commanded_accel_for_net(net_accel, speed);
+            assert_eq!(net_longitudinal_accel(commanded, speed), net_accel);
+        }
     }
 
     #[test]

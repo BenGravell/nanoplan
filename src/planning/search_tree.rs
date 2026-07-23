@@ -10,7 +10,6 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::common::differencing::forward_difference;
-use crate::common::math::wrap_angle;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
 use crate::simulation::{Control, State, world_step};
@@ -270,39 +269,6 @@ pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Contex
                 curvature,
             };
             x = world_step(x, u, dt);
-            u
-        })
-        .collect()
-}
-
-/// Turn a sampled position trajectory (spaced `dt` apart, starting one tick
-/// after the ego) into controls for the kinematic model.
-pub(crate) fn xy_to_controls(ego: State, pts: &[[f64; 2]], dt: f64) -> Vec<Control> {
-    let mut v = ego.speed;
-    let mut yaw = ego.yaw;
-    let mut prev = [ego.x, ego.y];
-    let mut x = ego;
-    pts.iter()
-        .map(|&p| {
-            let ds = dist(p, prev);
-            let new_v = ds / dt;
-            let new_yaw = if ds > 1e-6 {
-                (p[1] - prev[1]).atan2(p[0] - prev[0])
-            } else {
-                yaw
-            };
-            let accel = forward_difference(v, new_v, dt);
-            let curvature = if ds > 1e-6 {
-                wrap_angle(new_yaw - yaw) / ds
-            } else {
-                0.0
-            };
-            let u = Control {
-                acceleration: accel,
-                curvature,
-            };
-            x = world_step(x, u, dt);
-            (v, yaw, prev) = (new_v, new_yaw, p);
             u
         })
         .collect()

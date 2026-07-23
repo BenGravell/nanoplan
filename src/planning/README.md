@@ -143,11 +143,6 @@ The short version:
   rendered plan state); nested seams include their children's work. These
   deterministic totals can be asserted in normal unit tests even though wall
   milliseconds cannot.
-- The ignored
-  `bezier_toppra_profiles_one_small_track_lap` test runs an optimized,
-  end-to-end lap and prints the same seam statistics for command-line
-  profiling. Its non-ignored companion asserts the exact logical clocks for
-  that lap on every test run.
 
 See each planner's section below for which custom seams it adds and why.
 
@@ -256,11 +251,9 @@ one of two ways, both compatible with that constraint:
   `CubicSteer::curvature` evaluates the curvature of a specific flat-output
   polynomial it already committed to — a geometric property of one
   candidate, not a gradient used to choose the next one.
-- **A purely numerical estimate off sampled points.** `geometry::curvature::curvature_of`
-  computes the Menger curvature of three points (twice the triangle area
-  over the product of the three side lengths) — plain arithmetic, no
-  derivative of any parametric formula. The lattice, which has no
-  closed-form curve of its own, uses this.
+- **A value recovered from a sampled trajectory.** The space-time lattice
+  derives curvature from heading change over distance along its timed
+  connector before rolling the resulting control through the plant.
 
 **What stays planner-specific.** Sampling layouts, warm starts, feasibility
 margins, and search topology remain planner-specific, but they do not add
@@ -446,62 +439,44 @@ shared lane-aware actor prediction and therefore also covers crossing traffic.
 
 `lattice/mod.rs` — `LatticePlanner`
 
-An EM/Apollo-style planner. Samples a **high-resolution** grid in the road's
-Frenet frame — `STATION_LAYERS = 16` layers spaced evenly out to
-`PLANNING_HORIZON_S = 10` s at the assumed cruise speed (`stations_m[i] = v *
-PLANNING_HORIZON_S * (i+1) / STATION_LAYERS`) crossed with `LATERALS = 17`
-lateral offsets over the usable road width, i.e. **`16 × 17 = 272` grid
-nodes** — connects consecutive layers with cubic-Hermite lateral segments,
-costs every edge with the [shared metric objective](#the-shared-metric-objective)
-per sampled point, including its hard `f64::INFINITY` reject on predicted
-collision or leaving the drivable area, and finds the cheapest path with **A\* (best-first)
-search** over the layered DAG. Curvature at each sampled point, needed for
-the comfort metric, comes from `geometry::curvature::curvature_of` — the lattice
-has no closed-form curve of its own, so it estimates curvature numerically
-off the last three sampled points.
+An EM/Apollo-style sparse **space-time** lattice. Ten one-second layers sample
+station, lateral position, and speed (`5 × 8 × 5` coordinate levels) over the
+drag-aware reachable envelope. Time is the layer index rather than another
+Cartesian-product dimension. Local station successors and neighboring
+lateral/speed levels keep the search sparse, and at most 1,000 trajectory
+segments are evaluated per planning call.
 
-**Why A\* rather than the exhaustive DP it used to run.** At this resolution
-the old layer-by-layer dynamic program — which prices *every* `L`-to-`L`
-inter-layer edge, `O(STATION_LAYERS · LATERALS²)` cost-function evaluations —
-would spend almost all its time on large, obviously-bad lateral jumps that no
-optimal path uses. Two changes keep the dense grid real-time (p95 well under
-10 ms, p100 under 50 ms on the synthetic batch):
+Every edge is a complete one-second trajectory sampled at the plant's ten
+0.1-second ticks. Cubic Frenet connectors determine position and yaw; their
+requested acceleration and curvature are rolled through `world_step`.
+Throttle/braking, curvature, lateral grip, full-footprint road containment,
+and endpoint consistency are rejected before the shared metric objective is
+called. Reachable station and speed bounds use the same rolling resistance and
+air drag as the plant. Lateral samples use interpolated local left/right road
+widths rather than the road window's minimum width.
 
-- **A\* evaluates edge costs lazily**, only for nodes it actually expands in
-  increasing cost-so-far order, and stops the moment it settles a node in the
-  final layer. All edge costs are non-negative, so that first final-layer
-  node is the global optimum — the path is identical to the DP's, only the
-  work to find it is smaller.
-- **`NEIGHBOR_SPAN` limits each edge to nearby lateral columns.** A layer is
-  only `~horizon / STATION_LAYERS` of travel, so a jump of more than a few
-  columns there is a curvature no real car has; never generating those edges
-  bounds the branching factor at no cost to path quality (the full lateral
-  range is still reachable by ramping over multiple layers).
+The layered graph is searched lazily with A* / best-first search. Edge costs
+are the nonnegative complement of the production composite metric. The
+lattice supplies its directly tracked Frenet station rate so progress reflects
+the shorter/longer path induced by corner offsets. If the edge budget is
+reached before a ten-second goal is settled, the cheapest feasible root
+segment remains a safe receding-horizon fallback; full braking is reserved for
+the case where no root segment is feasible.
 
-The path's initial segment matches the ego's *current* lateral rate (via the
-Hermite tangent `m0_first`) rather than starting flat — without this, every
-replan would restart a swerve from zero slope and the vehicle actually
-executed would lag behind the plan into the obstacle it was trying to avoid.
-This was found and fixed via the `swerves_around_stopped_obstacle` test.
-
-Speed is currently a constant profile clamped to
-`[2, target_speed]` — not car-following-coupled (see the `ponytail:` comment in the
-source for the deferred upgrade path). If every sampled path collides, the
-planner gives up and brakes straight ahead (`accel: -4.0`) rather than
-returning a bad path.
+There is deliberately **no post speed profile**. Reconstructing the winning
+parent chain simply reruns the same timed edge primitive and concatenates its
+already-priced controls. On an open straight the metric selects maximum
+throttle; through corners the coupled station/lateral/speed search trades
+track width against curvature and achievable speed.
 
 **Seams**: `route`, `optimize` (the A\* search loop) with `cost` (the shared
 cost function — nested *inside* `optimize`; it's the hot loop, called once per
 sampled point of each edge A\* expands) as a nested seam, then `extract`
 (sample the winning path into `xy_to_controls`).
 
-**Diagnostics**: each grid node A\* *expands* as a `point` (plus the tree root
-at the ego's current position), and the cubic-Hermite connector of every edge
-it evaluates, sampled at `SAMPLES_PER_SEGMENT` points, as a `trajectory` — the
-part of the search graph A\* actually explored (which, unlike the old
-exhaustive DP, is a small fraction of the full grid), not just the winning
-path (that's the separate future-preview line, always drawn regardless of the
-diagnostic overlay).
+**Diagnostics**: every feasible evaluated edge records its endpoint and its
+ten-tick actual plant rollout. The number of recorded trajectories is bounded
+by the segment-evaluation budget.
 
 ## PI2-DDP
 

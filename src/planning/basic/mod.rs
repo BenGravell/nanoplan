@@ -161,8 +161,10 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
         let sample = Sample {
             xy: x.position().into(),
             lateral,
+            road_bounds: None,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
+            station_speed: None,
             lon_jerk,
             lat_jerk,
             t: (tick + 1) as f64 * ctx.road.dt,

@@ -295,8 +295,10 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let sample = Sample {
             xy: [x.x, x.y],
             lateral: d,
+            road_bounds: None,
             heading_err: wrap_angle(x.yaw - lane_yaw),
             speed: x.speed,
+            station_speed: None,
             lon_jerk: jerk.0,
             lat_jerk: jerk.1,
             t: t as f64 * ctx.road.dt,

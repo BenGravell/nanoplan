@@ -2,7 +2,7 @@
 
 use web_time::Instant;
 
-use crate::common::kinematics::TrajectoryKinematics;
+use crate::common::kinematics::{TrajectoryKinematics, net_longitudinal_accel};
 use crate::common::rng::Rng;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::{
@@ -11,11 +11,12 @@ use crate::planning::{
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Control, DynamicBody, Simulator, State, collide_dynamic_bodies};
 use crate::track::{ROAD_SAMPLE_STEP_M, Road, Track};
-use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL};
+use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 const DEFAULT_PREVIEW_TICKS: usize = 30;
 const ROAD_BEHIND_M: f64 = 50.0;
 const ROAD_AHEAD_M: f64 = 250.0;
+const ROAD_LOOKAHEAD_MARGIN_M: f64 = 25.0;
 const ACTOR_MARGIN_M: f64 = 25.0;
 
 /// A car following the same single track as the ego.
@@ -46,6 +47,7 @@ pub(crate) struct LiveWorld {
     pub(crate) diagnostics: DiagnosticsData,
     pub(crate) last_plan_ms: f64,
     pub(crate) last_planner_actors: usize,
+    pub(crate) ego_collision_count: usize,
     pub(crate) preview_ticks: usize,
     pub(crate) diagnostics_enabled: bool,
     planner_kind: PlannerKind,
@@ -71,7 +73,7 @@ impl LiveWorld {
             yaw,
             ..Default::default()
         };
-        let road = road_window(&track, 0.0, dt);
+        let road = road_window(&track, 0.0, ego.speed, dt, planner == PlannerKind::Lattice);
         let collision_road = full_circuit_road(&track, dt);
         let actor_count = max_actors.min(15);
         let behind = if actor_count > 1 {
@@ -120,6 +122,7 @@ impl LiveWorld {
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
             last_planner_actors: 0,
+            ego_collision_count: 0,
             preview_ticks: DEFAULT_PREVIEW_TICKS,
             diagnostics_enabled: false,
             planner_kind: planner,
@@ -134,6 +137,13 @@ impl LiveWorld {
         if kind != self.planner_kind {
             self.planner_kind = kind;
             self.planner = kind.build();
+            self.road = road_window(
+                &self.track,
+                self.road_anchor_x,
+                self.ego().speed,
+                self.dt(),
+                kind == PlannerKind::Lattice,
+            );
         }
     }
 
@@ -239,7 +249,13 @@ impl LiveWorld {
         if (self.track_progress - self.road_anchor_x).abs() >= 20.0 {
             self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
             self.road = timed(latency, "simulation.roads", || {
-                let road = road_window(&self.track, self.road_anchor_x, self.dt());
+                let road = road_window(
+                    &self.track,
+                    self.road_anchor_x,
+                    self.ego().speed,
+                    self.dt(),
+                    self.planner_kind == PlannerKind::Lattice,
+                );
                 work(latency, road.centerline().len() as u64);
                 road
             });
@@ -409,16 +425,23 @@ impl LiveWorld {
 
         // Every moving body meets the same immovable road boundary before it
         // participates in symmetric vehicle-to-vehicle contacts.
-        for (before, body) in previous.iter().zip(&mut bodies) {
+        for (i, (before, body)) in previous.iter().zip(&mut bodies).enumerate() {
+            let unconstrained = body.state;
             body.state = crate::geometry::barrier::collide_with_road_barriers(
                 before.state,
                 body.state,
                 body.footprint,
                 &self.collision_road,
             );
+            if i == 0 && body.state != unconstrained {
+                self.ego_collision_count += 1;
+            }
         }
         let before_dynamic = bodies.clone();
         collide_dynamic_bodies(&mut bodies);
+        if bodies[0].state != before_dynamic[0].state {
+            self.ego_collision_count += 1;
+        }
         for (before, body) in before_dynamic.iter().zip(&mut bodies) {
             body.state = crate::geometry::barrier::collide_with_road_barriers(
                 before.state,
@@ -450,14 +473,35 @@ fn lateral_target(personality: Personality, half_width: f64, random: f64) -> f64
     (timid_bias + (2.0 * random - 1.0) * 0.55 * personality.sloppiness * room).clamp(-room, room)
 }
 
-fn road_window(track: &Track, x: f64, dt: f64) -> Road {
+fn planning_lookahead_m(mut speed: f64, dt: f64) -> f64 {
+    let ticks = (PLANNING_HORIZON_S / dt).ceil() as usize;
+    let mut reachable = 0.0;
+    for _ in 0..ticks {
+        reachable += speed.max(0.0) * dt;
+        speed = (speed + net_longitudinal_accel(MAX_LON_ACCEL, speed) * dt).max(0.0);
+    }
+
+    let mut braking_speed = speed;
+    let mut braking = 0.0;
+    for _ in 0..10_000 {
+        if braking_speed <= 0.0 {
+            break;
+        }
+        braking += braking_speed * dt;
+        braking_speed =
+            (braking_speed + net_longitudinal_accel(MIN_LON_ACCEL, braking_speed) * dt).max(0.0);
+    }
+    reachable.max(braking) + ROAD_LOOKAHEAD_MARGIN_M
+}
+
+fn road_window(track: &Track, x: f64, speed: f64, dt: f64, reachability_sized: bool) -> Road {
+    let ahead = if reachability_sized {
+        planning_lookahead_m(speed, dt)
+    } else {
+        ROAD_AHEAD_M
+    };
     let polygon = track
-        .road_polygon(
-            x - ROAD_BEHIND_M,
-            x + ROAD_AHEAD_M,
-            ROAD_SAMPLE_STEP_M,
-            false,
-        )
+        .road_polygon(x - ROAD_BEHIND_M, x + ahead, ROAD_SAMPLE_STEP_M, false)
         .expect("track road window must form a valid polygon");
     Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt)
 }
@@ -489,73 +533,6 @@ fn work(latency: Option<&Latency>, clocks: u64) {
 mod tests {
     use super::*;
     use crate::planning::LatencyStats;
-
-    /// Manual end-to-end profiling run. Kept ignored because wall-clock
-    /// measurements are meaningful in an optimized build on an otherwise
-    /// idle machine, not as part of the correctness suite.
-    ///
-    /// Run with:
-    /// `cargo test --release bezier_toppra_profiles_one_small_track_lap -- --ignored --nocapture`
-    #[test]
-    #[ignore = "end-to-end latency profile"]
-    fn bezier_toppra_profiles_one_small_track_lap() {
-        let small_track = crate::track::TRACK_PRESETS.len();
-        let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::BezierToppra, 5, 0.1);
-        let lap_length = world.track.lap_length().unwrap();
-        let recorder = Latency::default();
-        let mut latency = LatencyStats::default();
-        let started = Instant::now();
-        let mut ticks = 0;
-
-        while world.track_progress < lap_length && ticks < 2_000 {
-            world.tick_recording_latency(&recorder);
-            latency.absorb(recorder.take());
-            ticks += 1;
-        }
-
-        assert!(
-            world.track_progress >= lap_length,
-            "planner only reached {:.1}/{lap_length:.1} m in {ticks} ticks",
-            world.track_progress
-        );
-        for seam in &latency.seams {
-            eprintln!(
-                "{:<28} calls {:>4}  mean {:>8.3} ms  max {:>8.3} ms  clocks {:>8.1}/{:>6} total {}",
-                seam.name,
-                seam.calls,
-                seam.mean_ms(),
-                seam.max_ms,
-                seam.mean_clocks(),
-                seam.max_clocks,
-                seam.total_clocks,
-            );
-            assert!(seam.total_ms.is_finite() && seam.total_ms >= 0.0);
-        }
-        eprintln!(
-            "{:<28} ticks {:>4}  simulated {:>7.2} s  wall {:>8.3} ms",
-            "one_lap",
-            ticks,
-            ticks as f64 * world.dt(),
-            started.elapsed().as_secs_f64() * 1e3
-        );
-
-        for expected in [
-            "simulation.total",
-            "simulation.actors",
-            "planner.total",
-            "route",
-            "optimize",
-            "extract",
-            "simulation.preview",
-            "simulation.ego",
-            "simulation.collisions",
-        ] {
-            assert!(
-                latency.seams.iter().any(|seam| seam.name == expected),
-                "missing latency seam {expected}"
-            );
-        }
-    }
 
     #[test]
     fn bezier_toppra_one_lap_logical_clocks_are_stable() {
