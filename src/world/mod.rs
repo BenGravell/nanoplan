@@ -532,7 +532,49 @@ fn work(latency: Option<&Latency>, clocks: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::barrier::collides_with_road_barrier;
     use crate::planning::LatencyStats;
+
+    #[test]
+    fn lattice_small_track_accelerates_and_previews_stay_on_road() {
+        let small_track = crate::track::TRACK_PRESETS.len();
+        let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::Lattice, 0, 0.1);
+        world.tick_with_latency(None);
+        assert!(
+            world.actuation().acceleration > MAX_LON_ACCEL - 0.1,
+            "initial acceleration was {}",
+            world.actuation().acceleration
+        );
+
+        let approach_progress = 100.0;
+        let (position, yaw) = world.track.pose(approach_progress);
+        world.simulator.state = State {
+            x: position[0],
+            y: position[1],
+            yaw,
+            speed: 34.0,
+        };
+        world.track_progress = approach_progress;
+        world.road_anchor_x = approach_progress;
+        world.road = road_window(
+            &world.track,
+            approach_progress,
+            world.ego().speed,
+            world.dt(),
+            true,
+        );
+        world.tick_with_latency(None);
+
+        assert!(
+            world
+                .trajectory
+                .states
+                .iter()
+                .all(|state| !collides_with_road_barrier(*state, &world.road)),
+            "corner preview left the road: {:?}",
+            world.trajectory.states
+        );
+    }
 
     #[test]
     fn bezier_toppra_one_lap_logical_clocks_are_stable() {

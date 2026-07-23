@@ -14,11 +14,8 @@ use crate::common::kinematics::{
 };
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
-use crate::geometry::barrier::collide_with_road_barriers;
 use crate::planning::constraints::{HardConstraints, Sample};
-use crate::planning::search_tree::{
-    RoadFrame, best_first, brake_controls, parent_chain, repeat_last_controls,
-};
+use crate::planning::search_tree::{RoadFrame, best_first, brake_controls, parent_chain};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
@@ -36,8 +33,8 @@ const V_BREAKPOINTS: usize = 5;
 const GRID_NODES: usize = TIME_LAYERS * S_BREAKPOINTS * D_BREAKPOINTS * V_BREAKPOINTS;
 const MAX_EVALUATED_SEGMENTS: usize = 1_000;
 
-const ENDPOINT_TOLERANCE_M: f64 = 0.75;
 const CONTROL_FEASIBILITY_TOLERANCE: f64 = 0.01;
+const ROAD_CLEARANCE_M: f64 = 0.1;
 
 #[derive(Clone, Copy)]
 struct Reach {
@@ -51,6 +48,7 @@ struct Segment {
     controls: Vec<Control>,
     samples: Vec<Sample>,
     points: Vec<[f64; 2]>,
+    end: State,
 }
 
 fn level(i: usize, n: usize, lo: f64, hi: f64) -> f64 {
@@ -79,14 +77,6 @@ fn hermite(a: f64, b: f64, da: f64, db: f64, u: f64) -> f64 {
         + (u3 - u2) * db
 }
 
-fn hermite_derivative(a: f64, b: f64, da: f64, db: f64, u: f64) -> f64 {
-    let u2 = u * u;
-    (6.0 * u2 - 6.0 * u) * a
-        + (3.0 * u2 - 4.0 * u + 1.0) * da
-        + (-6.0 * u2 + 6.0 * u) * b
-        + (3.0 * u2 - 2.0 * u) * db
-}
-
 fn reachable(ego_speed: f64, dt: f64) -> [Reach; TIME_LAYERS] {
     let mut min_s = 0.0;
     let mut max_s = 0.0;
@@ -108,6 +98,34 @@ fn reachable(ego_speed: f64, dt: f64) -> [Reach; TIME_LAYERS] {
             max_v,
         }
     })
+}
+
+fn edge_acceleration(start_speed: f64, target_speed: f64, dt: f64) -> f64 {
+    let final_speed = |acceleration| {
+        (0..TICKS_PER_EDGE).fold(start_speed, |speed, _| {
+            (speed + net_longitudinal_accel(acceleration, speed) * dt).max(0.0)
+        })
+    };
+    let duration = TICKS_PER_EDGE as f64 * dt;
+    let estimate = commanded_accel_for_net(
+        forward_difference(start_speed, target_speed, duration),
+        start_speed,
+    )
+    .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+    let (mut lo, mut hi) = if final_speed(estimate) < target_speed {
+        (estimate, MAX_LON_ACCEL)
+    } else {
+        (MIN_LON_ACCEL, estimate)
+    };
+    for _ in 0..50 {
+        let mid = 0.5 * (lo + hi);
+        if final_speed(mid) < target_speed {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 fn node_id(layer: usize, si: usize, di: usize, vi: usize) -> usize {
@@ -158,24 +176,15 @@ fn segment(
 ) -> Option<Segment> {
     let dt = ctx.road.dt;
     let duration = TICKS_PER_EDGE as f64 * dt;
-    let mut targets = Vec::with_capacity(TICKS_PER_EDGE);
-    let mut previous_target = [start.x, start.y];
-
-    for tick in 1..=TICKS_PER_EDGE {
-        let u = tick as f64 / TICKS_PER_EDGE as f64;
-        let s = hermite(s0, s1, v0 * duration, v1 * duration, u);
-        let d = hermite(d0, d1, 0.0, 0.0, u);
-        let s_dot = hermite_derivative(s0, s1, v0 * duration, v1 * duration, u) / duration;
-        let d_dot = hermite_derivative(d0, d1, 0.0, 0.0, u) / duration;
-        let xy = path.frenet_to_xy(s, d);
-        let target_yaw = if (xy[0] - previous_target[0]).hypot(xy[1] - previous_target[1]) > 1e-6 {
-            (xy[1] - previous_target[1]).atan2(xy[0] - previous_target[0])
-        } else {
-            start.yaw
-        };
-        targets.push((s, s_dot.hypot(d_dot), target_yaw, xy));
-        previous_target = xy;
-    }
+    let targets: Vec<_> = (1..=TICKS_PER_EDGE)
+        .map(|tick| {
+            let u = tick as f64 / TICKS_PER_EDGE as f64;
+            let s = hermite(s0, s1, v0 * duration, v1 * duration, u);
+            let d = hermite(d0, d1, 0.0, 0.0, u);
+            (s, path.frenet_to_xy(s, d))
+        })
+        .collect();
+    let acceleration = edge_acceleration(start.speed, v1, dt);
 
     let mut controls = Vec::with_capacity(TICKS_PER_EDGE);
     let mut samples = Vec::with_capacity(TICKS_PER_EDGE);
@@ -185,10 +194,13 @@ fn segment(
 
     // Kinematic feasibility is completed for the whole edge before any
     // metric call is made.
-    for (tick, &(target_s, target_speed, target_yaw, _)) in targets.iter().enumerate() {
-        let acceleration = commanded_accel_for_net(
-            forward_difference(actual.speed, target_speed, dt),
-            actual.speed,
+    for (tick, &(target_s, _)) in targets.iter().enumerate() {
+        let target_yaw = targets.get(tick + 1).map_or_else(
+            || path.pose_at(s1).1,
+            |&(_, next)| {
+                let current = targets[tick].1;
+                (next[1] - current[1]).atan2(next[0] - current[0])
+            },
         );
         let curvature = if actual.speed > LOW_SPEED_LIMIT_MPS {
             wrap_angle(target_yaw - actual.yaw) / (actual.speed * dt)
@@ -208,17 +220,16 @@ fn segment(
             acceleration,
             curvature,
         };
-        let before = actual;
         actual = world_step(actual, control, dt);
         let (actual_s, actual_d) = path.project_near(actual.position(), target_s, 30.0);
-        let (right, left) = ctx.road.lateral_bounds_at(actual_s);
-        let approximate_margin = EGO_FOOTPRINT.width / 2.0;
-        let off_road = if start_time == 0.0 {
-            collide_with_road_barriers(before, actual, EGO_FOOTPRINT, ctx.road) != actual
-        } else {
-            actual_d < right + approximate_margin || actual_d > left - approximate_margin
-        };
-        if off_road {
+        let body_center = EGO_FOOTPRINT.center(actual.pose());
+        let (body_s, body_d) = path.project_near(body_center, actual_s, 30.0);
+        let (right, left) = ctx.road.lateral_bounds_at(body_s);
+        let (_, body_lane_yaw) = path.pose_at(body_s);
+        let road_normal = [-body_lane_yaw.sin(), body_lane_yaw.cos()];
+        let lateral_margin =
+            EGO_FOOTPRINT.support_radius(actual.yaw, road_normal) + ROAD_CLEARANCE_M;
+        if body_d < right + lateral_margin || body_d > left - lateral_margin {
             return None;
         }
         let (s, d) = (actual_s, actual_d);
@@ -255,12 +266,7 @@ fn segment(
         previous_dynamics = Some((control, lat_accel));
     }
 
-    let last = points.last().copied()?;
-    let target = path.frenet_to_xy(s1, d1);
-    let endpoint_tolerance = ENDPOINT_TOLERANCE_M + v1 * dt;
-    if (last[0] - target[0]).hypot(last[1] - target[1]) > endpoint_tolerance
-        || (actual.speed - v1).abs() > 2.0
-    {
+    if (actual.speed - v1).abs() > CONTROL_FEASIBILITY_TOLERANCE {
         return None;
     }
 
@@ -268,6 +274,7 @@ fn segment(
         controls,
         samples,
         points,
+        end: actual,
     })
 }
 
@@ -332,7 +339,7 @@ impl Planner for LatticePlanner {
                 0,
                 |node| node != 0 && decode_node(node).0 == TIME_LAYERS - 1,
                 |node| {
-                    let (layer, _si, di, vi, sa, da, va, start) = if node == 0 {
+                    let (layer, _si, di, _vi, sa, da, va, start) = if node == 0 {
                         (usize::MAX, 0, 0, 0, s0, d0, ego.speed.max(0.0), ego)
                     } else {
                         let (layer, si, di, vi, s, d, v) = node_state(node);
@@ -358,11 +365,13 @@ impl Planner for LatticePlanner {
                         return Vec::new();
                     }
                     let r = reach[next_layer];
-                    let v_indices: Vec<usize> = if node == 0 {
-                        (0..V_BREAKPOINTS).collect()
-                    } else {
-                        neighborhood(vi, V_BREAKPOINTS).collect()
-                    };
+                    let edge_reach = reachable(va, ctx.road.dt)[0];
+                    let v_indices = (0..V_BREAKPOINTS).filter(|&next_vi| {
+                        let v = level(next_vi, V_BREAKPOINTS, r.min_v, r.max_v);
+                        (edge_reach.min_v - CONTROL_FEASIBILITY_TOLERANCE
+                            ..=edge_reach.max_v + CONTROL_FEASIBILITY_TOLERANCE)
+                            .contains(&v)
+                    });
                     let d_indices: Vec<usize> = if node == 0 {
                         (0..D_BREAKPOINTS).collect()
                     } else {
@@ -405,7 +414,7 @@ impl Planner for LatticePlanner {
 
         let Some(result) = result else {
             if let Some((_, controls)) = best_root_segment.into_inner() {
-                return repeat_last_controls(&controls, ctx.horizon);
+                return controls;
             }
             return brake_controls(ego, ctx, MIN_LON_ACCEL);
         };
@@ -415,34 +424,21 @@ impl Planner for LatticePlanner {
                 (result.parent[node] != usize::MAX).then_some(result.parent[node])
             });
             let mut controls = Vec::with_capacity(PLANNING_TICKS);
-            let mut previous = 0usize;
+            let mut start = ego;
+            let (mut sa, mut da) = (s0, d0);
+            let mut va = ego.speed.max(0.0);
             for node in chain {
                 let (_, _, _, _, sb, db, vb) = node_state(node);
-                let (start, sa, da, va, layer) = if previous == 0 {
-                    (ego, s0, d0, ego.speed.max(0.0), 0)
-                } else {
-                    let (pl, _, _, _, ps, pd, pv) = node_state(previous);
-                    let (xy, yaw) = path.pose_at(ps);
-                    (
-                        State {
-                            x: xy[0] - pd * yaw.sin(),
-                            y: xy[1] + pd * yaw.cos(),
-                            yaw,
-                            speed: pv,
-                        },
-                        ps,
-                        pd,
-                        pv,
-                        pl + 1,
-                    )
-                };
+                let layer = controls.len() / TICKS_PER_EDGE;
                 let Some(segment) =
                     segment(&path, ctx, start, sa, da, va, sb, db, vb, layer as f64)
                 else {
-                    return brake_controls(ego, ctx, MIN_LON_ACCEL);
+                    break;
                 };
+                start = segment.end;
+                (sa, da) = path.project_near(start.position(), sb, 30.0);
+                va = start.speed;
                 controls.extend(segment.controls);
-                previous = node;
             }
             controls.truncate(ctx.horizon.min(PLANNING_TICKS));
             controls
@@ -470,28 +466,31 @@ mod tests {
         let mut road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
         road.target_speed = 100.0;
         let ctx = test_ctx(&road, &[]);
-        let ego = State {
-            speed: 5.0,
-            ..Default::default()
-        };
-        let path = Path::new(road.centerline());
-        let (s0, d0) = path.project(ego.position());
-        let r = reachable(ego.speed, road.dt)[0];
-        assert!(
-            segment(
-                &path,
-                &ctx,
-                ego,
-                s0,
-                d0,
-                ego.speed,
-                s0 + r.max_s,
-                0.0,
-                r.max_v,
-                0.0,
-            )
-            .is_some()
-        );
+        for speed in [0.0, 5.0] {
+            let ego = State {
+                speed,
+                ..Default::default()
+            };
+            let path = Path::new(road.centerline());
+            let (s0, d0) = path.project(ego.position());
+            let r = reachable(ego.speed, road.dt)[0];
+            assert!(
+                segment(
+                    &path,
+                    &ctx,
+                    ego,
+                    s0,
+                    d0,
+                    ego.speed,
+                    s0 + r.max_s,
+                    0.0,
+                    r.max_v,
+                    0.0,
+                )
+                .is_some(),
+                "speed {speed}"
+            );
+        }
     }
 
     #[test]
