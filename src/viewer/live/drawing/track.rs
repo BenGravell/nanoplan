@@ -7,10 +7,14 @@ use bevy::render::render_resource::PrimitiveTopology;
 
 use super::super::Live;
 use super::super::screen::ppx;
+use super::config::ROAD_SURFACE_Z;
 use crate::viewer::colors::{
     ROAD_SURFACE, SUBDUED_TRACK_CENTERLINE, SUBDUED_TRACK_EDGE, TRACK_CENTERLINE, TRACK_EDGE,
     TRACK_STATION,
 };
+
+const VISIBLE_TRACK_BEHIND_M: f64 = 250.0;
+const VISIBLE_TRACK_AHEAD_M: f64 = 750.0;
 
 #[derive(Resource)]
 pub(crate) struct RoadSurfaceMesh {
@@ -29,7 +33,7 @@ pub(crate) fn setup(
     commands.spawn((
         Mesh2d(handle.clone()),
         MeshMaterial2d(materials.add(ROAD_SURFACE)),
-        Transform::from_xyz(0.0, 0.0, -1.0),
+        Transform::from_xyz(0.0, 0.0, ROAD_SURFACE_Z),
     ));
     commands.insert_resource(RoadSurfaceMesh { handle, polygon });
 }
@@ -60,8 +64,8 @@ pub(in crate::viewer::live) fn draw(
 
     let polygon = track
         .road_polygon(
-            progress - 250.0,
-            progress + 750.0,
+            progress - VISIBLE_TRACK_BEHIND_M,
+            progress + VISIBLE_TRACK_AHEAD_M,
             ROAD_SAMPLE_STEP_M,
             false,
         )
@@ -94,8 +98,8 @@ fn surface_polygon(track: &Track, progress: f64) -> RoadPolygon {
     } else {
         track
             .road_polygon(
-                progress - 250.0,
-                progress + 750.0,
+                progress - VISIBLE_TRACK_BEHIND_M,
+                progress + VISIBLE_TRACK_AHEAD_M,
                 ROAD_SAMPLE_STEP_M,
                 false,
             )

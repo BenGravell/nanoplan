@@ -1,29 +1,25 @@
 # Usage
 
-Run the desktop demo:
+## Desktop app
+
+Run the desktop app:
 
 ```bash
 cargo run --release
 ```
 
-The ego and traffic race on various circuits.
+## Web app
 
-The viewer opens after all real tracks have been loaded. The first run needs a
-network connection; subsequent runs use the platform cache.
-
-- **track** selects the seeded circuit, a built-in preset, or a downloaded circuit.
-- **planner** changes the active motion planner.
-- **future preview** sets how many seconds of the current plan are drawn;
-  zero hides the preview without stopping the ego.
-- **diagnostic points/trajectories** show the selected planner's sampled
-  search geometry when that planner records diagnostics.
-- **pause** freezes the simulation.
-- **new track** increments the seed and spectrally regenerates a simple closed
-  circuit, its width, traffic, and the ego start.
-- **scroll** zooms the camera.
-
-For a browser build:
+Run the web app:
 
 ```bash
 trunk serve --release
+```
+
+## Tests
+
+Run tests:
+
+```bash
+cargo test
 ```

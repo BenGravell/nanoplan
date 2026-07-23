@@ -15,9 +15,9 @@
 //! the lane width at the preview distance.
 
 use crate::common::kinematics::clamp_control;
-use crate::common::matrix::{M2, M4, M6, M24};
 use crate::common::rng::Rng;
-use crate::common::vector::V2;
+use crate::common::types::matrix::{M2, M4, M6, M24};
+use crate::common::types::vector::V2;
 use crate::planning::search_tree::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, warm_start_matches};
 use crate::simulation::{Control, State, world_step};

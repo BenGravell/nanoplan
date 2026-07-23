@@ -1,4 +1,5 @@
 pub(super) mod carpet;
+mod config;
 pub(super) mod diagnostics;
 pub(super) mod grid;
 pub(super) mod plan;

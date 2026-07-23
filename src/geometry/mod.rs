@@ -2,6 +2,7 @@
 
 pub(crate) mod barrier;
 pub(crate) mod curvature;
+pub(crate) mod distance;
 mod footprint;
 mod polygon;
 mod road_polygon;

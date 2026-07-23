@@ -21,3 +21,10 @@ repos:
         language: system
         always_run: true
         pass_filenames: false
+
+      - id: cargo-machete
+        name: cargo machete
+        entry: mise exec -- cargo machete
+        language: system
+        always_run: true
+        pass_filenames: false

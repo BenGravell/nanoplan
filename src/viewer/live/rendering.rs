@@ -9,7 +9,8 @@ use super::drawing::{
     PlannedTrajectoryGizmos, RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
-use crate::viewer::ui::controls::metrics::preview_metrics;
+use crate::common::interp::interpolate_state;
+use crate::viewer::ui::controls::metrics::preview_metrics_for_trajectory;
 use crate::viewer::{DT, UiState};
 use web_time::Instant;
 
@@ -117,17 +118,16 @@ pub(crate) fn draw(
     visualization_clocks += road_clocks;
 
     let carpet_started = Instant::now();
-    let carpet_metrics = state
-        .carpet_visualization
-        .is_metric()
-        .then(|| preview_metrics(&live));
-    let carpet_clocks = if state.show_carpet && !world.plan.is_empty() {
+    let carpet_clocks = if state.show_carpet && world.trajectory.len() > 1 {
+        let trajectory = &world.trajectory;
+        let carpet_metrics = state
+            .carpet_visualization
+            .is_metric()
+            .then(|| preview_metrics_for_trajectory(&live, trajectory));
         carpet::draw(
             &mut meshes,
             &mut carpet_mesh,
-            ego,
-            &world.plan,
-            world.dt(),
+            trajectory,
             state.carpet_visualization,
             carpet_metrics.as_ref(),
         )
@@ -165,9 +165,9 @@ pub(crate) fn draw(
     visualization_clocks += diagnostics_clocks;
 
     let plan_started = Instant::now();
-    let plan_clocks = if state.show_plan && !world.plan.is_empty() {
-        plan::draw(&mut planned_trajectory, &ego, &world.plan);
-        world.plan.len() as u64
+    let plan_clocks = if state.show_plan && world.trajectory.len() > 1 {
+        plan::draw(&mut planned_trajectory, &ego, &world.trajectory.states[1..]);
+        world.trajectory.len() as u64
     } else {
         0
     };
@@ -180,36 +180,21 @@ pub(crate) fn draw(
 
     let actors_started = Instant::now();
     let actor_clocks = world.actors.len() as u64 + 1;
-    vehicles::draw(
-        &mut gizmos,
-        &ego,
-        world.actuation().curvature,
-        &world.actors,
-        &live.previous.actors,
-        render_alpha,
-    );
+    vehicles::draw_ego(&mut gizmos, &ego, world.actuation().curvature);
+    for actor in &world.actors {
+        vehicles::draw_actor(&mut gizmos, actor, &live.previous.actors, render_alpha);
+    }
     live.recorder.record(
         "visualization.actors",
         actors_started.elapsed().as_secs_f64() * 1e3,
         actor_clocks,
     );
     visualization_clocks += actor_clocks;
+
     live.recorder.record(
         "visualization.total",
         visualization_started.elapsed().as_secs_f64() * 1e3,
         visualization_clocks,
     );
     live.finish_frame();
-}
-
-pub(super) fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
-    let yaw_delta = (current.yaw - previous.yaw + std::f64::consts::PI)
-        .rem_euclid(std::f64::consts::TAU)
-        - std::f64::consts::PI;
-    State {
-        x: previous.x + (current.x - previous.x) * alpha,
-        y: previous.y + (current.y - previous.y) * alpha,
-        yaw: previous.yaw + yaw_delta * alpha,
-        speed: previous.speed + (current.speed - previous.speed) * alpha,
-    }
 }

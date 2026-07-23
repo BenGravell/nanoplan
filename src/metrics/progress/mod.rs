@@ -16,7 +16,12 @@ pub(crate) fn score(ctx: &TickCtx, i: usize) -> f64 {
     };
     // The final sample reuses the preceding interval, so reuse that interval's baseline tick as well.
     let ticks = i.min(n.saturating_sub(2));
-    speed_score(ds / ctx.dt, ctx.ego[0].speed, ticks, ctx.dt)
+    speed_score(
+        ds / ctx.trajectory_kinematics.dt,
+        ctx.trajectory_kinematics.states[0].speed,
+        ticks,
+        ctx.trajectory_kinematics.dt,
+    )
 }
 
 /// Normalized speed score.

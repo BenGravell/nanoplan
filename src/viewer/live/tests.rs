@@ -1,3 +1,4 @@
+use crate::common::interp::interpolate_state;
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
@@ -9,7 +10,6 @@ use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     cursor_over_driving_canvas, followed_camera_center, pinch_scale, smooth_angle,
 };
-use super::rendering::interpolate_state;
 use super::screen::PX_PER_M;
 use super::*;
 

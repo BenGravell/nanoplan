@@ -62,10 +62,10 @@
 
 use super::{TICKS, take_warm};
 use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
-use crate::common::matrix::{M4, M22, M24, M42};
 use crate::common::measure::dot;
-use crate::common::state_control::state;
-use crate::common::vector::{V2, V4};
+use crate::common::types::matrix::{M4, M22, M24, M42};
+use crate::common::types::state;
+use crate::common::types::vector::{V2, V4};
 use crate::planning::search_tree::{
     centerline_follow_controls, repeat_last_controls, rollout_constrained,
 };

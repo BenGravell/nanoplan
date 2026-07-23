@@ -1,12 +1,49 @@
 //! Shared vehicle kinematics, resistance, and control limits.
 
-use crate::common::state_control::Control;
+use crate::common::types::{Control, State};
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL,
     MIN_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
 };
 
 pub(crate) const LOW_SPEED_LIMIT_MPS: f64 = 0.001;
+
+/// Native state and control, plus time and derived kinematics for one trajectory.
+///
+/// All series are tick-aligned and have the same length. Construct this once
+/// at a trajectory boundary and share it with consumers instead of recovering
+/// controls from finite differences of states.
+#[derive(Debug, Clone)]
+pub(crate) struct TrajectoryKinematics {
+    pub(crate) states: Vec<State>,
+    pub(crate) controls: Vec<Control>,
+    pub(crate) time: Vec<f64>,
+    pub(crate) lateral_acceleration: Vec<f64>,
+    pub(crate) dt: f64,
+}
+
+impl TrajectoryKinematics {
+    pub(crate) fn new(states: Vec<State>, controls: Vec<Control>, dt: f64) -> Self {
+        assert_eq!(states.len(), controls.len());
+        let time = (0..states.len()).map(|i| i as f64 * dt).collect();
+        let lateral_acceleration = states
+            .iter()
+            .zip(&controls)
+            .map(|(state, control)| lateral_acceleration(state.speed, control.curvature))
+            .collect();
+        Self {
+            states,
+            controls,
+            time,
+            lateral_acceleration,
+            dt,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.states.len()
+    }
+}
 
 /// Signed lateral acceleration for a speed and path curvature.
 pub(crate) fn lateral_acceleration(speed: f64, curvature: f64) -> f64 {
@@ -92,6 +129,48 @@ mod tests {
         assert_eq!(curvature_from_lateral_acceleration(0.0, 0.0), 0.0);
         assert!(curvature_from_lateral_acceleration(0.0, 1.0).is_infinite());
         assert!(curvature_from_lateral_acceleration(LOW_SPEED_LIMIT_MPS, -1.0).is_infinite());
+    }
+
+    #[test]
+    fn trajectory_kinematics_come_directly_from_aligned_controls() {
+        let states = vec![
+            State {
+                speed: 10.0,
+                ..Default::default()
+            },
+            State {
+                speed: 20.0,
+                ..Default::default()
+            },
+        ];
+        let controls = vec![
+            Control {
+                acceleration: 2.0,
+                curvature: -0.01,
+            },
+            Control {
+                acceleration: -3.0,
+                curvature: 0.02,
+            },
+        ];
+
+        let trajectory = TrajectoryKinematics::new(states, controls, 0.1);
+
+        assert_eq!(trajectory.time, [0.0, 0.1]);
+        assert_eq!(
+            trajectory.controls,
+            [
+                Control {
+                    acceleration: 2.0,
+                    curvature: -0.01,
+                },
+                Control {
+                    acceleration: -3.0,
+                    curvature: 0.02,
+                },
+            ]
+        );
+        assert_eq!(trajectory.lateral_acceleration, [-1.0, 8.0]);
     }
 
     #[test]

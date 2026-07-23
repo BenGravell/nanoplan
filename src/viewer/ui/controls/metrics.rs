@@ -1,3 +1,4 @@
+use crate::common::kinematics::TrajectoryKinematics;
 use crate::metrics::{Metrics, evaluate};
 use crate::prediction::predict;
 use crate::simulation::State;
@@ -45,24 +46,25 @@ pub(super) fn section_heading(ui: &mut egui::Ui, heading: &str) {
 }
 
 pub(crate) fn preview_metrics(live: &Live) -> Metrics {
-    let ego: Vec<State> = std::iter::once(live.world.ego())
-        .chain(live.world.plan.iter().skip(1).copied())
-        .collect();
-    let controls = if live.world.plan_controls.is_empty() {
-        vec![live.world.actuation()]
-    } else {
-        live.world.plan_controls.clone()
-    };
+    preview_metrics_for_trajectory(live, &live.world.trajectory)
+}
+
+pub(crate) fn preview_metrics_for_trajectory(
+    live: &Live,
+    trajectory: &TrajectoryKinematics,
+) -> Metrics {
     let track = Path::new(live.world.road.centerline());
     let actors: Vec<Vec<State>> = live
         .world
         .actors
         .iter()
         .map(|actor| {
-            (0..ego.len())
-                .map(|i| predict(&actor.state, &track, i as f64 * live.world.dt()))
+            trajectory
+                .time
+                .iter()
+                .map(|&time| predict(&actor.state, &track, time))
                 .collect()
         })
         .collect();
-    evaluate(&ego, &controls, &actors, &live.world.road)
+    evaluate(trajectory, &actors, &live.world.road)
 }

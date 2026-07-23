@@ -25,7 +25,7 @@ mod tests {
     use super::model::is_simple;
     use super::track::TrackGeometry;
     use super::*;
-    use crate::common::measure::dist;
+    use crate::geometry::distance::dist;
 
     #[test]
     fn generated_track_is_simple_and_closed() {

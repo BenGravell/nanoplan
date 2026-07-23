@@ -4,7 +4,16 @@ use bevy::render::render_resource::PrimitiveTopology;
 
 use super::super::camera::CameraState;
 use super::super::screen::PX_PER_M;
+use super::config::GRID_Z;
 use crate::viewer::colors::{GRID_MAJOR, GRID_MINOR};
+
+const WIDE_GRID_ZOOM_THRESHOLD: f32 = 0.25;
+const DEFAULT_GRID_SPACING_M: f32 = 10.0;
+const WIDE_GRID_SPACING_M: f32 = 50.0;
+const DEFAULT_MAJOR_LINE_INTERVAL: i64 = 5;
+const WIDE_MAJOR_LINE_INTERVAL: i64 = 2;
+const MAJOR_LINE_WIDTH_PX: f32 = 1.5;
+const MINOR_LINE_WIDTH_PX: f32 = 0.75;
 
 #[derive(Resource)]
 pub(crate) struct GridMesh {
@@ -21,7 +30,7 @@ pub(crate) fn setup(
     commands.spawn((
         Mesh2d(handle.clone()),
         MeshMaterial2d(materials.add(ColorMaterial::default())),
-        Transform::from_xyz(0.0, 0.0, -2.0),
+        Transform::from_xyz(0.0, 0.0, GRID_Z),
     ));
     commands.insert_resource(GridMesh {
         handle,
@@ -36,9 +45,17 @@ pub(in crate::viewer::live) fn draw(
     window: &Window,
 ) {
     let extent = window.width().hypot(window.height()) / camera.zoom;
-    let wide_grid = camera.zoom < 0.25;
-    let spacing = if wide_grid { 50.0 } else { 10.0 } * PX_PER_M;
-    let major_every = if wide_grid { 2 } else { 5 };
+    let wide_grid = camera.zoom < WIDE_GRID_ZOOM_THRESHOLD;
+    let spacing = if wide_grid {
+        WIDE_GRID_SPACING_M
+    } else {
+        DEFAULT_GRID_SPACING_M
+    } * PX_PER_M;
+    let major_every = if wide_grid {
+        WIDE_MAJOR_LINE_INTERVAL
+    } else {
+        DEFAULT_MAJOR_LINE_INTERVAL
+    };
     let min_x = ((camera.center.x - extent) / spacing).floor() as i64;
     let max_x = ((camera.center.x + extent) / spacing).ceil() as i64;
     let min_y = ((camera.center.y - extent) / spacing).floor() as i64;
@@ -53,7 +70,14 @@ pub(in crate::viewer::live) fn draw(
             &mut vertices,
             &mut colors,
             Vec2::new(x, camera.center.y),
-            Vec2::new(if major { 1.5 } else { 0.75 } / camera.zoom, extent * 2.0),
+            Vec2::new(
+                if major {
+                    MAJOR_LINE_WIDTH_PX
+                } else {
+                    MINOR_LINE_WIDTH_PX
+                } / camera.zoom,
+                extent * 2.0,
+            ),
             color,
         );
     }
@@ -65,7 +89,14 @@ pub(in crate::viewer::live) fn draw(
             &mut vertices,
             &mut colors,
             Vec2::new(camera.center.x, y),
-            Vec2::new(extent * 2.0, if major { 1.5 } else { 0.75 } / camera.zoom),
+            Vec2::new(
+                extent * 2.0,
+                if major {
+                    MAJOR_LINE_WIDTH_PX
+                } else {
+                    MINOR_LINE_WIDTH_PX
+                } / camera.zoom,
+            ),
             color,
         );
     }

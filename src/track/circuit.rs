@@ -3,7 +3,7 @@
 use super::model::{GeneratedTrack, limit_widths_for_curvature, road_is_simple};
 #[cfg(test)]
 use super::model::{SAMPLE_COUNT, TrainingTrack};
-use crate::common::measure::dist;
+use crate::geometry::distance::dist;
 use splinefit::{ClosedCubicSplineFit2D, evaluate::evaluate};
 
 const SAMPLE_SPACING_M: f64 = 1.0;

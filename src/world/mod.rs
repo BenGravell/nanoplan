@@ -2,6 +2,7 @@
 
 use web_time::Instant;
 
+use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::rng::Rng;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::{
@@ -41,8 +42,7 @@ pub(crate) struct LiveWorld {
     pub(crate) track_progress: f64,
     pub(crate) road: Road,
     pub(crate) actors: Vec<SmartActor>,
-    pub(crate) plan: Vec<State>,
-    pub(crate) plan_controls: Vec<Control>,
+    pub(crate) trajectory: TrajectoryKinematics,
     pub(crate) diagnostics: DiagnosticsData,
     pub(crate) last_plan_ms: f64,
     pub(crate) last_planner_actors: usize,
@@ -116,8 +116,7 @@ impl LiveWorld {
             track_progress: 0.0,
             road,
             actors,
-            plan: vec![],
-            plan_controls: vec![],
+            trajectory: TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt),
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
             last_planner_actors: 0,
@@ -290,22 +289,31 @@ impl LiveWorld {
         };
         self.diagnostics = diagnostics.take();
 
-        self.plan = timed(latency, "simulation.preview", || {
+        let plan = timed(latency, "simulation.preview", || {
             let plan = self.simulator.preview(&controls, self.preview_ticks);
             work(latency, plan.len() as u64);
             plan
         });
-        self.plan_controls = controls.into_iter().take(self.plan.len()).collect();
+        let plan_controls: Vec<_> = controls.into_iter().take(plan.len()).collect();
         let previous_ego = self.ego();
         timed(latency, "simulation.ego", || {
             self.simulator
-                .step(self.plan_controls.first().copied().unwrap_or_default());
+                .step(plan_controls.first().copied().unwrap_or_default());
             work(latency, 1);
         });
         timed(latency, "simulation.collisions", || {
             self.resolve_collisions(previous_ego, &previous_actors);
             work(latency, actor_count + 1);
         });
+        let states: Vec<_> = std::iter::once(self.ego())
+            .chain(plan.into_iter().skip(1))
+            .collect();
+        let controls = if plan_controls.is_empty() {
+            vec![self.actuation()]
+        } else {
+            plan_controls
+        };
+        self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
     }
 
     fn step_traffic(&mut self) {
@@ -881,13 +889,13 @@ mod tests {
         world.preview_ticks = 5;
         world.diagnostics_enabled = true;
         world.tick_with_latency(None);
-        assert_eq!(world.plan.len(), 5);
+        assert_eq!(world.trajectory.len(), 5);
         assert!(!world.diagnostics.points.is_empty());
 
         world.preview_ticks = 0;
         world.diagnostics_enabled = false;
         world.tick_with_latency(None);
-        assert!(world.plan.is_empty());
+        assert_eq!(world.trajectory.len(), 1);
         assert!(world.diagnostics.points.is_empty());
     }
 }

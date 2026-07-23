@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use colorgrad::Gradient;
 
-use crate::common::differencing::forward_difference;
+use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
@@ -19,6 +19,7 @@ use crate::viewer::{
 };
 
 use super::super::screen::PX_PER_M;
+use super::config::EGO_CARPET_Z;
 
 const BAND_M: f64 = 0.5;
 #[cfg(test)]
@@ -26,7 +27,7 @@ const FOOTPRINT_EPSILON_M: f64 = 1e-9;
 /// Maximum conservative allowance between rotating cross-sections.
 const TURN_PADDING_M: f64 = 0.075;
 /// Rotation, rather than translation, determines when an extra section is needed.
-const MAX_YAW_STEP_RAD: f64 = 0.3 * BAND_M;
+const MAX_YAW_STEP_RAD: f64 = 0.2 * BAND_M;
 
 #[derive(Resource)]
 pub(crate) struct EgoCarpetMesh {
@@ -96,7 +97,7 @@ pub(crate) fn setup(
     commands.spawn((
         Mesh2d(handle.clone()),
         MeshMaterial2d(materials.add(ColorMaterial::default())),
-        Transform::from_xyz(0.0, 0.0, -0.5),
+        Transform::from_xyz(0.0, 0.0, EGO_CARPET_Z),
     ));
     commands.insert_resource(EgoCarpetMesh {
         handle,
@@ -107,29 +108,43 @@ pub(crate) fn setup(
 pub(crate) fn draw(
     meshes: &mut Assets<Mesh>,
     carpet: &mut EgoCarpetMesh,
-    ego: State,
-    plan: &[State],
-    dt: f64,
+    trajectory: &TrajectoryKinematics,
     visualization: CarpetVisualization,
     metrics: Option<&Metrics>,
 ) -> u64 {
-    let footprints = sample_footprints(ego, plan, dt);
+    let (ego, plan) = trajectory
+        .states
+        .split_first()
+        .expect("carpet trajectory is non-empty");
+    let footprints = sample_footprints(*ego, plan, trajectory.dt);
     let (patches, intersection_clocks) = carpet_patches_clocked(&footprints);
-    let values = visualization_values(ego, plan, dt, visualization, metrics);
+    let values = visualization_values(trajectory, visualization, metrics);
     let colormap = match visualization {
         CarpetVisualization::Time => &*GUPPY_BLUE,
         CarpetVisualization::Speed => &*GUPPY_BLUE,
         _ => &*GUPPY,
     };
 
+    let tick_colors = values
+        .iter()
+        .map(|value| {
+            let sample = colormap.at(*value as f32);
+            Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA)
+                .to_linear()
+                .to_f32_array()
+        })
+        .collect::<Vec<_>>();
     let mut vertices = Vec::with_capacity(patches.len() * 6);
     let mut colors = Vec::with_capacity(vertices.capacity());
     let patch_count = patches.len();
     for patch in patches {
-        let index = (patch.time / dt).round() as usize;
-        let sample = colormap.at(values[index.min(values.len() - 1)] as f32);
-        let color = Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA);
-        push_patch(&mut vertices, &mut colors, patch, color);
+        let index = (patch.time / trajectory.dt).round() as usize;
+        push_patch(
+            &mut vertices,
+            &mut colors,
+            patch,
+            tick_colors[index.min(tick_colors.len() - 1)],
+        );
     }
 
     let mut mesh = empty_mesh();
@@ -139,7 +154,7 @@ pub(crate) fn draw(
         *existing = mesh;
         carpet.populated = true;
     }
-    footprints.len() as u64 + intersection_clocks + plan.len() as u64 + 2 * patch_count as u64
+    footprints.len() as u64 + intersection_clocks + trajectory.len() as u64 + 2 * patch_count as u64
 }
 
 pub(crate) fn clear(meshes: &mut Assets<Mesh>, carpet: &mut EgoCarpetMesh) {
@@ -153,9 +168,7 @@ pub(crate) fn clear(meshes: &mut Assets<Mesh>, carpet: &mut EgoCarpetMesh) {
 }
 
 fn visualization_values(
-    ego: State,
-    plan: &[State],
-    dt: f64,
+    trajectory: &TrajectoryKinematics,
     visualization: CarpetVisualization,
     metrics: Option<&Metrics>,
 ) -> Vec<f64> {
@@ -172,30 +185,32 @@ fn visualization_values(
         }
     }
 
-    let states: Vec<_> = std::iter::once(ego)
-        .chain(plan.iter().skip(1).copied())
-        .collect();
     let raw = match visualization {
-        CarpetVisualization::Speed => states.iter().map(|state| state.speed).collect(),
-        CarpetVisualization::Time => (0..states.len()).map(|i| i as f64 * dt).collect(),
-        CarpetVisualization::LongitudinalAcceleration => {
-            padded_forward(&states, |a, b| forward_difference(a.speed, b.speed, dt))
-        }
-        CarpetVisualization::LateralAcceleration => padded_forward(&states, |a, b| {
-            let dvx = forward_difference(a.speed * a.yaw.cos(), b.speed * b.yaw.cos(), dt);
-            let dvy = forward_difference(a.speed * a.yaw.sin(), b.speed * b.yaw.sin(), dt);
-            -a.yaw.sin() * dvx + a.yaw.cos() * dvy
-        }),
-        CarpetVisualization::Curvature => padded_forward(&states, |a, b| {
-            wrap_angle(b.yaw - a.yaw) / (a.speed.abs().max(0.1) * dt)
-        }),
-        _ => vec![0.0; states.len()],
+        CarpetVisualization::Speed => trajectory.states.iter().map(|state| state.speed).collect(),
+        CarpetVisualization::Time => trajectory.time.clone(),
+        CarpetVisualization::LongitudinalAcceleration => trajectory
+            .controls
+            .iter()
+            .map(|control| control.acceleration)
+            .collect(),
+        CarpetVisualization::LateralAcceleration => trajectory.lateral_acceleration.clone(),
+        CarpetVisualization::Curvature => trajectory
+            .controls
+            .iter()
+            .map(|control| control.curvature)
+            .collect(),
+        _ => vec![0.0; trajectory.len()],
     };
     let range = match visualization {
         CarpetVisualization::Speed => (0.0, *MAX_TERMINAL_SPEED_MPS),
         CarpetVisualization::Time => (
             0.0,
-            (states.len().saturating_sub(1) as f64 * dt).max(f64::EPSILON),
+            trajectory
+                .time
+                .last()
+                .copied()
+                .unwrap_or(0.0)
+                .max(f64::EPSILON),
         ),
         CarpetVisualization::LongitudinalAcceleration => (MIN_LON_ACCEL, MAX_LON_ACCEL),
         CarpetVisualization::LateralAcceleration => (-MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
@@ -205,15 +220,6 @@ fn visualization_values(
     raw.into_iter()
         .map(|value| ((value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0))
         .collect()
-}
-
-fn padded_forward(states: &[State], f: impl Fn(&State, &State) -> f64) -> Vec<f64> {
-    let mut result: Vec<_> = states
-        .windows(2)
-        .map(|pair| f(&pair[0], &pair[1]))
-        .collect();
-    result.push(result.last().copied().unwrap_or(0.0));
-    result
 }
 
 fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
@@ -397,20 +403,20 @@ fn footprint_lateral_interval(station: Station, footprint: &TimedState) -> Optio
         footprint.center[1] - station.state.y,
     ];
     let project = |axis: [f64; 2]| delta[0] * axis[0] + delta[1] * axis[1];
-    let support = |axis: [f64; 2]| {
-        0.5 * EGO_FOOTPRINT.length
-            * (footprint.forward[0] * axis[0] + footprint.forward[1] * axis[1]).abs()
-            + 0.5
-                * EGO_FOOTPRINT.width
-                * (footprint.left[0] * axis[0] + footprint.left[1] * axis[1]).abs()
-    };
+    let cos_relative =
+        footprint.forward[0] * station.forward[0] + footprint.forward[1] * station.forward[1];
+    let sin_relative =
+        footprint.forward[0] * station.left[0] + footprint.forward[1] * station.left[1];
+    let longitudinal_radius = 0.5
+        * (EGO_FOOTPRINT.length * cos_relative.abs() + EGO_FOOTPRINT.width * sin_relative.abs());
     let longitudinal = project(station.forward);
-    let longitudinal_radius = support(station.forward);
     (longitudinal - longitudinal_radius <= station.slab_m
         && longitudinal + longitudinal_radius >= -station.slab_m)
         .then(|| {
             let lateral = project(station.left);
-            let lateral_radius = support(station.left);
+            let lateral_radius = 0.5
+                * (EGO_FOOTPRINT.length * sin_relative.abs()
+                    + EGO_FOOTPRINT.width * cos_relative.abs());
             [lateral - lateral_radius, lateral + lateral_radius]
         })
 }
@@ -441,7 +447,7 @@ fn push_patch(
     vertices: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
     patch: CarpetPatch,
-    color: Color,
+    color: [f32; 4],
 ) {
     let point = |point: [f64; 2]| [point[0] as f32 * PX_PER_M, point[1] as f32 * PX_PER_M, 0.0];
     vertices.extend([
@@ -452,14 +458,21 @@ fn push_patch(
         point(patch.front.right),
         point(patch.front.left),
     ]);
-    colors.extend(std::iter::repeat_n(color.to_linear().to_f32_array(), 6));
+    colors.extend(std::iter::repeat_n(color, 6));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::planning::{Latency, LatencyStats};
+    use crate::simulation::Control;
     use crate::viewer::DT;
+
+    fn trajectory(ego: State, plan: &[State], dt: f64) -> TrajectoryKinematics {
+        let states: Vec<_> = std::iter::once(ego).chain(plan.iter().copied()).collect();
+        let len = states.len();
+        TrajectoryKinematics::new(states, vec![Control::default(); len], dt)
+    }
 
     #[test]
     fn straight_motion_uses_temporal_samples() {
@@ -641,6 +654,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sharp_turn_sections_limit_yaw_facets() {
+        let radius = 1.0 / MAX_ABS_CURVATURE;
+        let yaw_step = 7.0 * MAX_ABS_CURVATURE * DT;
+        let plan = (1..=20)
+            .map(|i| {
+                let yaw = i as f64 * yaw_step;
+                State {
+                    x: radius * yaw.sin(),
+                    y: radius * (1.0 - yaw.cos()),
+                    yaw,
+                    speed: 7.0,
+                }
+            })
+            .collect::<Vec<_>>();
+        let footprints = sample_footprints(
+            State {
+                speed: 7.0,
+                ..Default::default()
+            },
+            &plan,
+            DT,
+        );
+
+        assert!(footprints.windows(2).all(|pair| {
+            wrap_angle(pair[1].state.yaw - pair[0].state.yaw).abs()
+                <= MAX_YAW_STEP_RAD + f64::EPSILON
+        }));
+    }
+
     fn assert_carpet_contains(ego: State, plan: &[State]) {
         let footprints = sample_footprints(ego, plan, DT);
         let patches = carpet_patches(&footprints);
@@ -707,7 +750,7 @@ mod tests {
 
     #[test]
     fn carpet_logical_clocks_are_stable_across_workloads() {
-        for ((name, ego, plan), expected) in carpet_workloads().into_iter().zip([606, 1_585, 906]) {
+        for ((name, ego, plan), expected) in carpet_workloads().into_iter().zip([607, 5_377, 907]) {
             let mut meshes = Assets::<Mesh>::default();
             let mut carpet = EgoCarpetMesh {
                 handle: meshes.add(empty_mesh()),
@@ -716,9 +759,7 @@ mod tests {
             let clocks = draw(
                 &mut meshes,
                 &mut carpet,
-                ego,
-                &plan,
-                DT,
+                &trajectory(ego, &plan, DT),
                 CarpetVisualization::Time,
                 None,
             );
@@ -782,9 +823,7 @@ mod tests {
             draw(
                 &mut meshes,
                 &mut carpet,
-                ego,
-                plan,
-                DT,
+                &trajectory(ego, plan, DT),
                 CarpetVisualization::Time,
                 None,
             );
@@ -797,9 +836,7 @@ mod tests {
                 let clocks = draw(
                     &mut meshes,
                     &mut carpet,
-                    ego,
-                    plan,
-                    DT,
+                    &trajectory(ego, plan, DT),
                     CarpetVisualization::Time,
                     None,
                 );
@@ -833,22 +870,30 @@ mod tests {
                 });
                 let patch_count = patches.len();
                 let values = recorder.time("carpet.values", || {
-                    let values =
-                        visualization_values(ego, plan, DT, CarpetVisualization::Time, None);
+                    let trajectory = trajectory(ego, plan, DT);
+                    let values = visualization_values(&trajectory, CarpetVisualization::Time, None);
                     recorder.work(plan.len() as u64);
                     values
                 });
                 recorder.time("carpet.mesh", || {
+                    let tick_colors = values
+                        .iter()
+                        .map(|value| {
+                            let sample = GUPPY_BLUE.at(*value as f32);
+                            Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA)
+                                .to_linear()
+                                .to_f32_array()
+                        })
+                        .collect::<Vec<_>>();
                     let mut vertices = Vec::with_capacity(patches.len() * 6);
                     let mut colors = Vec::with_capacity(vertices.capacity());
                     for patch in patches {
                         let index = (patch.time / DT).round() as usize;
-                        let sample = GUPPY_BLUE.at(values[index.min(values.len() - 1)] as f32);
                         push_patch(
                             &mut vertices,
                             &mut colors,
                             patch,
-                            Color::srgba(sample.r, sample.g, sample.b, CARPET_ALPHA),
+                            tick_colors[index.min(tick_colors.len() - 1)],
                         );
                     }
                     let mut mesh = empty_mesh();
@@ -893,6 +938,20 @@ mod tests {
     fn every_signal_visualization_is_normalized_for_each_planned_tick() {
         let ego = State::default();
         let plan = [State { speed: 2.0, ..ego }, State { speed: 3.0, ..ego }];
+        let trajectory = TrajectoryKinematics::new(
+            vec![ego, plan[1]],
+            vec![
+                Control {
+                    acceleration: -1.0,
+                    curvature: -0.01,
+                },
+                Control {
+                    acceleration: 2.0,
+                    curvature: 0.02,
+                },
+            ],
+            DT,
+        );
         for visualization in [
             CarpetVisualization::Speed,
             CarpetVisualization::Time,
@@ -900,12 +959,31 @@ mod tests {
             CarpetVisualization::LateralAcceleration,
             CarpetVisualization::Curvature,
         ] {
-            let values = visualization_values(ego, &plan, DT, visualization, None);
+            let values = visualization_values(&trajectory, visualization, None);
             assert_eq!(values.len(), plan.len());
             assert!(values.iter().all(|value| (0.0..=1.0).contains(value)));
         }
+        let normalize = |value: f64, min: f64, max: f64| (value - min) / (max - min);
         assert_eq!(
-            visualization_values(ego, &plan, DT, CarpetVisualization::Time, None),
+            visualization_values(
+                &trajectory,
+                CarpetVisualization::LongitudinalAcceleration,
+                None
+            ),
+            [
+                normalize(-1.0, MIN_LON_ACCEL, MAX_LON_ACCEL),
+                normalize(2.0, MIN_LON_ACCEL, MAX_LON_ACCEL),
+            ]
+        );
+        assert_eq!(
+            visualization_values(&trajectory, CarpetVisualization::LateralAcceleration, None),
+            [
+                normalize(0.0, -MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
+                normalize(0.18, -MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
+            ]
+        );
+        assert_eq!(
+            visualization_values(&trajectory, CarpetVisualization::Time, None),
             [0.0, 1.0]
         );
     }

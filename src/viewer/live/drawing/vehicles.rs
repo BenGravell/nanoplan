@@ -1,4 +1,5 @@
-use crate::common::math::wrap_angle;
+use crate::common::interp::interpolate_state;
+use crate::geometry::curvature::curvature_between;
 use crate::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::simulation::State;
 use crate::vehicle::{
@@ -8,37 +9,44 @@ use crate::vehicle::{
 use crate::world::SmartActor;
 use bevy::prelude::*;
 
-use super::super::rendering::interpolate_state;
 use super::super::screen::{PX_PER_M, px};
 use crate::viewer::colors::{ACTOR_VEHICLE, EGO_VEHICLE, VEHICLE_TIRE};
 
+// Do not interpolate discontinuous actor updates (for example teleports or reused IDs),
+// which would otherwise cause visible sweeps and unrealistic steering curvature.
 const MAX_ACTOR_INTERPOLATION_M: f64 = 20.0;
 
-pub(in crate::viewer::live) fn draw(
+pub(in crate::viewer::live) fn draw_ego(gizmos: &mut Gizmos, ego: &State, curvature: f64) {
+    draw_vehicle(gizmos, ego, curvature, CAR_FOOTPRINT, EGO_VEHICLE);
+}
+
+pub(in crate::viewer::live) fn draw_actor(
     gizmos: &mut Gizmos,
-    ego: &State,
-    ego_curvature: f64,
-    actors: &[SmartActor],
+    actor: &SmartActor,
     previous_actors: &[(usize, State)],
     render_alpha: f64,
 ) {
-    draw_vehicle(gizmos, ego, ego_curvature, CAR_FOOTPRINT, EGO_VEHICLE);
-    for actor in actors {
-        let previous = previous_actors
-            .iter()
-            .find(|(id, _)| *id == actor.id)
-            .map(|(_, state)| *state);
-        let distance = previous.map_or(f64::INFINITY, |state| {
-            (actor.state.x - state.x).hypot(actor.state.y - state.y)
-        });
-        let state = if distance <= MAX_ACTOR_INTERPOLATION_M {
-            interpolate_state(previous.unwrap(), actor.state, render_alpha)
-        } else {
-            actor.state
-        };
-        let curvature = previous.map_or(0.0, |previous| actor_curvature(previous, actor.state));
-        draw_vehicle(gizmos, &state, curvature, CAR_FOOTPRINT, ACTOR_VEHICLE);
-    }
+    let previous = previous_actors
+        .iter()
+        .find(|(id, _)| *id == actor.id)
+        .map(|(_, state)| *state);
+    let distance = previous.map_or(f64::INFINITY, |state| {
+        (actor.state.x - state.x).hypot(actor.state.y - state.y)
+    });
+    let state = if distance <= MAX_ACTOR_INTERPOLATION_M {
+        interpolate_state(previous.unwrap(), actor.state, render_alpha)
+    } else {
+        actor.state
+    };
+    let curvature = if distance <= MAX_ACTOR_INTERPOLATION_M {
+        previous.map_or(0.0, |previous| {
+            curvature_between(previous.pose(), actor.state.pose())
+                .clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
+        })
+    } else {
+        0.0
+    };
+    draw_vehicle(gizmos, &state, curvature, CAR_FOOTPRINT, ACTOR_VEHICLE);
 }
 
 fn draw_vehicle(
@@ -84,32 +92,5 @@ fn draw_vehicle(
                 VEHICLE_TIRE,
             );
         }
-    }
-}
-
-fn actor_curvature(previous: State, current: State) -> f64 {
-    let distance = (current.x - previous.x).hypot(current.y - previous.y);
-    if distance <= f64::EPSILON || distance > MAX_ACTOR_INTERPOLATION_M {
-        0.0
-    } else {
-        (wrap_angle(current.yaw - previous.yaw) / distance)
-            .clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn actor_tire_curvature_comes_from_heading_change_over_distance() {
-        let previous = State::default();
-        let current = State {
-            x: 2.0,
-            yaw: 0.2,
-            ..Default::default()
-        };
-
-        assert!((actor_curvature(previous, current) - 0.1).abs() < 1e-12);
     }
 }

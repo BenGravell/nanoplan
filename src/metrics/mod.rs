@@ -24,8 +24,11 @@ pub(crate) mod safety;
 
 pub(crate) mod aggregation;
 
+use crate::common::kinematics::TrajectoryKinematics;
 use crate::geometry::CAR_FOOTPRINT;
-use crate::simulation::{Control, State};
+#[cfg(test)]
+use crate::simulation::Control;
+use crate::simulation::State;
 use crate::track::{Path, Road};
 
 pub(crate) use aggregation as agg;
@@ -34,20 +37,18 @@ pub(crate) use aggregation as agg;
 pub(crate) const COLLISION_CLEARANCE_M: f64 = CAR_FOOTPRINT.width;
 
 /// Precomputed, per-rollout series every metric scores from. Built once by
-/// [`evaluate`]; a metric's score function reads the tick it's given and
-/// nothing else, so metrics stay pure functions of simulation outputs.
+/// [`evaluate`]; a metric's score function reads the tick it's
+/// given and nothing else, so metrics stay pure functions of simulation
+/// outputs.
 pub(crate) struct TickCtx<'a> {
-    /// Ego state at every tick.
-    pub(crate) ego: &'a [State],
+    /// Tick-aligned ego states, controls, time, and derived kinematics.
+    pub(crate) trajectory_kinematics: &'a TrajectoryKinematics,
     /// Every actor's state at every tick: `actors_at[tick][actor]`.
     pub(crate) actors_at: &'a [Vec<State>],
     /// Ego arc length along the route at every tick.
     pub(crate) station: &'a [f64],
-    /// Applied ego control at every scored tick.
-    pub(crate) controls: &'a [Control],
     /// Road geometry, including its static side barriers.
     pub(crate) road: &'a Road,
-    pub(crate) dt: f64,
 }
 
 /// A metric's role in the composite score: hard gate or weighted term.
@@ -103,31 +104,30 @@ pub(crate) struct Metrics {
     pub(crate) score: f64,
 }
 
-/// Evaluate all metrics over a finished rollout. `controls[i]` and
-/// `actors[*][i]` must be sampled at the same ticks as `ego[i]`.
+/// Evaluate all metrics from a canonical, precomputed trajectory.
 pub(crate) fn evaluate(
-    ego: &[State],
-    controls: &[Control],
+    trajectory_kinematics: &TrajectoryKinematics,
     actors: &[Vec<State>],
     road: &Road,
 ) -> Metrics {
-    let n = ego.len();
+    let n = trajectory_kinematics.len();
     if n == 0 {
         return Metrics::default();
     }
-    assert_eq!(controls.len(), n);
     let path = Path::new(road.centerline());
-    let station: Vec<f64> = ego.iter().map(|s| path.project(s.position()).0).collect();
+    let station: Vec<f64> = trajectory_kinematics
+        .states
+        .iter()
+        .map(|s| path.project(s.position()).0)
+        .collect();
     let actors_at: Vec<Vec<State>> = (0..n)
         .map(|i| actors.iter().map(|a| a[i]).collect())
         .collect();
     let ctx = TickCtx {
-        ego,
+        trajectory_kinematics,
         actors_at: &actors_at,
         station: &station,
-        controls,
         road,
-        dt: road.dt,
     };
 
     let per_tick: Vec<[f64; N_METRICS]> = (0..n)
@@ -149,6 +149,18 @@ pub(crate) fn evaluate(
         aggregate,
         score,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn evaluate_trace(
+    states: &[State],
+    controls: &[Control],
+    actors: &[Vec<State>],
+    road: &Road,
+) -> Metrics {
+    let trajectory_kinematics =
+        TrajectoryKinematics::new(states.to_vec(), controls.to_vec(), road.dt);
+    evaluate(&trajectory_kinematics, actors, road)
 }
 
 #[cfg(test)]
@@ -177,7 +189,7 @@ mod tests {
     }
 
     fn evaluate_coasting(ego: &[State], actors: &[Vec<State>], road: &Road) -> Metrics {
-        evaluate(ego, &vec![Control::default(); ego.len()], actors, road)
+        evaluate_trace(ego, &vec![Control::default(); ego.len()], actors, road)
     }
 
     #[test]
@@ -217,7 +229,7 @@ mod tests {
             };
             trace.len()
         ];
-        let accelerated = evaluate(&trace, &controls, &[], &road());
+        let accelerated = evaluate_trace(&trace, &controls, &[], &road());
         assert!((accelerated.aggregate[1] - 1.0).abs() < 1e-9);
 
         let held_trace = cruise(initial, 20);
@@ -253,7 +265,7 @@ mod tests {
             s.speed = (10.0 - 6.0 * DT * (i - 100) as f64).max(0.0);
             controls[i].acceleration = -6.0;
         }
-        let m = evaluate(&ego, &controls, &[], &road());
+        let m = evaluate_trace(&ego, &controls, &[], &road());
         assert_eq!(m.per_tick[50][2], 1.0);
         assert_eq!(m.per_tick[99][2], 0.0);
         assert_eq!(m.per_tick[110][2], 1.0);

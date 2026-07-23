@@ -1,9 +1,21 @@
 # TODO
 
 --
-Factor out the procedural track generator to a separate repo and crate.
+Put this info on the Tutorial page. Probably need separate pages for introduction and keymap/controls.
 
-Factor out the TUM racetrack database loader to a separate repo and crate.
+INTRODUCTION
+The ego and traffic race on various circuits.
+
+- **track** selects the seeded circuit, a built-in preset, or a downloaded circuit.
+- **planner** changes the active motion planner.
+- **future preview** sets how many seconds of the current plan are drawn;
+  zero hides the preview without stopping the ego.
+- **diagnostic points/trajectories** show the selected planner's sampled
+  search geometry when that planner records diagnostics.
+- **pause** freezes the simulation.
+- **new track** increments the seed and spectrally regenerates a simple closed
+  circuit, its width, traffic, and the ego start.
+- **scroll** zooms the camera.
 
 --
 Taxonomy of planners

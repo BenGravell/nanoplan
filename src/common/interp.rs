@@ -1,4 +1,6 @@
-//! One-dimensional linear interpolation.
+//! Interpolation helpers.
+
+use super::types::State;
 
 /// Linearly interpolate between a and b with ratio t.
 /// t=0 -> a, t=1 -> b
@@ -30,6 +32,18 @@ pub(crate) fn interp1d(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
     let left = right - 1;
     let t = (x - xp[left]) / (xp[right] - xp[left]);
     lerp(fp[left], fp[right], t)
+}
+
+pub(crate) fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
+    let yaw_delta = (current.yaw - previous.yaw + std::f64::consts::PI)
+        .rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    State {
+        x: previous.x + (current.x - previous.x) * alpha,
+        y: previous.y + (current.y - previous.y) * alpha,
+        yaw: previous.yaw + yaw_delta * alpha,
+        speed: previous.speed + (current.speed - previous.speed) * alpha,
+    }
 }
 
 #[cfg(test)]
