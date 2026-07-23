@@ -50,6 +50,10 @@ pub(super) fn configure(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(10.0, 9.0);
     style.spacing.interact_size = egui::vec2(44.0, 32.0);
     style.spacing.button_padding = egui::vec2(12.0, 7.0);
+    // Scroll handles use widget background colors so active handles use the
+    // orange active fill instead of the active foreground (white). Hovered
+    // handles remain gold and visually distinct.
+    style.spacing.scroll.foreground_color = false;
     style.text_styles.insert(
         egui::TextStyle::Body,
         egui::FontId::new(16.0, egui::FontFamily::Proportional),

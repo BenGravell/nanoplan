@@ -3,12 +3,14 @@ use bevy_egui::egui;
 use super::super::colors::{DIM_TEXT, ORANGE, SURFACE, TEXT};
 use super::style::caps_font;
 
-const CAMERA_CONTROLS: [(&str, &str); 5] = [
+const CAMERA_CONTROLS: [(&str, &str); 7] = [
     ("MMB / WASD", "PAN"),
     ("RMB / Q E", "ROTATE"),
     ("WHEEL", "ZOOM"),
     ("F", "FOLLOW"),
     ("R", "RESET"),
+    ("P / ESC", "PAUSE"),
+    ("T", "FRAME TIME"),
 ];
 
 pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
@@ -23,25 +25,27 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
     );
     root.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
         if compact {
-            ui.spacing_mut().interact_size.y = 24.0;
+            ui.spacing_mut().interact_size.y = 20.0;
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.spacing_mut().button_padding.y = 3.0;
         }
         ui.vertical_centered(|ui| {
             ui.label(
                 egui::RichText::new("TUTORIAL")
-                    .font(caps_font(if compact { 28.0 } else { 36.0 }))
+                    .font(caps_font(if compact { 24.0 } else { 36.0 }))
                     .color(TEXT),
             );
-            ui.add_space(if compact { 2.0 } else { 8.0 });
+            ui.add_space(if compact { 0.0 } else { 8.0 });
             ui.label(
                 egui::RichText::new("CAMERA CONTROLS")
-                    .font(caps_font(15.0))
+                    .font(caps_font(if compact { 13.0 } else { 15.0 }))
                     .color(ORANGE),
             );
-            ui.add_space(if compact { 8.0 } else { 18.0 });
+            ui.add_space(if compact { 4.0 } else { 18.0 });
 
             egui::Grid::new("tutorial_camera_controls")
                 .num_columns(2)
-                .spacing(egui::vec2(40.0, if compact { 4.0 } else { 14.0 }))
+                .spacing(egui::vec2(40.0, if compact { 2.0 } else { 14.0 }))
                 .show(ui, |ui| {
                     for (input, action) in CAMERA_CONTROLS {
                         ui.label(
@@ -54,7 +58,7 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
                     }
                 });
 
-            ui.add_space(if compact { 10.0 } else { 24.0 });
+            ui.add_space(if compact { 4.0 } else { 24.0 });
             if ui
                 .button(egui::RichText::new("BACK").font(caps_font(13.0)))
                 .clicked()

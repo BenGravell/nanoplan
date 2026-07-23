@@ -44,34 +44,7 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 - Compute signed distance field to obstacles and road boundaries. Then take Euclidean distance transform to get a proximity cost map. This can be used for the collision and proximity costs and metrics.
 This works for static obstacles.
 
-
---
-profiling/timing/latency tests should add a hardware independent mechanism, similar to CLOCKS in c++, to go alongside the wall clock timinigs.
-those can be unit tested since they are stable.
-
 ## UX
-
-
---
-keyboard controls to add
-P or ESC: pause
-F: show Frame Time in upper right corner of road area canvas
-
-write these as well in the tutorial page
-
---
-dropdown for the tab selector on left menu should use all of the height available in the menu space (basically whole window height)
-
---
-put timing stats in a separate tab Timing, move from Metrics. Metrics shall be only for things related to driving quality
-
---
-
-vertical scrolling bar in scrollable boxes turns white, it should be orange so it contrasts well against background. hover color should remain different from active clicked color.
-
--- 
-we had a regression, scrolling in the left menu causes zoom
-
 
 -- New flow for driving startup.
 

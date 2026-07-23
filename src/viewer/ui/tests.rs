@@ -6,8 +6,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use super::controls::metrics::preview_metrics;
 use super::style::desktop_zoom;
 use super::{
-    ControlTab, UiState, center_rail_rect, compact_layout, configure, landing, portrait_prompt,
-    side_panel_margin, side_rail_widths, tutorial, viewer_layout,
+    ControlTab, UiState, center_rail_rect, compact_layout, configure, handle_keyboard_controls,
+    landing, portrait_prompt, side_panel_margin, side_rail_widths, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -146,6 +146,10 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
         "FOLLOW",
         "R",
         "RESET",
+        "P / ESC",
+        "PAUSE",
+        "T",
+        "FRAME TIME",
     ] {
         assert!(
             harness.query_by_label(label).is_some(),
@@ -618,7 +622,49 @@ fn pause_rail_opens_navigation_modal() {
 }
 
 #[test]
-fn driving_canvas_covers_the_viewport_beneath_overlay_rails() {
+fn keyboard_shortcuts_pause_and_toggle_frame_time() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                handle_keyboard_controls(ui.ctx(), &mut state.ui, &mut state.live);
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            },
+            ViewerHarnessState::default(),
+        );
+    harness.run_steps(2);
+
+    harness.key_press(egui::Key::P);
+    harness.run();
+    assert!(harness.state().live.paused);
+    assert!(harness.query_by_label("PAUSED").is_some());
+
+    harness.key_press(egui::Key::P);
+    harness.run();
+    assert!(!harness.state().live.paused);
+
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.state().live.paused);
+
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(!harness.state().live.paused);
+
+    harness.key_press(egui::Key::T);
+    harness.run();
+    assert!(harness.state().ui.show_frame_time);
+    assert!(harness.query_by_label("FRAME 0.00 ms").is_some());
+}
+
+#[test]
+fn driving_canvas_excludes_side_rails() {
     let size = egui::vec2(1280.0, 720.0);
     let mut harness = Harness::builder().with_size(size).build_ui_state(
         |ui, state: &mut ViewerHarnessState| {
@@ -629,13 +675,31 @@ fn driving_canvas_covers_the_viewport_beneath_overlay_rails() {
                 return;
             }
             let viewport = ui.max_rect();
+            let (left, right) = side_rail_widths(viewport.size());
             let (canvas, _) = viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            assert_eq!(canvas, viewport);
+            assert_eq!(canvas, center_rail_rect(viewport, left, right));
         },
         ViewerHarnessState::default(),
     );
 
     harness.run_steps(2);
+}
+
+#[test]
+fn active_scroll_handles_use_the_orange_widget_fill() {
+    let ctx = egui::Context::default();
+    configure(&ctx);
+    let style = ctx.style_of(egui::Theme::Light);
+
+    assert!(!style.spacing.scroll.foreground_color);
+    assert_eq!(
+        style.visuals.widgets.active.bg_fill,
+        crate::viewer::colors::ORANGE
+    );
+    assert_ne!(
+        style.visuals.widgets.hovered.bg_fill,
+        style.visuals.widgets.active.bg_fill
+    );
 }
 
 #[test]
@@ -926,10 +990,35 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "PROGRESS",
             "COMFORT",
             "OVERALL",
+        ] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.left() >= control_rail.left()
+                    && rect.right() <= control_rail.right()
+                    && rect.width() > 0.0,
+                "metric text {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
+            );
+        }
+        for label in [
             "DRIVING",
             "SPEED",
             "ACCELERATION",
             "CURVATURE",
+            "LATEST PLAN",
+            "FRAME",
+            "WHOLE FRAME FPS",
+            "LATENCY SEAMS",
+        ] {
+            assert!(
+                harness.query_by_label(label).is_none(),
+                "timing field {label:?} leaked into Metrics at {name}"
+            );
+        }
+
+        harness.state_mut().tab = ControlTab::Timing;
+        harness.run();
+        for label in [
+            "PLANNING",
             "LATEST PLAN",
             "FRAME",
             "WHOLE FRAME FPS",

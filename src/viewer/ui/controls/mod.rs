@@ -8,6 +8,7 @@ mod camera;
 pub(crate) mod metrics;
 mod opponents;
 mod planner;
+mod timing;
 mod visibility;
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -19,6 +20,7 @@ pub(crate) enum ControlTab {
     Camera,
     Visibility,
     Metrics,
+    Timing,
 }
 
 pub(super) fn control_deck(
@@ -31,6 +33,7 @@ pub(super) fn control_deck(
     let selector = egui::ComboBox::from_id_salt("control_tab")
         .selected_text(active_tab.label())
         .width(ui.available_width())
+        .height(ui.available_height())
         .show_ui(ui, |ui| {
             for tab in ControlTab::ALL {
                 ui.selectable_value(active_tab, tab, tab.label());
@@ -53,18 +56,20 @@ pub(super) fn control_deck(
                 ControlTab::Camera => camera::show(ui, live, compact, content_width),
                 ControlTab::Visibility => visibility::show(ui, state, compact, content_width),
                 ControlTab::Metrics => metrics::show(ui, live),
+                ControlTab::Timing => timing::show(ui, live),
             }
         });
 }
 
 impl ControlTab {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Track,
         Self::Planner,
         Self::Opponents,
         Self::Camera,
         Self::Visibility,
         Self::Metrics,
+        Self::Timing,
     ];
 
     fn label(self) -> &'static str {
@@ -75,6 +80,7 @@ impl ControlTab {
             Self::Camera => "CAMERA",
             Self::Visibility => "VIZ",
             Self::Metrics => "METRICS",
+            Self::Timing => "TIMING",
         }
     }
 }

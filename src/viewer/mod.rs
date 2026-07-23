@@ -75,6 +75,7 @@ impl CarpetVisualization {
 pub(crate) struct UiState {
     pub(crate) started: bool,
     pub(crate) tutorial: bool,
+    pub(crate) show_frame_time: bool,
     pub(crate) track: usize,
     pub(crate) planner: PlannerKind,
     pub(crate) preview_s: f32,
@@ -94,6 +95,7 @@ impl Default for UiState {
         Self {
             started: false,
             tutorial: false,
+            show_frame_time: false,
             track: 0,
             planner: PlannerKind::Basic,
             preview_s: 3.0,

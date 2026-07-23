@@ -63,6 +63,7 @@ pub(crate) fn ui(
         }
         return;
     }
+    handle_keyboard_controls(ctx, &mut state, &mut live);
     let (rect, exit_requested) = viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
     if exit_requested {
         request_exit(&mut app_exit);
@@ -137,11 +138,51 @@ fn viewer_layout(
                 });
         });
 
-    let pause_rect = center_rail_rect(canvas, left_width, right_width);
-    let mut pause_overlay = overlay_root_at(root, "pause_overlay", pause_rect);
+    let road_rect = center_rail_rect(canvas, left_width, right_width);
+    let mut pause_overlay = overlay_root_at(root, "pause_overlay", road_rect);
     pause_rail(&mut pause_overlay, live, compact);
-    let exit_requested = pause_modal(root.ctx(), state, live, compact);
-    (canvas, exit_requested)
+    if state.show_frame_time {
+        frame_time_overlay(root, live, road_rect, compact);
+    }
+    let paused_before_escape = live.paused;
+    if !root.ctx().egui_wants_keyboard_input()
+        && root.input(|input| input.key_pressed(egui::Key::Escape))
+        && !paused_before_escape
+    {
+        live.toggle_pause();
+    }
+    let exit_requested = pause_modal(root.ctx(), state, live, compact, paused_before_escape);
+    (road_rect, exit_requested)
+}
+
+fn handle_keyboard_controls(ctx: &egui::Context, state: &mut UiState, live: &mut Live) {
+    if ctx.egui_wants_keyboard_input() {
+        return;
+    }
+    ctx.input(|input| {
+        if input.key_pressed(egui::Key::P) {
+            live.toggle_pause();
+        }
+        if input.key_pressed(egui::Key::T) {
+            state.show_frame_time = !state.show_frame_time;
+        }
+    });
+}
+
+fn frame_time_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, compact: bool) {
+    let margin = if compact { 6.0 } else { 10.0 };
+    let mut overlay = overlay_root_at(root, "frame_time_overlay", road_rect.shrink(margin));
+    overlay.with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
+        egui::Frame::new()
+            .fill(PANEL)
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("FRAME {:.2} ms", live.frame_rate.milliseconds()))
+                        .monospace(),
+                );
+            });
+    });
 }
 
 fn overlay_root(root: &egui::Ui, id: &'static str) -> egui::Ui {
@@ -184,7 +225,13 @@ fn pause_rail(root: &mut egui::Ui, live: &mut Live, compact: bool) {
         });
 }
 
-fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compact: bool) -> bool {
+fn pause_modal(
+    ctx: &egui::Context,
+    state: &mut UiState,
+    live: &mut Live,
+    compact: bool,
+    allow_escape_close: bool,
+) -> bool {
     if !live.paused {
         return false;
     }
@@ -203,7 +250,7 @@ fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compac
     });
 
     let (resume, start, exit) = response.inner;
-    if resume || response.should_close() {
+    if resume || (allow_escape_close && response.should_close()) {
         live.toggle_pause();
     } else if start {
         live.toggle_pause();

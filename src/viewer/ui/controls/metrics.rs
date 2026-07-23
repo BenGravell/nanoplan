@@ -17,41 +17,9 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     {
         metric(ui, label, format!("{:.1}%", score * 100.0));
     }
-    section_heading(ui, "DRIVING");
-    let actuation = live.world.actuation();
-    metric(ui, "SPEED", format!("{:.1} m/s", live.world.ego().speed));
-    metric(
-        ui,
-        "ACCELERATION",
-        format!("{:+.2} m/s²", actuation.acceleration),
-    );
-    metric(ui, "CURVATURE", format!("{:+.4} m⁻¹", actuation.curvature));
-    metric(
-        ui,
-        "LATEST PLAN",
-        format!("{:.2} ms", live.world.last_plan_ms),
-    );
-    section_heading(ui, "FRAME");
-    metric(
-        ui,
-        "WHOLE FRAME FPS",
-        format!(
-            "{:.1} FPS · {:.2} ms",
-            live.frame_rate.fps(),
-            live.frame_rate.milliseconds()
-        ),
-    );
-    section_heading(ui, "LATENCY SEAMS");
-    for seam in &live.latency.seams {
-        metric(
-            ui,
-            seam.name,
-            format!("mean {:.3} ms · max {:.3} ms", seam.mean_ms(), seam.max_ms),
-        );
-    }
 }
 
-fn metric(ui: &mut egui::Ui, label: &str, value: String) {
+pub(super) fn metric(ui: &mut egui::Ui, label: &str, value: String) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(label)
@@ -64,7 +32,7 @@ fn metric(ui: &mut egui::Ui, label: &str, value: String) {
     ui.add_space(4.0);
 }
 
-fn section_heading(ui: &mut egui::Ui, heading: &str) {
+pub(super) fn section_heading(ui: &mut egui::Ui, heading: &str) {
     ui.add_space(6.0);
     ui.add(
         egui::Label::new(
