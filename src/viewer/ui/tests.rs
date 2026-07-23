@@ -703,6 +703,28 @@ fn active_scroll_handles_use_the_orange_widget_fill() {
 }
 
 #[test]
+fn orange_ui_states_always_use_white_foregrounds() {
+    let ctx = egui::Context::default();
+    configure(&ctx);
+    let style = ctx.style_of(egui::Theme::Light);
+
+    assert_eq!(
+        style.visuals.widgets.active.bg_fill,
+        crate::viewer::colors::ORANGE
+    );
+    assert_eq!(
+        style.visuals.widgets.active.fg_stroke.color,
+        egui::Color32::WHITE
+    );
+    assert_eq!(
+        style.visuals.selection.bg_fill,
+        crate::viewer::colors::ORANGE
+    );
+    assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
+    assert_eq!(style.visuals.override_text_color, None);
+}
+
+#[test]
 fn pause_rail_fits_exactly_between_the_side_overlays() {
     let canvas = egui::Rect::from_min_size(egui::pos2(12.0, 8.0), egui::vec2(1280.0, 720.0));
     let pause = center_rail_rect(canvas, 372.0, 384.0);

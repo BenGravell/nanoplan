@@ -22,10 +22,10 @@ We should see racelines (setting up outside of a corner and hitting the apex of 
 Fix the actors. They should run a basic planner instead of using magic unphysical motion.
 
 --
-Add a left-menu tab with options for the non- ego racers.
-1. Slider for the count. Should range from zero to eight.
-2. Planner to use for actors.
-3. Personality characteristics.
+Left-menu tab with more options for the opponents:
+
+1. Planner to use for opponents.
+2. Personality characteristics.
   - Assertiveness - progress weight
   - Recklessness - safety weight
 
@@ -45,6 +45,10 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 This works for static obstacles.
 
 ## UX
+--
+
+road window seems to draw over itself on short tracks [Test Track (small)]
+results in weird doubled up station lines
 
 -- New flow for driving startup.
 
@@ -65,6 +69,7 @@ After selecting track then dive into the driving app mode.
 Show the predicted future poses of actors in the viewer.
 Re-use the ego carpet element.
 Must stay lightweight on compute and rendering side.
+We don't need full coloration, can use simplified single color grey mesh.
 Add checkbox in VIZ options for showing them.
 
 --

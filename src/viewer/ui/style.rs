@@ -66,7 +66,9 @@ pub(super) fn configure(ctx: &egui::Context) {
         egui::TextStyle::Monospace,
         egui::FontId::new(14.0, egui::FontFamily::Monospace),
     );
-    style.visuals.override_text_color = Some(TEXT);
+    // Let each widget state choose its foreground color. A global text
+    // override would force dark text onto orange active controls.
+    style.visuals.override_text_color = None;
     style.visuals.window_fill = PANEL;
     style.visuals.panel_fill = PANEL;
     style.visuals.window_stroke = egui::Stroke::NONE;
