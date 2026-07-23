@@ -10,5 +10,6 @@ closed-circuit tracks, split by responsibility:
 - `mod.rs` wires those features into the Bevy app.
 
 Planner diagnostics are captured by the realtime world only while an overlay
-is enabled. The latency table accumulates per-seam mean/max timings for the
-active planner and resets on planner or track changes.
+is enabled. The metrics tab shows smoothed whole-frame FPS and accumulates
+per-frame mean/max timings for planner, simulation, and namespaced
+visualization seams. The timing history resets on planner or track changes.

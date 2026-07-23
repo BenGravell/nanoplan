@@ -61,9 +61,24 @@ fn resize_oom_rolls_back_without_recreating_the_gpu_device() {
 #[test]
 fn planner_change_resets_latency_stats() {
     let mut live = Live::default();
-    live.latency.absorb(vec![("total", 1.0)]);
+    live.latency.absorb(vec![("planner.total", 1.0)]);
     live.set_planner(PlannerKind::Lattice);
     assert!(live.latency.seams.is_empty());
+}
+
+#[test]
+fn frame_rate_smooths_whole_frame_time_and_ignores_invalid_samples() {
+    let mut rate = FrameRate::default();
+    rate.observe(1.0 / 50.0);
+    assert!((rate.fps() - 50.0).abs() < 1e-12);
+
+    rate.observe(1.0 / 100.0);
+    assert!(rate.fps() > 50.0 && rate.fps() < 100.0);
+    let smoothed = rate.fps();
+
+    rate.observe(0.0);
+    rate.observe(f64::NAN);
+    assert_eq!(rate.fps(), smoothed);
 }
 
 #[test]

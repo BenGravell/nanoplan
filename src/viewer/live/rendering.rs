@@ -11,6 +11,7 @@ use super::drawing::{
 use super::screen::px;
 use crate::viewer::ui::controls::metrics::preview_metrics;
 use crate::viewer::{DT, UiState};
+use web_time::Instant;
 
 const CAMERA_SMOOTH_DURATION_S: f32 = 0.5;
 
@@ -48,6 +49,7 @@ pub(crate) fn draw(
     window: Single<&Window>,
     time: Res<Time>,
 ) {
+    let visualization_started = Instant::now();
     // Standard fixed-step interpolation. Rendering stays one simulation tick
     // behind so it can blend completed states without predicting physics.
     let render_alpha = if live.paused {
@@ -81,17 +83,19 @@ pub(crate) fn draw(
     camera.rotation = Quat::from_rotation_z(live.camera.rotation);
     camera.scale = Vec3::splat(1.0 / live.camera.zoom);
 
+    let grid_started = Instant::now();
     if state.show_grid {
         grid::draw(&mut meshes, &mut grid_mesh, live.camera, &window);
     } else {
         grid::clear(&mut meshes, &mut grid_mesh);
     }
+    live.recorder.record(
+        "visualization.grid",
+        grid_started.elapsed().as_secs_f64() * 1e3,
+    );
 
-    let carpet_metrics = state
-        .carpet_visualization
-        .is_metric()
-        .then(|| preview_metrics(&live));
     let world = &live.world;
+    let roads_started = Instant::now();
     track::draw(
         &mut gizmos,
         &mut meshes,
@@ -101,6 +105,16 @@ pub(crate) fn draw(
         state.show_stations,
         state.show_centerline,
     );
+    live.recorder.record(
+        "visualization.roads",
+        roads_started.elapsed().as_secs_f64() * 1e3,
+    );
+
+    let carpet_started = Instant::now();
+    let carpet_metrics = state
+        .carpet_visualization
+        .is_metric()
+        .then(|| preview_metrics(&live));
     if state.show_carpet && !world.plan.is_empty() {
         carpet::draw(
             &mut meshes,
@@ -114,6 +128,12 @@ pub(crate) fn draw(
     } else {
         carpet::clear(&mut meshes, &mut carpet_mesh);
     }
+    live.recorder.record(
+        "visualization.ego_carpet",
+        carpet_started.elapsed().as_secs_f64() * 1e3,
+    );
+
+    let diagnostics_started = Instant::now();
     diagnostics::draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,
@@ -121,10 +141,21 @@ pub(crate) fn draw(
         state.show_diag_trajectories && state.planner.has_diagnostics(),
         state.show_diag_points && state.planner.has_diagnostics(),
     );
+    live.recorder.record(
+        "visualization.diagnostics",
+        diagnostics_started.elapsed().as_secs_f64() * 1e3,
+    );
 
+    let plan_started = Instant::now();
     if state.show_plan && !world.plan.is_empty() {
         plan::draw(&mut planned_trajectory, &ego, &world.plan);
     }
+    live.recorder.record(
+        "visualization.plan",
+        plan_started.elapsed().as_secs_f64() * 1e3,
+    );
+
+    let actors_started = Instant::now();
     vehicles::draw(
         &mut gizmos,
         &ego,
@@ -133,6 +164,15 @@ pub(crate) fn draw(
         &live.previous.actors,
         render_alpha,
     );
+    live.recorder.record(
+        "visualization.actors",
+        actors_started.elapsed().as_secs_f64() * 1e3,
+    );
+    live.recorder.record(
+        "visualization.total",
+        visualization_started.elapsed().as_secs_f64() * 1e3,
+    );
+    live.finish_frame();
 }
 
 pub(super) fn interpolate_state(previous: State, current: State, alpha: f64) -> State {

@@ -931,7 +931,9 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "ACCELERATION",
             "CURVATURE",
             "LATEST PLAN",
-            "PLANNER LATENCY SEAMS",
+            "FRAME",
+            "WHOLE FRAME FPS",
+            "LATENCY SEAMS",
         ] {
             let rect = harness.get_by_label(label).rect();
             assert!(

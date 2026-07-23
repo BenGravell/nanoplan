@@ -110,8 +110,9 @@ and the metrics evaluator all iterate `PlannerKind::ALL` or take
 
 ## Latency diagnostics
 
-`latency.rs` implements a minimal seam-based timing interface, described in
-full in its module doc. The short version:
+`latency.rs` implements a minimal seam-based timing interface shared by the
+planner, live simulation, and viewer, described in full in its module doc.
+The short version:
 
 - A **seam** is a named timed span inside one `plan()` call:
   `ctx.time("name", || { ...work... })`. `Context::time` is a no-op wrapper
@@ -123,7 +124,7 @@ full in its module doc. The short version:
 
   | Seam | Meaning | Recorded by |
   |---|---|---|
-  | `total` | The whole `plan()` call | `LiveWorld`, not the planner — every planner gets this for free |
+  | `planner.total` | The whole `plan()` call | `LiveWorld`, not the planner — every planner gets this for free |
   | `route` | Turning `centerline` into the planner's road representation (usually building a `Path`) | the planner |
   | `optimize` | Computing the trajectory/decision | the planner |
   | `extract` | Converting the internal solution into `Vec<Control>` | the planner |
@@ -133,10 +134,14 @@ full in its module doc. The short version:
   partition of `total`), and a seam recorded more than once inside one
   `plan()` call is summed for that call before being folded into the
   rollout statistics.
-- `simulate()` (in [`src/simulation/`](../simulation/README.md)) drains the
-  recorder every tick and accumulates `calls` / `total_ms` / `max_ms` per
-  seam into `Rollout::latency: LatencyStats`. The viewer's latency table
-  reads straight from that.
+- The live viewer drains the recorder after drawing each frame and accumulates
+  `calls` / `total_ms` / `max_ms` per seam. Multiple fixed simulation ticks in
+  one rendered frame are summed. Simulation seams use the `simulation.*`
+  namespace and drawing seams use `visualization.*`.
+- The ignored
+  `bezier_toppra_profiles_one_small_track_lap` test runs an optimized,
+  end-to-end lap and prints the same seam statistics for command-line
+  profiling.
 
 See each planner's section below for which custom seams it adds and why.
 

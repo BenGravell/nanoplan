@@ -31,7 +31,17 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
         "LATEST PLAN",
         format!("{:.2} ms", live.world.last_plan_ms),
     );
-    section_heading(ui, "PLANNER LATENCY SEAMS");
+    section_heading(ui, "FRAME");
+    metric(
+        ui,
+        "WHOLE FRAME FPS",
+        format!(
+            "{:.1} FPS · {:.2} ms",
+            live.frame_rate.fps(),
+            live.frame_rate.milliseconds()
+        ),
+    );
+    section_heading(ui, "LATENCY SEAMS");
     for seam in &live.latency.seams {
         metric(
             ui,

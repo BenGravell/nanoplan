@@ -23,6 +23,31 @@ pub(crate) use rendering::draw;
 const DEFAULT_ACTORS: usize = 5;
 const MAX_TICKS_PER_FRAME: usize = 3;
 const FRICTION_TRAIL_HORIZON_S: f64 = 4.0;
+const FRAME_TIME_SMOOTHING: f64 = 0.1;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FrameRate {
+    mean_seconds: Option<f64>,
+}
+
+impl FrameRate {
+    fn observe(&mut self, seconds: f64) {
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return;
+        }
+        self.mean_seconds = Some(self.mean_seconds.map_or(seconds, |mean| {
+            mean + FRAME_TIME_SMOOTHING * (seconds - mean)
+        }));
+    }
+
+    pub(crate) fn fps(self) -> f64 {
+        self.mean_seconds.map_or(0.0, |seconds| 1.0 / seconds)
+    }
+
+    pub(crate) fn milliseconds(self) -> f64 {
+        self.mean_seconds.unwrap_or(0.0) * 1e3
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LapStats {
@@ -66,6 +91,7 @@ pub(crate) struct Live {
     pub(crate) paused: bool,
     pub(crate) camera: CameraState,
     pub(crate) latency: LatencyStats,
+    pub(crate) frame_rate: FrameRate,
     pub(crate) friction_box: FrictionBox,
     pub(crate) lap_stats: LapStats,
     previous: RenderSnapshot,
@@ -132,6 +158,9 @@ impl Live {
         );
         self.lap_stats
             .tick(self.world.dt(), progress, self.world.track.lap_length());
+    }
+
+    fn finish_frame(&mut self) {
         self.latency.absorb(self.recorder.take());
     }
 }
@@ -151,6 +180,7 @@ impl Default for Live {
             seed: 1,
             paused: false,
             latency: LatencyStats::default(),
+            frame_rate: FrameRate::default(),
             friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
             lap_stats,
             previous,
@@ -162,6 +192,7 @@ impl Default for Live {
 }
 
 pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<Time>) {
+    live.frame_rate.observe(time.delta_secs_f64());
     live.set_planner(state.planner);
     live.world.preview_ticks = (state.preview_s as f64 / DT).round() as usize;
     live.world.diagnostics_enabled = state.preview_s > 0.0

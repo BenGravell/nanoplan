@@ -1,11 +1,12 @@
-//! Planner latency diagnostics.
+//! Runtime latency diagnostics.
 //!
-//! A seam is a named timed span inside a `plan()` call, recorded through the
-//! [`Latency`] recorder reachable from the planning [`Context`](super::Context).
+//! A seam is a named timed span. Planner internals record through the
+//! [`Latency`] recorder reachable from the planning [`Context`](super::Context);
+//! the live world and viewer use the same recorder around their own work.
 //!
 //! Standardized seam names — use these wherever the phase exists, so
 //! planners stay comparable:
-//! - `total`: the whole `plan()` call (recorded by the simulator, not the planner)
+//! - `planner.total`: the whole `plan()` call (recorded by the world, not the planner)
 //! - `route`: turning the centerline into the planner's road representation
 //! - `optimize`: computing the trajectory/decision
 //! - `extract`: converting the internal solution into controls
@@ -17,13 +18,14 @@
 //!   table can compare "time spent pricing candidates" across implementations.
 //!
 //! Planners add their own seams for phases only they have (e.g. PI²-DDP's
-//! `rollouts`). Seams may nest — they are
-//! independent named spans, not a partition of `total`. A seam recorded
+//! `rollouts`). Seams may nest — they are independent named spans, not a
+//! partition of `planner.total`. A seam recorded
 //! several times within one `plan()` call is summed for that call.
 //!
-//! Open-world profiling also records `world_*` seams around live-world setup
-//! work that feeds the planner: window maintenance, traffic stepping,
-//! goal-distance update, and route-aware actor culling.
+//! Live profiling uses namespaced seams such as `simulation.actors`,
+//! `simulation.preview`, `visualization.roads`, and
+//! `visualization.ego_carpet`. Seams recorded several times in one rendered
+//! frame (because the fixed-step simulation catches up) are summed.
 
 use web_time::Instant;
 
@@ -39,10 +41,13 @@ impl Latency {
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         let t0 = Instant::now();
         let out = f();
-        self.spans
-            .borrow_mut()
-            .push((name, t0.elapsed().as_secs_f64() * 1e3));
+        self.record(name, t0.elapsed().as_secs_f64() * 1e3);
         out
+    }
+
+    /// Record an already measured span (milliseconds).
+    pub(crate) fn record(&self, name: &'static str, milliseconds: f64) {
+        self.spans.borrow_mut().push((name, milliseconds));
     }
 
     /// Drain the spans recorded since the last take.
@@ -51,9 +56,9 @@ impl Latency {
     }
 }
 
-/// One seam's statistics over a rollout. `calls` counts the `plan()` calls
-/// in which the seam appeared; repeated recordings within one call are
-/// summed before folding in.
+/// One seam's statistics over a run. `calls` counts the samples (normally
+/// rendered frames) in which the seam appeared; repeated recordings within
+/// one sample are summed before folding in.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SeamStats {
     pub(crate) name: &'static str,
@@ -68,16 +73,16 @@ impl SeamStats {
     }
 }
 
-/// Latency statistics for a whole rollout, seams in order of first appearance.
+/// Latency statistics for a whole run, seams in order of first appearance.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LatencyStats {
     pub(crate) seams: Vec<SeamStats>,
 }
 
 impl LatencyStats {
-    /// Fold in the spans of one `plan()` call.
+    /// Fold in the spans of one sample.
     pub(crate) fn absorb(&mut self, spans: Vec<(&'static str, f64)>) {
-        // sum repeated seams within this call, preserving first-seen order
+        // Sum repeated seams within this sample, preserving first-seen order.
         let mut per_call: Vec<(&'static str, f64)> = Vec::new();
         for (name, ms) in spans {
             match per_call.iter_mut().find(|(n, _)| *n == name) {
