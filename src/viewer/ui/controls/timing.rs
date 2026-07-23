@@ -27,7 +27,13 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
         metric(
             ui,
             seam.name,
-            format!("mean {:.3} ms · max {:.3} ms", seam.mean_ms(), seam.max_ms),
+            format!(
+                "mean {:.3} ms · max {:.3} ms\nmean {:.1} clocks · max {}",
+                seam.mean_ms(),
+                seam.max_ms,
+                seam.mean_clocks(),
+                seam.max_clocks
+            ),
         );
     }
 }

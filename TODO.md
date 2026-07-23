@@ -15,6 +15,37 @@ Taxonomy of planners
 Focus on getting planners performing well when no other actors are present.
 We should see racelines (setting up outside of a corner and hitting the apex of the turn) emerge naturally. 
 
+## Planning
+
+
+Frenet lattice
+
+Sample in space of s,t,v,time
+
+s: progress coord
+t transverse coord
+v: speed
+Time
+
+Take yaw from frenet i.e. zero in frenet angle, so we are not sampling over yaw angles.
+
+Coarse grid, discretize with about 5 to 8 breakpoints per dimension. Total traj segments 1000.
+
+
+Sampling bounds
+
+Use road width for T coord bound.
+
+Use max throttle/brake to set S coord bounds.
+
+Use accel limits for speed bounds.
+
+Time sampled at every 1second (10 ticks)
+
+
+Discard kinematic infeasible traj after performing frenet transform.
+
+Then run metric objective and use that as edge cost in A star.
 
 ## Actor planning
 

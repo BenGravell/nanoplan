@@ -61,7 +61,8 @@ fn resize_oom_rolls_back_without_recreating_the_gpu_device() {
 #[test]
 fn planner_change_resets_latency_stats() {
     let mut live = Live::default();
-    live.latency.absorb(vec![("planner.total", 1.0)]);
+    live.recorder.record("planner.total", 1.0, 1);
+    live.latency.absorb(live.recorder.take());
     live.set_planner(PlannerKind::Lattice);
     assert!(live.latency.seams.is_empty());
 }

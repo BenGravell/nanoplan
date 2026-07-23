@@ -231,22 +231,32 @@ impl LiveWorld {
 
     fn tick_with_latency(&mut self, latency: Option<&Latency>) {
         self.track_progress = timed(latency, "simulation.progress", || {
-            self.track
-                .project_progress([self.ego().x, self.ego().y], self.track_progress)
+            let progress = self
+                .track
+                .project_progress([self.ego().x, self.ego().y], self.track_progress);
+            work(latency, 1);
+            progress
         });
         if (self.track_progress - self.road_anchor_x).abs() >= 20.0 {
             self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
             self.road = timed(latency, "simulation.roads", || {
-                road_window(&self.track, self.road_anchor_x, self.dt())
+                let road = road_window(&self.track, self.road_anchor_x, self.dt());
+                work(latency, road.centerline().len() as u64);
+                road
             });
         }
 
         let previous_actors: Vec<_> = self.actors.iter().map(|a| (a.id, a.state)).collect();
-        timed(latency, "simulation.actors", || self.step_traffic());
+        let actor_count = self.actors.len() as u64;
+        timed(latency, "simulation.actors", || {
+            self.step_traffic();
+            work(latency, actor_count);
+        });
         let ego_reach = self.ego().speed.max(0.0) * PLANNING_HORIZON_S
             + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2);
         let actor_states: Vec<State> = timed(latency, "simulation.actor_culling", || {
-            self.actors
+            let states = self
+                .actors
                 .iter()
                 .filter(|a| {
                     a.track_x <= self.track_progress + ego_reach + ACTOR_MARGIN_M
@@ -254,7 +264,9 @@ impl LiveWorld {
                             >= self.track_progress - ACTOR_MARGIN_M
                 })
                 .map(|a| a.state)
-                .collect()
+                .collect();
+            work(latency, actor_count);
+            states
         });
         self.last_planner_actors = actor_states.len();
 
@@ -279,16 +291,20 @@ impl LiveWorld {
         self.diagnostics = diagnostics.take();
 
         self.plan = timed(latency, "simulation.preview", || {
-            self.simulator.preview(&controls, self.preview_ticks)
+            let plan = self.simulator.preview(&controls, self.preview_ticks);
+            work(latency, plan.len() as u64);
+            plan
         });
         self.plan_controls = controls.into_iter().take(self.plan.len()).collect();
         let previous_ego = self.ego();
         timed(latency, "simulation.ego", || {
             self.simulator
                 .step(self.plan_controls.first().copied().unwrap_or_default());
+            work(latency, 1);
         });
         timed(latency, "simulation.collisions", || {
             self.resolve_collisions(previous_ego, &previous_actors);
+            work(latency, actor_count + 1);
         });
     }
 
@@ -455,6 +471,12 @@ fn timed<T>(latency: Option<&Latency>, name: &'static str, f: impl FnOnce() -> T
     }
 }
 
+fn work(latency: Option<&Latency>, clocks: u64) {
+    if let Some(latency) = latency {
+        latency.work(clocks);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,11 +512,14 @@ mod tests {
         );
         for seam in &latency.seams {
             eprintln!(
-                "{:<28} calls {:>4}  mean {:>8.3} ms  max {:>8.3} ms",
+                "{:<28} calls {:>4}  mean {:>8.3} ms  max {:>8.3} ms  clocks {:>8.1}/{:>6} total {}",
                 seam.name,
                 seam.calls,
                 seam.mean_ms(),
-                seam.max_ms
+                seam.max_ms,
+                seam.mean_clocks(),
+                seam.max_clocks,
+                seam.total_clocks,
             );
             assert!(seam.total_ms.is_finite() && seam.total_ms >= 0.0);
         }
@@ -520,6 +545,50 @@ mod tests {
             assert!(
                 latency.seams.iter().any(|seam| seam.name == expected),
                 "missing latency seam {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn bezier_toppra_one_lap_logical_clocks_are_stable() {
+        let small_track = crate::track::TRACK_PRESETS.len();
+        let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::BezierToppra, 5, 0.1);
+        let lap_length = world.track.lap_length().unwrap();
+        let recorder = Latency::default();
+        let mut latency = LatencyStats::default();
+        let mut ticks = 0;
+
+        while world.track_progress < lap_length && ticks < 2_000 {
+            world.tick_recording_latency(&recorder);
+            latency.absorb(recorder.take());
+            ticks += 1;
+        }
+
+        assert_eq!(ticks, 297);
+        for (name, calls, total_clocks, max_clocks) in [
+            ("simulation.progress", 297, 297, 1),
+            ("simulation.actors", 297, 1_485, 5),
+            ("simulation.actor_culling", 297, 1_485, 5),
+            ("route", 297, 89_694, 302),
+            ("bezier_fit", 297, 594, 2),
+            ("optimize", 297, 635_683, 16_329),
+            ("extract", 297, 9_207, 31),
+            ("planner.total", 297, 735_178, 16_664),
+            ("simulation.preview", 297, 8_910, 30),
+            ("simulation.ego", 297, 297, 1),
+            ("simulation.collisions", 297, 1_782, 6),
+            ("simulation.total", 297, 760_270, 16_712),
+            ("simulation.roads", 36, 10_836, 301),
+        ] {
+            let seam = latency
+                .seams
+                .iter()
+                .find(|seam| seam.name == name)
+                .unwrap_or_else(|| panic!("missing logical clock seam {name}"));
+            assert_eq!(
+                (seam.calls, seam.total_clocks, seam.max_clocks),
+                (calls, total_clocks, max_clocks),
+                "{name}"
             );
         }
     }

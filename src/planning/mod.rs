@@ -68,8 +68,21 @@ impl Context<'_> {
     /// just run it. See [`latency`] for the standardized seam names.
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         match self.latency {
-            Some(l) => l.time(name, f),
+            Some(l) => l.time(name, || {
+                let output = f();
+                // Every instrumented planner operation has a stable base cost;
+                // planners can add data-dependent work with `Context::work`.
+                l.work(1);
+                output
+            }),
             None => f(),
+        }
+    }
+
+    /// Advance the hardware-independent profiling clock by `clocks` work units.
+    pub(crate) fn work(&self, clocks: u64) {
+        if let Some(latency) = self.latency {
+            latency.work(clocks);
         }
     }
 }

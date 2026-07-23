@@ -26,32 +26,66 @@
 //! `simulation.preview`, `visualization.roads`, and
 //! `visualization.ego_carpet`. Seams recorded several times in one rendered
 //! frame (because the fixed-step simulation catches up) are summed.
+//!
+//! Each span carries two measurements:
+//! - wall-clock milliseconds, useful for profiling a particular build/machine;
+//! - logical `clocks`, deterministic work units advanced at domain boundaries.
+//!   Clocks are hardware independent and therefore suitable for regression
+//!   assertions. Nested seams see the same work units, just as they see the
+//!   same elapsed wall time.
 
 use web_time::Instant;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Span {
+    pub(crate) name: &'static str,
+    pub(crate) milliseconds: f64,
+    pub(crate) clocks: u64,
+}
 
 /// Per-call span recorder. Interior mutability so it can sit behind the
 /// shared [`Context`](super::Context) reference planners already receive.
 #[derive(Default)]
 pub(crate) struct Latency {
-    spans: std::cell::RefCell<Vec<(&'static str, f64)>>,
+    spans: std::cell::RefCell<Vec<Span>>,
+    clocks: std::cell::Cell<u64>,
 }
 
 impl Latency {
-    /// Time `f` and record it under `name` (milliseconds).
+    /// Time `f` and record wall milliseconds plus logical work clocks.
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         let t0 = Instant::now();
+        let c0 = self.clocks.get();
         let out = f();
-        self.record(name, t0.elapsed().as_secs_f64() * 1e3);
+        self.record_span(Span {
+            name,
+            milliseconds: t0.elapsed().as_secs_f64() * 1e3,
+            clocks: self.clocks.get() - c0,
+        });
         out
     }
 
-    /// Record an already measured span (milliseconds).
-    pub(crate) fn record(&self, name: &'static str, milliseconds: f64) {
-        self.spans.borrow_mut().push((name, milliseconds));
+    /// Advance the deterministic work clock.
+    pub(crate) fn work(&self, clocks: u64) {
+        self.clocks.set(self.clocks.get() + clocks);
+    }
+
+    /// Record an already measured wall span and its deterministic work.
+    pub(crate) fn record(&self, name: &'static str, milliseconds: f64, clocks: u64) {
+        self.record_span(Span {
+            name,
+            milliseconds,
+            clocks,
+        });
+    }
+
+    fn record_span(&self, span: Span) {
+        self.spans.borrow_mut().push(span);
     }
 
     /// Drain the spans recorded since the last take.
-    pub(crate) fn take(&self) -> Vec<(&'static str, f64)> {
+    pub(crate) fn take(&self) -> Vec<Span> {
+        self.clocks.set(0);
         self.spans.take()
     }
 }
@@ -65,11 +99,17 @@ pub(crate) struct SeamStats {
     pub(crate) calls: usize,
     pub(crate) total_ms: f64,
     pub(crate) max_ms: f64,
+    pub(crate) total_clocks: u64,
+    pub(crate) max_clocks: u64,
 }
 
 impl SeamStats {
     pub(crate) fn mean_ms(&self) -> f64 {
         self.total_ms / self.calls.max(1) as f64
+    }
+
+    pub(crate) fn mean_clocks(&self) -> f64 {
+        self.total_clocks as f64 / self.calls.max(1) as f64
     }
 }
 
@@ -81,27 +121,37 @@ pub(crate) struct LatencyStats {
 
 impl LatencyStats {
     /// Fold in the spans of one sample.
-    pub(crate) fn absorb(&mut self, spans: Vec<(&'static str, f64)>) {
+    pub(crate) fn absorb(&mut self, spans: Vec<Span>) {
         // Sum repeated seams within this sample, preserving first-seen order.
-        let mut per_call: Vec<(&'static str, f64)> = Vec::new();
-        for (name, ms) in spans {
-            match per_call.iter_mut().find(|(n, _)| *n == name) {
-                Some((_, sum)) => *sum += ms,
-                None => per_call.push((name, ms)),
+        let mut per_call: Vec<Span> = Vec::new();
+        for span in spans {
+            match per_call
+                .iter_mut()
+                .find(|candidate| candidate.name == span.name)
+            {
+                Some(sum) => {
+                    sum.milliseconds += span.milliseconds;
+                    sum.clocks += span.clocks;
+                }
+                None => per_call.push(span),
             }
         }
-        for (name, ms) in per_call {
-            match self.seams.iter_mut().find(|s| s.name == name) {
+        for span in per_call {
+            match self.seams.iter_mut().find(|s| s.name == span.name) {
                 Some(s) => {
                     s.calls += 1;
-                    s.total_ms += ms;
-                    s.max_ms = s.max_ms.max(ms);
+                    s.total_ms += span.milliseconds;
+                    s.max_ms = s.max_ms.max(span.milliseconds);
+                    s.total_clocks += span.clocks;
+                    s.max_clocks = s.max_clocks.max(span.clocks);
                 }
                 None => self.seams.push(SeamStats {
-                    name,
+                    name: span.name,
                     calls: 1,
-                    total_ms: ms,
-                    max_ms: ms,
+                    total_ms: span.milliseconds,
+                    max_ms: span.milliseconds,
+                    total_clocks: span.clocks,
+                    max_clocks: span.clocks,
                 }),
             }
         }
@@ -113,28 +163,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seams_sum_within_a_call_and_track_max_across_calls() {
+    fn seams_sum_wall_time_and_stable_clocks() {
         let mut stats = LatencyStats::default();
-        stats.absorb(vec![("rollouts", 1.0), ("rollouts", 2.0), ("total", 5.0)]);
-        stats.absorb(vec![("total", 3.0)]);
+        stats.absorb(vec![
+            Span {
+                name: "rollouts",
+                milliseconds: 1.0,
+                clocks: 2,
+            },
+            Span {
+                name: "rollouts",
+                milliseconds: 2.0,
+                clocks: 3,
+            },
+            Span {
+                name: "total",
+                milliseconds: 5.0,
+                clocks: 8,
+            },
+        ]);
+        stats.absorb(vec![Span {
+            name: "total",
+            milliseconds: 3.0,
+            clocks: 4,
+        }]);
         let rollouts = &stats.seams[0];
         assert_eq!((rollouts.name, rollouts.calls), ("rollouts", 1));
         assert!((rollouts.total_ms - 3.0).abs() < 1e-12);
+        assert_eq!((rollouts.total_clocks, rollouts.max_clocks), (5, 5));
         let total = &stats.seams[1];
         assert_eq!(total.calls, 2);
         assert!((total.mean_ms() - 4.0).abs() < 1e-12);
         assert!((total.max_ms - 5.0).abs() < 1e-12);
+        assert_eq!(total.mean_clocks(), 6.0);
+        assert_eq!(total.max_clocks, 8);
     }
 
     #[test]
-    fn recorder_times_and_drains() {
+    fn recorder_captures_nested_hardware_independent_work() {
         let lat = Latency::default();
-        let v = lat.time("work", || 42);
+        let v = lat.time("total", || {
+            lat.work(2);
+            lat.time("inner", || lat.work(3));
+            42
+        });
         assert_eq!(v, 42);
         let spans = lat.take();
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].0, "work");
-        assert!(spans[0].1 >= 0.0);
+        assert_eq!(spans.len(), 2);
+        assert_eq!((spans[0].name, spans[0].clocks), ("inner", 3));
+        assert_eq!((spans[1].name, spans[1].clocks), ("total", 5));
+        assert!(spans.iter().all(|span| span.milliseconds >= 0.0));
         assert!(lat.take().is_empty());
     }
 }

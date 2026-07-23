@@ -24,10 +24,15 @@ impl Planner for BezierToppraPlanner {
         let (path, s0) = ctx.time("route", || {
             let path = Path::new(ctx.road.centerline());
             let (s0, _) = path.project(ego.position());
+            ctx.work(ctx.road.centerline().len() as u64);
             (path, s0)
         });
         let lookahead = (3.0 * ego.speed).max(15.0);
-        let b = ctx.time("bezier_fit", || fit_bezier(ego, &path, s0, lookahead));
+        let b = ctx.time("bezier_fit", || {
+            let bezier = fit_bezier(ego, &path, s0, lookahead);
+            ctx.work(1);
+            bezier
+        });
         let horizon_m = (ego.speed.max(0.0) * PLANNING_HORIZON_S
             + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2))
         .max(lookahead)
@@ -37,6 +42,7 @@ impl Planner for BezierToppraPlanner {
         let speed2 = ctx.time("optimize", || {
             let mut max_speed2 = (0..=GRID_STEPS)
                 .map(|i| {
+                    ctx.work(1);
                     let d = i as f64 * ds;
                     let curvature = planned_curvature(&b, &path, s0, lookahead, d);
                     let lateral = if curvature.abs() > 1e-9 {
@@ -54,14 +60,16 @@ impl Planner for BezierToppraPlanner {
 
             // Dynamic collision constraints are tightened monotonically from
             // the arrival times of the current parameterization.
-            let mut speed2 = toppra_profile(ego.speed.max(0.0).powi(2), ds, &max_speed2);
+            let mut speed2 =
+                toppra_profile_clocked(ego.speed.max(0.0).powi(2), ds, &max_speed2, ctx);
             for _ in 0..2 {
-                let times = arrival_times(ds, &speed2);
+                let times = arrival_times_clocked(ds, &speed2, ctx);
                 let mut changed = false;
                 for (i, &time) in times.iter().enumerate().skip(1) {
                     let d = i as f64 * ds;
                     let xy = planned_position(&b, &path, s0, lookahead, d);
                     if ctx.actors.iter().any(|actor| {
+                        ctx.work(1);
                         let p = predict(actor, &path, time);
                         (xy[0] - p.x).hypot(xy[1] - p.y)
                             < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
@@ -76,16 +84,18 @@ impl Planner for BezierToppraPlanner {
                 if !changed {
                     break;
                 }
-                speed2 = toppra_profile(ego.speed.max(0.0).powi(2), ds, &max_speed2);
+                speed2 = toppra_profile_clocked(ego.speed.max(0.0).powi(2), ds, &max_speed2, ctx);
             }
 
             // Feed the first full-footprint road collision back into the
             // speed envelope until the complete rollout is feasible.
             for _ in 0..GRID_STEPS {
-                let controls = extract_controls(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
+                let controls =
+                    extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
                 let mut state = ego;
                 let mut distance = 0.0;
                 let collision = controls.into_iter().find_map(|u| {
+                    ctx.work(1);
                     let prev = state;
                     distance += state.speed.max(0.0) * ctx.road.dt;
                     state = world_step(state, u, ctx.road.dt);
@@ -105,15 +115,26 @@ impl Planner for BezierToppraPlanner {
                     break;
                 };
                 max_speed2[stop] = 0.0;
-                speed2 = toppra_profile(ego.speed.max(0.0).powi(2), ds, &max_speed2);
+                speed2 = toppra_profile_clocked(ego.speed.max(0.0).powi(2), ds, &max_speed2, ctx);
             }
 
             speed2
         });
         ctx.time("extract", || {
-            extract_controls(ego, ctx, &path, s0, &b, lookahead, ds, &speed2)
+            extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2)
         })
     }
+}
+
+fn toppra_profile_clocked(
+    start_speed2: f64,
+    ds: f64,
+    max_speed2: &[f64],
+    ctx: &Context,
+) -> Vec<f64> {
+    let speed2 = toppra_profile(start_speed2, ds, max_speed2);
+    ctx.work(2 * (max_speed2.len() - 1) as u64);
+    speed2
 }
 
 /// Scalar TOPP-RA: backward controllable intervals, then maximum-control
@@ -152,6 +173,28 @@ fn arrival_times(ds: f64, speed2: &[f64]) -> Vec<f64> {
         times[i + 1] = times[i] + ds / average.max(1e-3);
     }
     times
+}
+
+fn arrival_times_clocked(ds: f64, speed2: &[f64], ctx: &Context) -> Vec<f64> {
+    let times = arrival_times(ds, speed2);
+    ctx.work((speed2.len() - 1) as u64);
+    times
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_controls_clocked(
+    ego: State,
+    ctx: &Context,
+    path: &Path,
+    s0: f64,
+    b: &[[f64; 2]; 4],
+    lookahead: f64,
+    ds: f64,
+    speed2: &[f64],
+) -> Vec<Control> {
+    let controls = extract_controls(ego, ctx, path, s0, b, lookahead, ds, speed2);
+    ctx.work(ctx.horizon as u64);
+    controls
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -50,6 +50,7 @@ pub(crate) fn draw(
     time: Res<Time>,
 ) {
     let visualization_started = Instant::now();
+    let mut visualization_clocks = 0;
     // Standard fixed-step interpolation. Rendering stays one simulation tick
     // behind so it can blend completed states without predicting physics.
     let render_alpha = if live.paused {
@@ -92,9 +93,12 @@ pub(crate) fn draw(
     live.recorder.record(
         "visualization.grid",
         grid_started.elapsed().as_secs_f64() * 1e3,
+        1,
     );
+    visualization_clocks += 1;
 
     let world = &live.world;
+    let road_clocks = world.road.centerline().len() as u64;
     let roads_started = Instant::now();
     track::draw(
         &mut gizmos,
@@ -108,14 +112,16 @@ pub(crate) fn draw(
     live.recorder.record(
         "visualization.roads",
         roads_started.elapsed().as_secs_f64() * 1e3,
+        road_clocks,
     );
+    visualization_clocks += road_clocks;
 
     let carpet_started = Instant::now();
     let carpet_metrics = state
         .carpet_visualization
         .is_metric()
         .then(|| preview_metrics(&live));
-    if state.show_carpet && !world.plan.is_empty() {
+    let carpet_clocks = if state.show_carpet && !world.plan.is_empty() {
         carpet::draw(
             &mut meshes,
             &mut carpet_mesh,
@@ -125,15 +131,26 @@ pub(crate) fn draw(
             state.carpet_visualization,
             carpet_metrics.as_ref(),
         );
+        world.plan.len() as u64
     } else {
         carpet::clear(&mut meshes, &mut carpet_mesh);
-    }
+        0
+    };
     live.recorder.record(
         "visualization.ego_carpet",
         carpet_started.elapsed().as_secs_f64() * 1e3,
+        carpet_clocks,
     );
+    visualization_clocks += carpet_clocks;
 
     let diagnostics_started = Instant::now();
+    let diagnostics_clocks = world.diagnostics.points.len() as u64
+        + world
+            .diagnostics
+            .trajectories
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>() as u64;
     diagnostics::draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,
@@ -144,18 +161,26 @@ pub(crate) fn draw(
     live.recorder.record(
         "visualization.diagnostics",
         diagnostics_started.elapsed().as_secs_f64() * 1e3,
+        diagnostics_clocks,
     );
+    visualization_clocks += diagnostics_clocks;
 
     let plan_started = Instant::now();
-    if state.show_plan && !world.plan.is_empty() {
+    let plan_clocks = if state.show_plan && !world.plan.is_empty() {
         plan::draw(&mut planned_trajectory, &ego, &world.plan);
-    }
+        world.plan.len() as u64
+    } else {
+        0
+    };
     live.recorder.record(
         "visualization.plan",
         plan_started.elapsed().as_secs_f64() * 1e3,
+        plan_clocks,
     );
+    visualization_clocks += plan_clocks;
 
     let actors_started = Instant::now();
+    let actor_clocks = world.actors.len() as u64 + 1;
     vehicles::draw(
         &mut gizmos,
         &ego,
@@ -167,10 +192,13 @@ pub(crate) fn draw(
     live.recorder.record(
         "visualization.actors",
         actors_started.elapsed().as_secs_f64() * 1e3,
+        actor_clocks,
     );
+    visualization_clocks += actor_clocks;
     live.recorder.record(
         "visualization.total",
         visualization_started.elapsed().as_secs_f64() * 1e3,
+        visualization_clocks,
     );
     live.finish_frame();
 }

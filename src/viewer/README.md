@@ -12,4 +12,6 @@ closed-circuit tracks, split by responsibility:
 Planner diagnostics are captured by the realtime world only while an overlay
 is enabled. The metrics tab shows smoothed whole-frame FPS and accumulates
 per-frame mean/max timings for planner, simulation, and namespaced
-visualization seams. The timing history resets on planner or track changes.
+visualization seams. Each seam also reports deterministic logical work clocks
+for hardware-independent comparisons. The timing history resets on planner or
+track changes.

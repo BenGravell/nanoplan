@@ -138,10 +138,16 @@ The short version:
   `calls` / `total_ms` / `max_ms` per seam. Multiple fixed simulation ticks in
   one rendered frame are summed. Simulation seams use the `simulation.*`
   namespace and drawing seams use `visualization.*`.
+- Every span also accumulates hardware-independent logical `clocks`. A clock
+  represents one domain work item (for example an actor, trajectory sample, or
+  rendered plan state); nested seams include their children's work. These
+  deterministic totals can be asserted in normal unit tests even though wall
+  milliseconds cannot.
 - The ignored
   `bezier_toppra_profiles_one_small_track_lap` test runs an optimized,
   end-to-end lap and prints the same seam statistics for command-line
-  profiling.
+  profiling. Its non-ignored companion asserts the exact logical clocks for
+  that lap on every test run.
 
 See each planner's section below for which custom seams it adds and why.
 
