@@ -33,6 +33,13 @@ pub(crate) struct EgoCarpetMesh {
 struct TimedState {
     state: State,
     time: f64,
+    arc_m: f64,
+}
+
+#[derive(Clone, Copy)]
+struct Station {
+    state: State,
+    arc_m: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -181,8 +188,10 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
     samples.push(TimedState {
         state: ego,
         time: 0.0,
+        arc_m: 0.0,
     });
     let mut previous = ego;
+    let mut arc_m = 0.0;
     for (i, &next) in plan.iter().enumerate() {
         let translation = (next.x - previous.x).hypot(next.y - previous.y);
         let yaw_delta = wrap_angle(next.yaw - previous.yaw).abs();
@@ -195,8 +204,10 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
             samples.push(TimedState {
                 state: interpolate_state(previous, next, alpha),
                 time: (i as f64 + alpha) * dt,
+                arc_m: arc_m + alpha * translation,
             });
         }
+        arc_m += translation;
         previous = next;
     }
     samples
@@ -205,107 +216,146 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
 fn carpet_patches(footprints: &[TimedState]) -> Vec<CarpetPatch> {
     footprint_stations(footprints)
         .into_iter()
-        .filter_map(|station| cross_section(station, footprints))
+        .map(|station| cross_section(station, footprints))
         .collect::<Vec<_>>()
         .windows(2)
-        .map(|sections| CarpetPatch {
-            rear: sections[0],
-            front: sections[1],
-            time: 0.5 * (sections[0].time + sections[1].time),
+        .filter_map(|sections| {
+            let (Some(rear), Some(front)) = (sections[0], sections[1]) else {
+                return None;
+            };
+            Some(CarpetPatch {
+                rear,
+                front,
+                time: 0.5 * (rear.time + front.time),
+            })
         })
         .collect()
 }
 
-fn footprint_stations(footprints: &[TimedState]) -> Vec<State> {
+fn footprint_stations(footprints: &[TimedState]) -> Vec<Station> {
     let Some(first) = footprints.first() else {
         return vec![];
     };
-    let mut path: Vec<_> = footprints.iter().map(|sample| sample.state).collect();
+    let mut path: Vec<_> = footprints
+        .iter()
+        .map(|sample| Station {
+            state: sample.state,
+            arc_m: sample.arc_m,
+        })
+        .collect();
     let mut terminal_front = footprints.last().unwrap().state;
     terminal_front.x += EGO_FOOTPRINT.length * terminal_front.yaw.cos();
     terminal_front.y += EGO_FOOTPRINT.length * terminal_front.yaw.sin();
-    path.push(terminal_front);
+    path.push(Station {
+        state: terminal_front,
+        arc_m: footprints.last().unwrap().arc_m + EGO_FOOTPRINT.length,
+    });
 
-    let mut stations = vec![first.state];
+    let mut stations = vec![Station {
+        state: first.state,
+        arc_m: 0.0,
+    }];
     let mut traversed = 0.0;
     let mut next_station = BAND_M;
     for pair in path.windows(2) {
-        let distance = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+        let distance = (pair[1].state.x - pair[0].state.x).hypot(pair[1].state.y - pair[0].state.y);
         while distance > f64::EPSILON && next_station <= traversed + distance {
-            stations.push(interpolate_state(
-                pair[0],
-                pair[1],
-                (next_station - traversed) / distance,
-            ));
+            let alpha = (next_station - traversed) / distance;
+            stations.push(Station {
+                state: interpolate_state(pair[0].state, pair[1].state, alpha),
+                arc_m: pair[0].arc_m + alpha * (pair[1].arc_m - pair[0].arc_m),
+            });
             next_station += BAND_M;
         }
         traversed += distance;
     }
     if stations.last().is_none_or(|station| {
-        (station.x - terminal_front.x).hypot(station.y - terminal_front.y) > FOOTPRINT_EPSILON_M
+        (station.state.x - terminal_front.x).hypot(station.state.y - terminal_front.y)
+            > FOOTPRINT_EPSILON_M
     }) {
-        stations.push(terminal_front);
+        stations.push(*path.last().unwrap());
     }
     stations
 }
 
-fn cross_section(station: State, footprints: &[TimedState]) -> Option<CrossSection> {
-    let forward = [station.yaw.cos(), station.yaw.sin()];
+fn cross_section(station: Station, footprints: &[TimedState]) -> Option<CrossSection> {
+    let forward = [station.state.yaw.cos(), station.state.yaw.sin()];
     let left = [-forward[1], forward[0]];
     let mut right = f64::INFINITY;
     let mut leftmost = f64::NEG_INFINITY;
     let mut total_time = 0.0;
     let mut occupants = 0;
 
-    for footprint in footprints {
-        let footprint_corners = EGO_FOOTPRINT.corners(footprint.state.pose());
-        let corners = [
-            footprint_corners[0],
-            footprint_corners[1],
-            footprint_corners[3],
-            footprint_corners[2],
-        ];
-        let local = corners.map(|point| {
-            let delta = [point[0] - station.x, point[1] - station.y];
-            [
-                delta[0] * forward[0] + delta[1] * forward[1],
-                delta[0] * left[0] + delta[1] * left[1],
-            ]
-        });
-        let mut intersections = Vec::with_capacity(4);
-        for i in 0..4 {
-            let a = local[i];
-            let b = local[(i + 1) % 4];
-            if a[0].abs() <= FOOTPRINT_EPSILON_M {
-                intersections.push(a[1]);
-            }
-            if (a[0] < -FOOTPRINT_EPSILON_M && b[0] > FOOTPRINT_EPSILON_M)
-                || (a[0] > FOOTPRINT_EPSILON_M && b[0] < -FOOTPRINT_EPSILON_M)
-            {
-                let alpha = -a[0] / (b[0] - a[0]);
-                intersections.push(a[1] + alpha * (b[1] - a[1]));
-            }
-        }
-        if intersections.len() >= 2 {
-            right = right.min(intersections.iter().copied().fold(f64::INFINITY, f64::min));
-            leftmost = leftmost.max(
-                intersections
-                    .iter()
-                    .copied()
-                    .fold(f64::NEG_INFINITY, f64::max),
-            );
+    for footprint in local_footprints(station.arc_m, footprints) {
+        if let Some(interval) = footprint_line_interval(station.state, footprint.state) {
+            right = right.min(interval[0]);
+            leftmost = leftmost.max(interval[1]);
             total_time += footprint.time;
             occupants += 1;
         }
     }
     (occupants > 0).then(|| CrossSection {
-        right: [station.x + right * left[0], station.y + right * left[1]],
+        right: [
+            station.state.x + right * left[0],
+            station.state.y + right * left[1],
+        ],
         left: [
-            station.x + leftmost * left[0],
-            station.y + leftmost * left[1],
+            station.state.x + leftmost * left[0],
+            station.state.y + leftmost * left[1],
         ],
         time: total_time / occupants as f64,
     })
+}
+
+fn local_footprints(arc_m: f64, footprints: &[TimedState]) -> &[TimedState] {
+    // A station can be occupied by an earlier rear pose whose body extends
+    // forward into it. A small forward margin covers lateral motion on bends.
+    let behind_m = EGO_FOOTPRINT.length + EGO_FOOTPRINT.width;
+    let ahead_m = EGO_FOOTPRINT.width;
+    let start = footprints.partition_point(|sample| sample.arc_m < arc_m - behind_m);
+    let end = footprints.partition_point(|sample| sample.arc_m <= arc_m + ahead_m);
+    &footprints[start..end]
+}
+
+fn footprint_line_interval(station: State, footprint: State) -> Option<[f64; 2]> {
+    let forward = [station.yaw.cos(), station.yaw.sin()];
+    let left = [-forward[1], forward[0]];
+    let footprint_corners = EGO_FOOTPRINT.corners(footprint.pose());
+    let corners = [
+        footprint_corners[0],
+        footprint_corners[1],
+        footprint_corners[3],
+        footprint_corners[2],
+    ];
+    let local = corners.map(|point| {
+        let delta = [point[0] - station.x, point[1] - station.y];
+        [
+            delta[0] * forward[0] + delta[1] * forward[1],
+            delta[0] * left[0] + delta[1] * left[1],
+        ]
+    });
+    let mut right = f64::INFINITY;
+    let mut leftmost = f64::NEG_INFINITY;
+    let mut intersections = 0;
+    for i in 0..4 {
+        let a = local[i];
+        let b = local[(i + 1) % 4];
+        if a[0].abs() <= FOOTPRINT_EPSILON_M {
+            right = right.min(a[1]);
+            leftmost = leftmost.max(a[1]);
+            intersections += 1;
+        }
+        if (a[0] < -FOOTPRINT_EPSILON_M && b[0] > FOOTPRINT_EPSILON_M)
+            || (a[0] > FOOTPRINT_EPSILON_M && b[0] < -FOOTPRINT_EPSILON_M)
+        {
+            let alpha = -a[0] / (b[0] - a[0]);
+            let lateral = a[1] + alpha * (b[1] - a[1]);
+            right = right.min(lateral);
+            leftmost = leftmost.max(lateral);
+            intersections += 1;
+        }
+    }
+    (intersections >= 2).then_some([right, leftmost])
 }
 
 fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
@@ -382,10 +432,12 @@ mod tests {
             TimedState {
                 state: State::default(),
                 time: 0.0,
+                arc_m: 0.0,
             },
             TimedState {
                 state: State::default(),
                 time: 2.0,
+                arc_m: 0.0,
             },
         ];
         let patches = carpet_patches(&footprints);
@@ -400,7 +452,11 @@ mod tests {
             yaw: 0.7,
             ..Default::default()
         };
-        let patches = carpet_patches(&[TimedState { state, time: 0.0 }]);
+        let patches = carpet_patches(&[TimedState {
+            state,
+            time: 0.0,
+            arc_m: 0.0,
+        }]);
         let rear = patches.first().unwrap().rear;
         let width = (rear.left[0] - rear.right[0]).hypot(rear.left[1] - rear.right[1]);
 
@@ -461,6 +517,80 @@ mod tests {
                 assert!(!polygons_overlap(&a, &b));
             }
         }
+    }
+
+    #[test]
+    fn hairpin_does_not_join_its_opposite_legs() {
+        let radius = 5.0;
+        let mut plan = (1..=20)
+            .map(|x| State {
+                x: x as f64,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        plan.extend((1..=20).map(|i| {
+            let angle = -std::f64::consts::FRAC_PI_2 + i as f64 / 20.0 * std::f64::consts::PI;
+            State {
+                x: 20.0 + radius * angle.cos(),
+                y: radius + radius * angle.sin(),
+                yaw: angle + std::f64::consts::FRAC_PI_2,
+                ..Default::default()
+            }
+        }));
+        plan.extend((0..20).rev().map(|x| State {
+            x: x as f64,
+            y: 2.0 * radius,
+            yaw: std::f64::consts::PI,
+            ..Default::default()
+        }));
+
+        let footprints = sample_footprints(State::default(), &plan, 0.1);
+        let patch = carpet_patches(&footprints)
+            .into_iter()
+            .find(|patch| {
+                let x = 0.25
+                    * (patch.rear.left[0]
+                        + patch.rear.right[0]
+                        + patch.front.left[0]
+                        + patch.front.right[0]);
+                let y = 0.25
+                    * (patch.rear.left[1]
+                        + patch.rear.right[1]
+                        + patch.front.left[1]
+                        + patch.front.right[1]);
+                (x - 10.0).abs() < BAND_M && y.abs() < BAND_M
+            })
+            .expect("outbound leg must contain a patch near x=10");
+
+        assert!(
+            [
+                patch.rear.left[1],
+                patch.rear.right[1],
+                patch.front.left[1],
+                patch.front.right[1],
+            ]
+            .into_iter()
+            .all(|y| y.abs() < 0.5 * radius)
+        );
+    }
+
+    #[test]
+    fn long_carpet_work_scales_linearly() {
+        let plan = (1..=100)
+            .map(|i| State {
+                x: i as f64 * 10.0,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let footprints = sample_footprints(State::default(), &plan, 0.1);
+        let stations = footprint_stations(&footprints);
+        let candidate_checks: usize = stations
+            .iter()
+            .map(|station| local_footprints(station.arc_m, &footprints).len())
+            .sum();
+
+        assert!(candidate_checks < stations.len() * 64);
+        assert!(candidate_checks * 20 < stations.len() * footprints.len());
     }
 
     #[test]

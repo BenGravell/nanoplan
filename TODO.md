@@ -45,7 +45,33 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 This works for static obstacles.
 
 
+--
+profiling/timing/latency tests should add a hardware independent mechanism, similar to CLOCKS in c++, to go alongside the wall clock timinigs.
+those can be unit tested since they are stable.
+
 ## UX
+
+
+--
+keyboard controls to add
+P or ESC: pause
+F: show Frame Time in upper right corner of road area canvas
+
+write these as well in the tutorial page
+
+--
+dropdown for the tab selector on left menu should use all of the height available in the menu space (basically whole window height)
+
+--
+put timing stats in a separate tab Timing, move from Metrics. Metrics shall be only for things related to driving quality
+
+--
+
+vertical scrolling bar in scrollable boxes turns white, it should be orange so it contrasts well against background. hover color should remain different from active clicked color.
+
+-- 
+we had a regression, scrolling in the left menu causes zoom
+
 
 -- New flow for driving startup.
 
@@ -61,11 +87,6 @@ Number of turns/corners
 Average/min/max curvature
 
 After selecting track then dive into the driving app mode.
-
---
-ego carpet
-rendering issues
-patches are not the correct thickness on mobile
 
 --
 Show the predicted future poses of actors in the viewer.
