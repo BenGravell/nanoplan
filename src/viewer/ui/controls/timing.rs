@@ -14,7 +14,7 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     section_heading(ui, "FRAME");
     metric(
         ui,
-        "WHOLE FRAME FPS",
+        "WHOLE FRAME",
         format!(
             "{:.1} FPS · {:.2} ms",
             live.frame_rate.fps(),

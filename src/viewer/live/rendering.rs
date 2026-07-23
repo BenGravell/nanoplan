@@ -130,8 +130,7 @@ pub(crate) fn draw(
             world.dt(),
             state.carpet_visualization,
             carpet_metrics.as_ref(),
-        );
-        world.plan.len() as u64
+        )
     } else {
         carpet::clear(&mut meshes, &mut carpet_mesh);
         0
