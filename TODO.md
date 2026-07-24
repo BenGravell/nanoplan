@@ -28,6 +28,11 @@ Taxonomy of planners
 - Local optimization (iLQR)
 
 
+--
+Measure and reduce time to first display/user interaction on app load in web app / mobile.
+
+Loaders (tracks, otherwise) should go in a background process that is non-blocking.
+Start app with download-free procedural track.
 
 
 ## Actor planning
@@ -60,16 +65,20 @@ This works for static obstacles.
 
 ## UX
 
---
+-- Grid display
 
+Minor headlines are invisible, do not show up.
+
+Zoom based wide grid should be a perfect power 2 multiple of the normal zoom grid so that the lines don't pop position on zoom. Effect should be purely that lines become thicker/thinner and disappear/appear, not popping or shifting position.
+
+
+--
 Exit button just causes page to hang on mobile, chrome browser 
 
 Make chevron on start menu like 50% bigger.
 
 
-
 --
-
 road window seems to draw over itself on short tracks [Test Track (small)]
 results in weird doubled up station lines
 
