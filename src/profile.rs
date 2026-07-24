@@ -4,7 +4,7 @@ use web_time::Instant;
 
 use crate::planning::{Latency, LatencyStats, PlannerKind};
 use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
-use crate::world::LiveWorld;
+use crate::world::{EgoStart, LiveWorld};
 
 const PLANNERS: [(&str, PlannerKind); 12] = [
     ("straight", PlannerKind::Straight),
@@ -44,6 +44,18 @@ pub struct LapProfile {
     pub simulated_seconds: f64,
     pub wall_ms: f64,
     pub seams: Vec<SeamProfile>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InitialState {
+    /// Fraction of one lap at which to place the ego.
+    pub route_fraction: f64,
+    /// Signed lateral offset in metres; positive is left of the centerline.
+    pub transverse: f64,
+    /// Heading offset from the centerline tangent in radians.
+    pub yaw_offset: f64,
+    /// Initial speed in metres per second.
+    pub speed: f64,
 }
 
 pub fn downloaded_track_ids() -> impl Iterator<Item = &'static str> {
@@ -86,18 +98,64 @@ fn track_index(name: &str) -> Result<(usize, String), String> {
 }
 
 pub fn run(planner: &str, track: &str, laps: f64) -> Result<LapProfile, String> {
+    run_from(planner, track, laps, InitialState::default())
+}
+
+pub fn run_from(
+    planner: &str,
+    track: &str,
+    laps: f64,
+    initial: InitialState,
+) -> Result<LapProfile, String> {
     if !laps.is_finite() || laps <= 0.0 {
         return Err(format!("laps must be finite and positive, got {laps}"));
+    }
+    if !initial.route_fraction.is_finite() || !(0.0..=1.0).contains(&initial.route_fraction) {
+        return Err(format!(
+            "route fraction must be finite and in [0, 1], got {}",
+            initial.route_fraction
+        ));
+    }
+    if !initial.transverse.is_finite() {
+        return Err(format!(
+            "transverse coordinate must be finite, got {}",
+            initial.transverse
+        ));
+    }
+    if !initial.yaw_offset.is_finite() {
+        return Err(format!(
+            "yaw offset must be finite, got {}",
+            initial.yaw_offset
+        ));
+    }
+    if !initial.speed.is_finite() || initial.speed < 0.0 {
+        return Err(format!(
+            "speed must be finite and non-negative, got {}",
+            initial.speed
+        ));
     }
     let planner_kind =
         planner_kind(planner).ok_or_else(|| format!("unknown planner {planner:?}"))?;
     let (track_index, track_name) = track_index(track)?;
-    let mut world = LiveWorld::with_track(track_index, 1, planner_kind, 0, 0.1);
-    let lap_length = world
-        .track
+    let track = crate::track::Track::from_catalog(track_index, 1);
+    let lap_length = track
         .lap_length()
         .ok_or_else(|| format!("track {track_name:?} has no lap length"))?;
-    let target_progress = laps * lap_length;
+    let start_progress = initial.route_fraction * lap_length;
+    let mut world = LiveWorld::with_track_at(
+        track_index,
+        1,
+        planner_kind,
+        0,
+        0.1,
+        EgoStart {
+            progress: start_progress,
+            transverse: initial.transverse,
+            yaw_offset: initial.yaw_offset,
+            speed: initial.speed,
+        },
+    );
+    let target_progress = start_progress + laps * lap_length;
     let max_ticks = (5_000.0 * laps).ceil().max(500.0) as usize;
     let recorder = Latency::default();
     let mut latency = LatencyStats::default();
@@ -114,7 +172,7 @@ pub fn run(planner: &str, track: &str, laps: f64) -> Result<LapProfile, String> 
         planner: planner_kind.name(),
         track: track_name,
         requested_laps: laps,
-        completed_laps: world.track_progress / lap_length,
+        completed_laps: (world.track_progress - start_progress) / lap_length,
         completed: world.track_progress >= target_progress,
         collision_count: world.ego_collision_count,
         ticks,

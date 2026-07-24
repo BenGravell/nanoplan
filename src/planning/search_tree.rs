@@ -102,24 +102,32 @@ pub(crate) fn best_first(
     n_nodes: usize,
     start: usize,
     mut is_goal: impl FnMut(usize) -> bool,
+    mut depth: impl FnMut(usize) -> usize,
+    mut heuristic: impl FnMut(usize) -> f64,
     mut successors: impl FnMut(usize) -> Vec<(usize, f64)>,
+    mut on_relax: impl FnMut(usize, usize),
 ) -> Option<BestFirstResult> {
     let mut dist = vec![f64::INFINITY; n_nodes];
     let mut parent = vec![usize::MAX; n_nodes];
     let mut heap = BinaryHeap::new();
     dist[start] = 0.0;
     heap.push(QueueEntry {
-        cost: 0.0,
+        cost: heuristic(start),
         node: start,
     });
 
-    while let Some(QueueEntry { cost: g, node }) = heap.pop() {
-        if g > dist[node] {
+    while let Some(QueueEntry {
+        cost: priority,
+        node,
+    }) = heap.pop()
+    {
+        if priority > dist[node] + heuristic(node) {
             continue;
         }
         if is_goal(node) {
             return Some(BestFirstResult { goal: node, parent });
         }
+        let g = dist[node];
         for (succ, edge_cost) in successors(node) {
             if !edge_cost.is_finite() {
                 continue;
@@ -128,14 +136,23 @@ pub(crate) fn best_first(
             if nd < dist[succ] {
                 dist[succ] = nd;
                 parent[succ] = node;
+                on_relax(succ, node);
                 heap.push(QueueEntry {
-                    cost: nd,
+                    cost: nd + heuristic(succ),
                     node: succ,
                 });
             }
         }
     }
-    None
+
+    let goal = (0..n_nodes)
+        .filter(|&node| node != start && dist[node].is_finite())
+        .max_by(|&a, &b| {
+            depth(a)
+                .cmp(&depth(b))
+                .then_with(|| dist[b].total_cmp(&dist[a]))
+        })?;
+    Some(BestFirstResult { goal, parent })
 }
 
 pub(crate) fn record_diagnostics(

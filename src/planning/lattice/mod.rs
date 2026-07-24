@@ -14,8 +14,9 @@ use crate::common::kinematics::{
 };
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
+use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::planning::constraints::{HardConstraints, Sample};
-use crate::planning::search_tree::{RoadFrame, best_first, brake_controls, parent_chain};
+use crate::planning::search_tree::{RoadFrame, best_first, parent_chain, stop_controls};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
@@ -35,6 +36,7 @@ const MAX_EVALUATED_SEGMENTS: usize = 1_000;
 
 const CONTROL_FEASIBILITY_TOLERANCE: f64 = 0.01;
 const ROAD_CLEARANCE_M: f64 = 0.1;
+const STEERING_LOOKAHEAD_TICKS: usize = 5;
 
 #[derive(Clone, Copy)]
 struct Reach {
@@ -75,6 +77,15 @@ fn hermite(a: f64, b: f64, da: f64, db: f64, u: f64) -> f64 {
         + (u3 - 2.0 * u2 + u) * da
         + (-2.0 * u3 + 3.0 * u2) * b
         + (u3 - u2) * db
+}
+
+fn path_curvature(path: &Path, s: f64) -> f64 {
+    let window = 2.0;
+    let lo = (s - window).max(0.0);
+    let hi = (s + window).min(path.length());
+    let (_, yaw_lo) = path.pose_at(lo);
+    let (_, yaw_hi) = path.pose_at(hi);
+    wrap_angle(yaw_hi - yaw_lo) / (hi - lo).max(1e-9)
 }
 
 fn reachable(ego_speed: f64, dt: f64) -> [Reach; TIME_LAYERS] {
@@ -195,15 +206,17 @@ fn segment(
     // Kinematic feasibility is completed for the whole edge before any
     // metric call is made.
     for (tick, &(target_s, _)) in targets.iter().enumerate() {
-        let target_yaw = targets.get(tick + 1).map_or_else(
+        let lookahead_tick = (tick + STEERING_LOOKAHEAD_TICKS - 1).min(TICKS_PER_EDGE - 1);
+        let target_yaw = targets.get(lookahead_tick + 1).map_or_else(
             || path.pose_at(s1).1,
             |&(_, next)| {
-                let current = targets[tick].1;
+                let current = targets[lookahead_tick].1;
                 (next[1] - current[1]).atan2(next[0] - current[0])
             },
         );
         let curvature = if actual.speed > LOW_SPEED_LIMIT_MPS {
-            wrap_angle(target_yaw - actual.yaw) / (actual.speed * dt)
+            wrap_angle(target_yaw - actual.yaw)
+                / (actual.speed * STEERING_LOOKAHEAD_TICKS as f64 * dt)
         } else {
             0.0
         };
@@ -220,6 +233,7 @@ fn segment(
             acceleration,
             curvature,
         };
+        let before = actual;
         actual = world_step(actual, control, dt);
         let (actual_s, actual_d) = path.project_near(actual.position(), target_s, 30.0);
         let body_center = EGO_FOOTPRINT.center(actual.pose());
@@ -227,21 +241,25 @@ fn segment(
         let (right, left) = ctx.road.lateral_bounds_at(body_s);
         let (_, body_lane_yaw) = path.pose_at(body_s);
         let road_normal = [-body_lane_yaw.sin(), body_lane_yaw.cos()];
-        let lateral_margin =
-            EGO_FOOTPRINT.support_radius(actual.yaw, road_normal) + ROAD_CLEARANCE_M;
+        let half_length = EGO_FOOTPRINT.length / 2.0;
+        let curvature_margin = 0.5 * path_curvature(path, body_s).abs() * half_length.powi(2);
+        let lateral_margin = EGO_FOOTPRINT.support_radius(actual.yaw, road_normal)
+            + curvature_margin
+            + ROAD_CLEARANCE_M;
         if body_d < right + lateral_margin || body_d > left - lateral_margin {
+            return None;
+        }
+        if start_time == 0.0
+            && (collides_with_road_barrier(actual, ctx.road)
+                || collide_with_road_barriers(before, actual, EGO_FOOTPRINT, ctx.road) != actual)
+        {
             return None;
         }
         let (s, d) = (actual_s, actual_d);
         let xy = [actual.x, actual.y];
         let lat_accel = lateral_acceleration(actual.speed, control.curvature);
         let (_, lane_yaw) = path.pose_at(s);
-        let curvature_window = 2.0;
-        let s_lo = (s - curvature_window).max(0.0);
-        let s_hi = (s + curvature_window).min(path.length());
-        let (_, yaw_lo) = path.pose_at(s_lo);
-        let (_, yaw_hi) = path.pose_at(s_hi);
-        let lane_curvature = wrap_angle(yaw_hi - yaw_lo) / (s_hi - s_lo).max(1e-9);
+        let lane_curvature = path_curvature(path, s);
         let heading_err = wrap_angle(actual.yaw - lane_yaw);
         let station_speed = actual.speed * heading_err.cos() / (1.0 - lane_curvature * d).max(0.1);
         let (lon_jerk, lat_jerk) = previous_dynamics.map_or((0.0, 0.0), |(previous, lat)| {
@@ -292,6 +310,8 @@ impl Planner for LatticePlanner {
         );
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);
+        let node_states = RefCell::new(vec![None; 1 + GRID_NODES]);
+        let pending_states = RefCell::new(vec![None; 1 + GRID_NODES]);
 
         let node_state = |node: usize| {
             let (layer, si, di, vi) = decode_node(node);
@@ -339,26 +359,40 @@ impl Planner for LatticePlanner {
                 0,
                 |node| node != 0 && decode_node(node).0 == TIME_LAYERS - 1,
                 |node| {
+                    if node == 0 {
+                        0
+                    } else {
+                        decode_node(node).0 + 1
+                    }
+                },
+                |node| {
+                    let depth = if node == 0 {
+                        0
+                    } else {
+                        decode_node(node).0 + 1
+                    };
+                    // A complete path has a fixed number of one-second edges,
+                    // each costing at most its duration. Including that
+                    // remaining budget in the queue priority prevents the
+                    // bounded search from comparing cheap short prefixes with
+                    // full-horizon candidates.
+                    (TIME_LAYERS - depth) as f64 * TICKS_PER_EDGE as f64 * ctx.road.dt
+                },
+                |node| {
                     let (layer, _si, di, _vi, sa, da, va, start) = if node == 0 {
                         (usize::MAX, 0, 0, 0, s0, d0, ego.speed.max(0.0), ego)
                     } else {
                         let (layer, si, di, vi, s, d, v) = node_state(node);
                         let (xy, yaw) = path.pose_at(s);
-                        (
-                            layer,
-                            si,
-                            di,
-                            vi,
-                            s,
-                            d,
-                            v,
-                            State {
-                                x: xy[0] - d * yaw.sin(),
-                                y: xy[1] + d * yaw.cos(),
-                                yaw,
-                                speed: v,
-                            },
-                        )
+                        let nominal = State {
+                            x: xy[0] - d * yaw.sin(),
+                            y: xy[1] + d * yaw.cos(),
+                            yaw,
+                            speed: v,
+                        };
+                        let start = node_states.borrow()[node].unwrap_or(nominal);
+                        let (actual_s, actual_d) = path.project_near(start.position(), s, 30.0);
+                        (layer, si, di, vi, actual_s, actual_d, start.speed, start)
                     };
                     let next_layer = if node == 0 { 0 } else { layer + 1 };
                     if next_layer >= TIME_LAYERS {
@@ -393,20 +427,24 @@ impl Planner for LatticePlanner {
                                 else {
                                     continue;
                                 };
+                                let successor = node_id(next_layer, next_si, next_di, next_vi);
+                                pending_states.borrow_mut()[successor] = Some(segment.end);
                                 if let Some(diag) = ctx.diagnostics {
-                                    diag.record_point(path.frenet_to_xy(sb, db));
+                                    diag.record_point([segment.end.x, segment.end.y]);
                                     diag.record_trajectory(
                                         std::iter::once([start.x, start.y])
                                             .chain(segment.points.iter().copied())
                                             .collect(),
                                     );
                                 }
-                                successors
-                                    .push((node_id(next_layer, next_si, next_di, next_vi), cost));
+                                successors.push((successor, cost));
                             }
                         }
                     }
                     successors
+                },
+                |successor, _parent| {
+                    node_states.borrow_mut()[successor] = pending_states.borrow()[successor];
                 },
             )
         });
@@ -416,7 +454,7 @@ impl Planner for LatticePlanner {
             if let Some((_, controls)) = best_root_segment.into_inner() {
                 return controls;
             }
-            return brake_controls(ego, ctx, MIN_LON_ACCEL);
+            return stop_controls(ego, ctx, ctx.horizon);
         };
 
         ctx.time("extract", || {
@@ -612,6 +650,19 @@ mod tests {
         let data = diagnostics.take();
         assert!(!data.trajectories.is_empty());
         assert!(data.trajectories.len() <= MAX_EVALUATED_SEGMENTS);
+        assert_eq!(data.points.len(), data.trajectories.len());
+        for (point, trajectory) in data.points.iter().zip(&data.trajectories) {
+            assert_eq!(trajectory.last(), Some(point));
+            assert!(
+                trajectory.first() == Some(&[0.0, 0.0])
+                    || data
+                        .points
+                        .iter()
+                        .any(|node| trajectory.first() == Some(node)),
+                "edge start {:?} is not a lattice node",
+                trajectory.first()
+            );
+        }
     }
 
     #[test]

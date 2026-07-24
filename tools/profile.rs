@@ -14,10 +14,14 @@ fn usage() -> String {
 Usage: cargo run --release --bin profile -- [OPTIONS]
 
 Options:
-  --planner NAME   Planner key (default: lattice)
-  --track NAME     Track id (default: small)
-  --laps NUMBER    Number of laps, including fractions (default: 1)
-  -h, --help       Show this help
+  --planner NAME          Planner key (default: lattice)
+  --track NAME            Track id (default: small)
+  --laps NUMBER           Number of laps, including fractions (default: 1)
+  --start-fraction NUMBER Fraction along the route at which to start (default: 0)
+  --transverse METERS     Initial offset left of the centerline (default: 0)
+  --yaw-offset RADIANS    Initial yaw offset from the centerline (default: 0)
+  --speed MPS             Initial speed (default: 0)
+  -h, --help              Show this help
 
 Planner ids:
 {planners}
@@ -28,7 +32,8 @@ Track ids:
 {downloaded_tracks}
 
 Example:
-  cargo run --release --bin profile -- --planner lattice --track small --laps 1
+  cargo run --release --bin profile -- --planner lattice --track small --laps 1 \\
+    --start-fraction 0.25 --transverse 1 --yaw-offset 0.1 --speed 20
 "
     )
 }
@@ -36,6 +41,12 @@ Example:
 fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
     args.next()
         .ok_or_else(|| format!("{flag} requires a value"))
+}
+
+fn number(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<f64, String> {
+    let raw = value(args, flag)?;
+    raw.parse()
+        .map_err(|error| format!("invalid {flag} value {raw:?}: {error}"))
 }
 
 fn main() -> ExitCode {
@@ -53,6 +64,7 @@ fn run() -> Result<bool, String> {
     let mut planner = "lattice".to_owned();
     let mut track = "small".to_owned();
     let mut laps = 1.0;
+    let mut initial = nanoplan::profile::InitialState::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -64,6 +76,12 @@ fn run() -> Result<bool, String> {
                     .parse()
                     .map_err(|error| format!("invalid --laps value {raw:?}: {error}"))?;
             }
+            "--start-fraction" => {
+                initial.route_fraction = number(&mut args, "--start-fraction")?;
+            }
+            "--transverse" => initial.transverse = number(&mut args, "--transverse")?,
+            "--yaw-offset" => initial.yaw_offset = number(&mut args, "--yaw-offset")?,
+            "--speed" => initial.speed = number(&mut args, "--speed")?,
             "-h" | "--help" => {
                 print!("{}", usage());
                 return Ok(true);
@@ -72,7 +90,7 @@ fn run() -> Result<bool, String> {
         }
     }
 
-    let profile = nanoplan::profile::run(&planner, &track, laps)?;
+    let profile = nanoplan::profile::run_from(&planner, &track, laps, initial)?;
     println!(
         "{} on {}: {:.3}/{:.3} laps, {:.1}s simulated ({} ticks), {:.3}ms wall, {} contacts",
         profile.planner,

@@ -17,6 +17,10 @@ The ego and traffic race on various circuits.
   circuit, its width, traffic, and the ego start.
 - **scroll** zooms the camera.
 
+
+--
+expand the tutorial with more pictures and a steady easy onboarding info flow
+
 --
 Taxonomy of planners
 - Sampling based (MPPI)

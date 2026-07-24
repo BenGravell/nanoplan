@@ -57,6 +57,14 @@ pub(crate) struct LiveWorld {
     road_anchor_x: f64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EgoStart {
+    pub(crate) progress: f64,
+    pub(crate) transverse: f64,
+    pub(crate) yaw_offset: f64,
+    pub(crate) speed: f64,
+}
+
 impl LiveWorld {
     pub(crate) fn with_track(
         track_index: usize,
@@ -65,15 +73,39 @@ impl LiveWorld {
         max_actors: usize,
         dt: f64,
     ) -> Self {
+        Self::with_track_at(
+            track_index,
+            seed,
+            planner,
+            max_actors,
+            dt,
+            EgoStart::default(),
+        )
+    }
+
+    pub(crate) fn with_track_at(
+        track_index: usize,
+        seed: u64,
+        planner: PlannerKind,
+        max_actors: usize,
+        dt: f64,
+        start: EgoStart,
+    ) -> Self {
         let track = Track::from_catalog(track_index, seed);
-        let (p, yaw) = track.pose(0.0);
+        let (p, centerline_yaw) = track.pose(start.progress);
         let ego = State {
-            x: p[0],
-            y: p[1],
-            yaw,
-            ..Default::default()
+            x: p[0] - start.transverse * centerline_yaw.sin(),
+            y: p[1] + start.transverse * centerline_yaw.cos(),
+            yaw: centerline_yaw + start.yaw_offset,
+            speed: start.speed,
         };
-        let road = road_window(&track, 0.0, ego.speed, dt, planner == PlannerKind::Lattice);
+        let road = road_window(
+            &track,
+            start.progress,
+            ego.speed,
+            dt,
+            planner == PlannerKind::Lattice,
+        );
         let collision_road = full_circuit_road(&track, dt);
         let actor_count = max_actors.min(15);
         let behind = if actor_count > 1 {
@@ -84,11 +116,12 @@ impl LiveWorld {
         let mut rng = Rng(seed.max(1));
         let actors = (0..actor_count)
             .map(|i| {
-                let x = if i < behind {
+                let offset = if i < behind {
                     -45.0 * (i + 1) as f64
                 } else {
                     55.0 * (i - behind + 1) as f64
                 };
+                let x = start.progress + offset;
                 let personality = Personality {
                     aggressiveness: rng.uniform(),
                     sloppiness: rng.uniform(),
@@ -115,7 +148,7 @@ impl LiveWorld {
             .collect();
         Self {
             track,
-            track_progress: 0.0,
+            track_progress: start.progress,
             road,
             actors,
             trajectory: TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt),
@@ -129,7 +162,7 @@ impl LiveWorld {
             planner: planner.build(),
             simulator: Simulator::new(ego, dt),
             collision_road,
-            road_anchor_x: 0.0,
+            road_anchor_x: start.progress,
         }
     }
 
@@ -534,6 +567,26 @@ mod tests {
     use super::*;
     use crate::geometry::barrier::collides_with_road_barrier;
     use crate::planning::LatencyStats;
+
+    #[test]
+    fn ego_can_start_from_a_frenet_state() {
+        let start = EgoStart {
+            progress: 123.0,
+            transverse: 1.25,
+            yaw_offset: -0.2,
+            speed: 17.0,
+        };
+        let world = LiveWorld::with_track_at(0, 1, PlannerKind::Straight, 0, 0.1, start);
+        let (center, centerline_yaw) = world.track.pose(start.progress);
+        let ego = world.ego();
+
+        assert_eq!(world.track_progress, start.progress);
+        assert_eq!(world.road_anchor_x, start.progress);
+        assert!((ego.x - (center[0] - start.transverse * centerline_yaw.sin())).abs() < 1e-12);
+        assert!((ego.y - (center[1] + start.transverse * centerline_yaw.cos())).abs() < 1e-12);
+        assert_eq!(ego.yaw, centerline_yaw + start.yaw_offset);
+        assert_eq!(ego.speed, start.speed);
+    }
 
     #[test]
     fn lattice_small_track_accelerates_and_previews_stay_on_road() {
