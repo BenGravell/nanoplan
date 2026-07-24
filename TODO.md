@@ -27,6 +27,9 @@ Taxonomy of planners
 - Tree search (RRT)
 - Local optimization (iLQR)
 
+
+
+
 ## Actor planning
 
 --
@@ -56,6 +59,15 @@ need to handle progress rewards somehow elegantly so that we encourage short-ter
 This works for static obstacles.
 
 ## UX
+
+--
+
+Exit button just causes page to hang on mobile, chrome browser 
+
+Make chevron on start menu like 50% bigger.
+
+
+
 --
 
 road window seems to draw over itself on short tracks [Test Track (small)]
