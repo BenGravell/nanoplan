@@ -1,6 +1,33 @@
 # TODO
 
 --
+Generated tracks are copying real tracks.
+Budapest is being copied by one of the first 5 generated circuits. The model is memorizing, or there is some even more simple bug.
+
+Generated tracks also seem to repeat themselves.
+
+--
+Exit button on web app just causes a forever dead hang.
+
+Maybe we should just get rid of the exit button for the web app, it doesn't really make sense outside of the desktop app.
+
+
+--
+
+Ego carpet
+Draw the starting band consistently with the ego footeprint. Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
+
+--
+
+Add a minimap display to upper right corner of the track canvas area.
+
+Use a simplified rep.
+- Track width constant, simple polyline using track centerline. Can be decimated since minimap always render small, only need coarse samples every 5m.
+- Ego and opponents each rendered as circular dots. Ego should always render drawn over top of opponents. Ego should be orange, opponents blue.
+- Minimap should not rotate, use a constant position and rotation. Nothing fancy.
+
+
+--
 Put this info on the Tutorial page. Probably need separate pages for introduction and keymap/controls.
 
 INTRODUCTION
