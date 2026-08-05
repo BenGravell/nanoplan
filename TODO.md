@@ -1,21 +1,14 @@
 # TODO
 
 --
-Generated tracks are copying real tracks.
-Budapest is being copied by one of the first 5 generated circuits. The model is memorizing, or there is some even more simple bug.
-
-Generated tracks also seem to repeat themselves.
-
---
 Exit button on web app just causes a forever dead hang.
 
 Maybe we should just get rid of the exit button for the web app, it doesn't really make sense outside of the desktop app.
 
-
 --
 
 Ego carpet
-Draw the starting band consistently with the ego footeprint. Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
+Draw the starting band consistently with the ego footprint. Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
 
 --
 

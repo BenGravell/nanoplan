@@ -16,10 +16,12 @@ Downloaded data remains subject to its upstream license.
 
 ## Procedurally Generated Tracks
 
-`trained_model.json` contains Fourier spectra learned from the real-world track' signed curvature and left and right road widths.
+`trained_model.json` contains Fourier spectra learned from the real-world tracks' signed curvature and left and right road widths.
 `model.rs` loads those checked-in coefficients directly.
-Procedural generation applies shared phase perturbations to preserve the curvature/width cross-spectra and characteristic balance of straights and corners.
+Procedural generation builds a hybrid spectrum by drawing each harmonic from a different training profile, then randomizes its phase.
+The phase is shared between curvature and widths to preserve their cross-spectra and characteristic balance of straights and corners.
 A harmonic solve closes each candidate.
+Candidates whose signed-curvature shape has at least 0.95 cyclic correlation with any training circuit are rejected, including reversed or mirrored matches.
 
 ## Preset Tracks
 

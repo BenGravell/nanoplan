@@ -13,6 +13,9 @@ const MAX_ATTEMPTS: usize = 64;
 const CURVATURE_WIDTH_BUFFER_M: f64 = 0.25;
 const MAX_WIDTH_SLOPE: f64 = 0.25;
 const MIN_GENERATED_HALF_WIDTH_M: f64 = 2.5;
+/// Reject centerlines whose cyclic, direction-independent shape correlation
+/// with any source circuit reaches this value.
+const MAX_TRAINING_SHAPE_CORRELATION: f64 = 0.95;
 const COEFFICIENT_COUNT: usize = SAMPLE_COUNT / 2 + 1;
 const MODEL: &str = include_str!("trained_model.json");
 
@@ -143,18 +146,11 @@ impl TrackModel {
 
     pub(crate) fn generate(&self, seed: u64) -> Option<GeneratedTrack> {
         let mut rng = Rng(seed ^ 0xd1b5_4a32_d192_ed03);
-        for attempt in 0..MAX_ATTEMPTS {
-            let profile = &self.profiles
-                [(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()];
-            let exact = attempt % 16 == 15;
-            let phases = phases(&mut rng, exact);
+        for _ in 0..MAX_ATTEMPTS {
+            let profile = self.mixed_profile(&mut rng);
+            let phases = phases(&mut rng);
             let mut turning = reconstruct(&profile.turning, &phases);
-            let length = profile.length
-                * if exact {
-                    1.0
-                } else {
-                    (1.0 + 0.05 * rng.normal()).clamp(0.85, 1.15)
-                };
+            let length = profile.length * (1.0 + 0.05 * rng.normal()).clamp(0.85, 1.15);
             let Some(points) = close_curve(&mut turning, length) else {
                 continue;
             };
@@ -166,6 +162,7 @@ impl TrackModel {
                 .chain(&left)
                 .all(|width| *width >= MIN_GENERATED_HALF_WIDTH_M)
                 && road_is_simple(&points, &right, &left)
+                && !resembles_training_track(&turning, &self.profiles)
             {
                 return Some(GeneratedTrack {
                     points: centered(points),
@@ -175,6 +172,26 @@ impl TrackModel {
             }
         }
         None
+    }
+
+    fn mixed_profile(&self, rng: &mut Rng) -> Profile {
+        let length = self.profiles
+            [(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()]
+        .length;
+        let mut mixed = Profile {
+            length,
+            turning: Vec::with_capacity(COEFFICIENT_COUNT),
+            right: Vec::with_capacity(COEFFICIENT_COUNT),
+            left: Vec::with_capacity(COEFFICIENT_COUNT),
+        };
+        for k in 0..COEFFICIENT_COUNT {
+            let donor = &self.profiles
+                [(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()];
+            mixed.turning.push(donor.turning[k]);
+            mixed.right.push(donor.right[k]);
+            mixed.left.push(donor.left[k]);
+        }
+        mixed
     }
 }
 
@@ -243,18 +260,14 @@ fn spectrum(values: &[f64]) -> Vec<Coeff> {
         .collect()
 }
 
-fn phases(rng: &mut Rng, exact: bool) -> Vec<f64> {
+fn phases(rng: &mut Rng) -> Vec<f64> {
     let half = SAMPLE_COUNT / 2;
-    let shift = TAU * rng.uniform();
-    let warp = if exact { 0.0 } else { 0.22 * rng.normal() };
     (0..=half)
         .map(|k| {
             if k == 0 || k == half {
                 0.0
             } else {
-                k as f64 * shift
-                    + warp * (TAU * k as f64 / half as f64).sin()
-                    + if exact { 0.0 } else { 0.035 * rng.normal() }
+                TAU * rng.uniform()
             }
         })
         .collect()
@@ -279,6 +292,41 @@ fn reconstruct(coefficients: &[Coeff], phases: &[f64]) -> Vec<f64> {
                 .sum()
         })
         .collect()
+}
+
+fn resembles_training_track(candidate: &[f64], profiles: &[Profile]) -> bool {
+    profiles.iter().any(|profile| {
+        let reference = reconstruct(&profile.turning, &[0.0; COEFFICIENT_COUNT]);
+        maximum_circular_correlation(candidate, &reference) >= MAX_TRAINING_SHAPE_CORRELATION
+    })
+}
+
+fn maximum_circular_correlation(a: &[f64], b: &[f64]) -> f64 {
+    let mean_a = a.iter().sum::<f64>() / a.len() as f64;
+    let mean_b = b.iter().sum::<f64>() / b.len() as f64;
+    let norm = (a.iter().map(|x| (x - mean_a).powi(2)).sum::<f64>()
+        * b.iter().map(|x| (x - mean_b).powi(2)).sum::<f64>())
+    .sqrt()
+    .max(1e-12);
+    (0..a.len())
+        .flat_map(|shift| {
+            [false, true].map(move |reverse| {
+                a.iter()
+                    .enumerate()
+                    .map(|(i, x)| {
+                        let j = if reverse {
+                            (shift + b.len() - i) % b.len()
+                        } else {
+                            (shift + i) % b.len()
+                        };
+                        (x - mean_a) * (b[j] - mean_b)
+                    })
+                    .sum::<f64>()
+                    .abs()
+                    / norm
+            })
+        })
+        .fold(0.0, f64::max)
 }
 
 fn close_curve(turning: &mut [f64], length: f64) -> Option<Vec<[f64; 2]>> {
@@ -404,11 +452,59 @@ mod tests {
     fn bundled_model_is_valid() {
         let model = TrackModel::pretrained();
         assert_eq!(model.profiles.len(), 24);
-        for seed in 0..32 {
+        for seed in 0..256 {
             let track = model.generate(seed).unwrap();
             assert!(road_is_simple(&track.points, &track.right, &track.left));
+            assert!(!resembles_training_track(
+                &signed_curvature(&track.points),
+                &model.profiles
+            ));
         }
         assert!(TrackModel::from_json(&model.to_json()).is_ok());
+    }
+
+    #[test]
+    fn generated_phase_changes_are_not_just_a_cyclic_shift() {
+        let phases = phases(&mut Rng(1));
+        assert!((phases[2] - 2.0 * phases[1]).abs() > 0.1);
+    }
+
+    #[test]
+    fn generation_does_not_reuse_a_complete_training_spectrum() {
+        let model = TrackModel::pretrained();
+        let mixed = model.mixed_profile(&mut Rng(1));
+        assert!(model.profiles.iter().all(|profile| {
+            mixed
+                .turning
+                .iter()
+                .zip(&profile.turning)
+                .any(|(a, b)| a.re != b.re || a.im != b.im)
+        }));
+    }
+
+    #[test]
+    fn exact_shifted_reversed_and_near_training_shapes_are_rejected() {
+        let model = TrackModel::pretrained();
+        let mut shape = reconstruct(&model.profiles[2].turning, &[0.0; COEFFICIENT_COUNT]);
+        assert!(resembles_training_track(&shape, &model.profiles));
+        shape.rotate_left(37);
+        assert!(resembles_training_track(&shape, &model.profiles));
+        shape.reverse();
+        assert!(resembles_training_track(&shape, &model.profiles));
+        for (i, turn) in shape.iter_mut().enumerate() {
+            *turn += 0.01 * (TAU * i as f64 / SAMPLE_COUNT as f64).sin();
+        }
+        assert!(resembles_training_track(&shape, &model.profiles));
+
+        let old_near_copy_phases = (0..COEFFICIENT_COUNT)
+            .map(|k| {
+                k as f64 * 0.7
+                    + 0.22 * (TAU * k as f64 / (SAMPLE_COUNT / 2) as f64).sin()
+                    + 0.035 * (k as f64).cos()
+            })
+            .collect::<Vec<_>>();
+        let old_near_copy = reconstruct(&model.profiles[2].turning, &old_near_copy_phases);
+        assert!(resembles_training_track(&old_near_copy, &model.profiles));
     }
 
     #[test]
