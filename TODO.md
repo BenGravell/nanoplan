@@ -1,17 +1,28 @@
 # TODO
 
 --
-Exit button on web app just causes a forever dead hang.
+Ensure that deployed web app is being built in release mode.
 
-Maybe we should just get rid of the exit button for the web app, it doesn't really make sense outside of the desktop app.
+It is way slower on phone than desktop with heavy frenet planner
+
 
 --
+Frenet lattice planner latency blows up when planned trajectory is very long e.g. on the large test track on straights and gentle curves
 
+--
+Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 
+
+--
+Introduce a ux slider on planner tab to control the compute budget.
+For most planners this will be the sample budget.
+Expose it to planners via an abstract compute budget calibrated to a characteristic wall clock time (computed offline) where 100 percent is 100ms on a typical machine.
+Reducing compute budget via slider should induce a graceful degradation in planner performance (must be implementation/planner algorithm dependent)
+
+--
 Ego carpet
 Draw the starting band consistently with the ego footprint. Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
 
 --
-
 Add a minimap display to upper right corner of the track canvas area.
 
 Use a simplified rep.
@@ -93,8 +104,6 @@ Zoom based wide grid should be a perfect power 2 multiple of the normal zoom gri
 
 
 --
-Exit button just causes page to hang on mobile, chrome browser 
-
 Make chevron on start menu like 50% bigger.
 
 
