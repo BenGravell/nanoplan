@@ -9,7 +9,7 @@ const CAMERA_CONTROLS: [(&str, &str); 7] = [
     ("WHEEL", "ZOOM"),
     ("F", "FOLLOW"),
     ("R", "RESET"),
-    ("P / ESC", "PAUSE"),
+    ("SPACE / ESC", "PAUSE"),
     ("T", "FRAME TIME"),
 ];
 

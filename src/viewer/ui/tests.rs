@@ -114,7 +114,7 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
         "FOLLOW",
         "R",
         "RESET",
-        "P / ESC",
+        "SPACE / ESC",
         "PAUSE",
         "T",
         "FRAME TIME",
@@ -575,12 +575,12 @@ fn keyboard_shortcuts_pause_and_toggle_frame_time() {
     );
     harness.run_steps(2);
 
-    harness.key_press(egui::Key::P);
+    harness.key_press(egui::Key::Space);
     harness.run();
     assert!(harness.state().live.paused);
     assert!(harness.query_by_label("PAUSED").is_some());
 
-    harness.key_press(egui::Key::P);
+    harness.key_press(egui::Key::Space);
     harness.run();
     assert!(!harness.state().live.paused);
 

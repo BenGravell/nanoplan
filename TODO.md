@@ -1,9 +1,6 @@
 # TODO
 
 --
-keyboard space should pause/unpause
-
---
 src/track/path.rs
 
 should use src/common/types/position.rs
@@ -161,4 +158,4 @@ Use the full page width.
 Put the at the bottom of the screen in dedicated area/container like a video player would have.
 
 --
-Give the various actors in the scene minimal meshes representative of the semantic class (car, truck, cycle, pedestrian, etc)
+Give ego and all actors in the scene minimal meshes representative of a racecar. pure cosmetic, keep rectangular collision box

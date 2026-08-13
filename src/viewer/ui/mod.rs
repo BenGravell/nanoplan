@@ -133,7 +133,7 @@ fn handle_keyboard_controls(ctx: &egui::Context, state: &mut UiState, live: &mut
         return;
     }
     ctx.input(|input| {
-        if input.key_pressed(egui::Key::P) {
+        if input.key_pressed(egui::Key::Space) {
             live.toggle_pause();
         }
         if input.key_pressed(egui::Key::T) {
