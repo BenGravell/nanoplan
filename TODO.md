@@ -1,22 +1,7 @@
 # TODO
 
 --
-Ensure that deployed web app is being built in release mode.
-
-It is way slower on phone than desktop with heavy frenet planner
-
-
---
-Frenet lattice planner latency blows up when planned trajectory is very long e.g. on the large test track on straights and gentle curves
-
---
 Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 
-
---
-Introduce a ux slider on planner tab to control the compute budget.
-For most planners this will be the sample budget.
-Expose it to planners via an abstract compute budget calibrated to a characteristic wall clock time (computed offline) where 100 percent is 100ms on a typical machine.
-Reducing compute budget via slider should induce a graceful degradation in planner performance (must be implementation/planner algorithm dependent)
 
 --
 Ego carpet

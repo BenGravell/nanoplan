@@ -27,7 +27,6 @@ pub(crate) fn ui(
     mut live: NonSendMut<Live>,
     mut configured: Local<bool>,
     mut active_tab: Local<ControlTab>,
-    mut app_exit: MessageWriter<AppExit>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     driving_canvas.rect = None;
@@ -57,17 +56,12 @@ pub(crate) fn ui(
             let UiState {
                 started, tutorial, ..
             } = &mut *state;
-            if landing::show(&mut root, started, tutorial) {
-                request_exit(&mut app_exit);
-            }
+            landing::show(&mut root, started, tutorial);
         }
         return;
     }
     handle_keyboard_controls(ctx, &mut state, &mut live);
-    let (rect, exit_requested) = viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
-    if exit_requested {
-        request_exit(&mut app_exit);
-    }
+    let rect = viewer_layout(&mut root, &mut state, &mut live, &mut active_tab);
     let zoom = ctx.zoom_factor();
     driving_canvas.rect = Some(Rect::from_corners(
         Vec2::new(rect.min.x, rect.min.y) * zoom,
@@ -98,20 +92,12 @@ fn is_mobile_device() -> bool {
         || (user_agent.contains("macintosh") && navigator.max_touch_points() > 1)
 }
 
-fn request_exit(app_exit: &mut MessageWriter<AppExit>) {
-    #[cfg(target_family = "wasm")]
-    if let Some(window) = web_sys::window() {
-        let _ = window.close();
-    }
-    app_exit.write(AppExit::Success);
-}
-
 fn viewer_layout(
     root: &mut egui::Ui,
     state: &mut UiState,
     live: &mut Live,
     active_tab: &mut ControlTab,
-) -> (egui::Rect, bool) {
+) -> egui::Rect {
     let canvas = root.max_rect();
     let viewport = canvas.size();
     let compact = compact_layout(viewport);
@@ -151,8 +137,8 @@ fn viewer_layout(
     {
         live.toggle_pause();
     }
-    let exit_requested = pause_modal(root.ctx(), state, live, compact, paused_before_escape);
-    (road_rect, exit_requested)
+    pause_modal(root.ctx(), state, live, compact, paused_before_escape);
+    road_rect
 }
 
 fn handle_keyboard_controls(ctx: &egui::Context, state: &mut UiState, live: &mut Live) {
@@ -231,9 +217,9 @@ fn pause_modal(
     live: &mut Live,
     compact: bool,
     allow_escape_close: bool,
-) -> bool {
+) {
     if !live.paused {
-        return false;
+        return;
     }
 
     let response = egui::Modal::new("pause_menu".into()).show(ctx, |ui| {
@@ -245,18 +231,16 @@ fn pause_modal(
         let width = ui.available_width();
         let resume = ui.add_sized([width, 36.0], egui::Button::new("RESUME"));
         let start = ui.add_sized([width, 36.0], egui::Button::new("RETURN TO START MENU"));
-        let exit = ui.add_sized([width, 36.0], egui::Button::new("EXIT"));
-        (resume.clicked(), start.clicked(), exit.clicked())
+        (resume.clicked(), start.clicked())
     });
 
-    let (resume, start, exit) = response.inner;
+    let (resume, start) = response.inner;
     if resume || (allow_escape_close && response.should_close()) {
         live.toggle_pause();
     } else if start {
         live.toggle_pause();
         state.started = false;
     }
-    exit
 }
 
 fn side_rail_widths(viewport: egui::Vec2) -> (f32, f32) {

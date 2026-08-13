@@ -5,7 +5,7 @@ use super::super::colors::{ORANGE, SURFACE, WHITE};
 const BACKGROUND_ASPECT_RATIO: f32 = 16.0 / 9.0;
 const BOTTOM_LEFT_MIN_ASPECT_RATIO: f32 = 31.0 / 20.0;
 const TITLE_ASPECT_RATIO: f32 = 146.65262 / 23.909071;
-const MENU_ITEMS: [&str; 3] = ["Start", "Tutorial", "Exit"];
+const MENU_ITEMS: [&str; 2] = ["Start", "Tutorial"];
 const MENU_INACTIVE: egui::Color32 = egui::Color32::from_rgb(171, 180, 193);
 const MENU_ROW_SPACING: f32 = 0.1;
 const ACTIVATION_DELAY_S: f64 = 0.2;
@@ -16,14 +16,13 @@ struct MenuActivation {
     started_at: f64,
 }
 
-pub(super) fn show(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) -> bool {
+pub(super) fn show(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
     background_graphics(root);
     title_graphic(root);
-    let exit_requested = start_menu(root, started, tutorial);
+    start_menu(root, started, tutorial);
     root.ctx()
         .request_repaint_after(std::time::Duration::from_millis(16));
-    exit_requested
 }
 
 pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
@@ -37,7 +36,7 @@ pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
     )
 }
 
-fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) -> bool {
+fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
     let screen = root.max_rect();
     let selection_id = egui::Id::new("landing_menu_selection");
     let activation_id = egui::Id::new("landing_menu_activation");
@@ -127,13 +126,12 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) -> b
         } else if active.index == 1 {
             *tutorial = true;
         }
-        return active.index == MENU_ITEMS.len() - 1;
+        return;
     }
     root.data_mut(|data| data.insert_temp(selection_id, selected));
     if let Some(active) = activation {
         root.data_mut(|data| data.insert_temp(activation_id, active));
     }
-    false
 }
 
 fn paint_chevron(ui: &egui::Ui, screen: egui::Rect, center_y: f32, time: f64) {

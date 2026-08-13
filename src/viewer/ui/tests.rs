@@ -29,7 +29,6 @@ struct ViewerHarnessState {
     live: Live,
     tab: ControlTab,
     configured: bool,
-    exit_requested: bool,
 }
 
 impl Default for ViewerHarnessState {
@@ -41,7 +40,6 @@ impl Default for ViewerHarnessState {
             live,
             tab: ControlTab::Planner,
             configured: false,
-            exit_requested: false,
         }
     }
 }
@@ -69,42 +67,17 @@ fn landing_starts_with_the_keyboard() {
                     ctx.request_repaint();
                     return;
                 }
-                state.exit_requested |=
-                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+                landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
             },
             ViewerHarnessState::default(),
         );
     harness.run_steps(2);
 
     assert!(harness.query_by_label("Start").is_some());
+    assert!(harness.query_by_label("Exit").is_none());
     harness.key_press(egui::Key::Enter);
     harness.run_steps(20);
     assert!(harness.state().ui.started);
-}
-
-#[test]
-fn landing_exit_selection_requests_app_shutdown() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                let ctx = ui.ctx().clone();
-                if !state.configured {
-                    configure(&ctx);
-                    state.configured = true;
-                    ctx.request_repaint();
-                    return;
-                }
-                state.exit_requested |=
-                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
-            },
-            ViewerHarnessState::default(),
-        );
-    harness.run_steps(2);
-
-    harness.get_by_label("Exit").click();
-    harness.run_steps(30);
-    assert!(harness.state().exit_requested);
 }
 
 #[test]
@@ -123,8 +96,7 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
                 if state.ui.tutorial {
                     tutorial::show(ui, &mut state.ui.tutorial);
                 } else {
-                    state.exit_requested |=
-                        landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
                 }
             },
             ViewerHarnessState::default(),
@@ -586,9 +558,7 @@ fn pause_rail_opens_navigation_modal() {
                     ui.ctx().request_repaint();
                     return;
                 }
-                let (_, exit_requested) =
-                    viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-                state.exit_requested |= exit_requested;
+                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
             },
             ViewerHarnessState::default(),
         );
@@ -596,9 +566,10 @@ fn pause_rail_opens_navigation_modal() {
 
     harness.get_by_label("PAUSE").click();
     harness.run();
-    for label in ["RESUME", "RETURN TO START MENU", "EXIT"] {
+    for label in ["RESUME", "RETURN TO START MENU"] {
         assert!(harness.query_by_label(label).is_some());
     }
+    assert!(harness.query_by_label("EXIT").is_none());
     let paused = harness.get_by_label("PAUSED").rect();
     let resume = harness.get_by_label("RESUME").rect();
     assert!((paused.center().x - resume.center().x).abs() <= 1.0);
@@ -612,13 +583,6 @@ fn pause_rail_opens_navigation_modal() {
     harness.get_by_label("RETURN TO START MENU").click();
     harness.run();
     assert!(!harness.state().ui.started);
-
-    harness.state_mut().ui.started = true;
-    harness.get_by_label("PAUSE").click();
-    harness.run();
-    harness.get_by_label("EXIT").click();
-    harness.run();
-    assert!(harness.state().exit_requested);
 }
 
 #[test]
@@ -676,7 +640,7 @@ fn driving_canvas_excludes_side_rails() {
             }
             let viewport = ui.max_rect();
             let (left, right) = side_rail_widths(viewport.size());
-            let (canvas, _) = viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            let canvas = viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
             assert_eq!(canvas, center_rail_rect(viewport, left, right));
         },
         ViewerHarnessState::default(),
