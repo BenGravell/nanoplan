@@ -528,8 +528,10 @@ impl Planner for RrtPlanner {
             take_warm(&mut self.prev, self.expected_next, ego)
         });
 
+        // Offline calibration: 150 tree samples is about 100 ms.
+        let samples = ctx.compute_budget.scale(SAMPLES, 20);
         let tree = ctx.time("optimize", || {
-            Tree::grow(ego, goal, warm.as_deref(), SAMPLES, &path, ctx)
+            Tree::grow(ego, goal, warm.as_deref(), samples, &path, ctx)
         });
 
         if let Some(diag) = ctx.diagnostics {

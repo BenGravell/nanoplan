@@ -6,12 +6,13 @@ use crate::common::kinematics::{TrajectoryKinematics, net_longitudinal_accel};
 use crate::common::rng::Rng;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::{
-    Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
+    ComputeBudget, Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner,
+    PlannerKind,
 };
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Control, DynamicBody, Simulator, State, collide_dynamic_bodies};
 use crate::track::{ROAD_SAMPLE_STEP_M, Road, Track};
-use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
+use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL};
 
 const DEFAULT_PREVIEW_TICKS: usize = 30;
 const ROAD_BEHIND_M: f64 = 50.0;
@@ -50,6 +51,7 @@ pub(crate) struct LiveWorld {
     pub(crate) ego_collision_count: usize,
     pub(crate) preview_ticks: usize,
     pub(crate) diagnostics_enabled: bool,
+    pub(crate) compute_budget: ComputeBudget,
     planner_kind: PlannerKind,
     planner: Box<dyn Planner>,
     simulator: Simulator,
@@ -158,6 +160,7 @@ impl LiveWorld {
             ego_collision_count: 0,
             preview_ticks: DEFAULT_PREVIEW_TICKS,
             diagnostics_enabled: false,
+            compute_budget: ComputeBudget::NOMINAL,
             planner_kind: planner,
             planner: planner.build(),
             simulator: Simulator::new(ego, dt),
@@ -325,6 +328,7 @@ impl LiveWorld {
                 road: &self.road,
                 actors: &actor_states,
                 horizon: self.preview_ticks.max(1),
+                compute_budget: self.compute_budget,
                 latency,
                 diagnostics: self.diagnostics_enabled.then_some(&diagnostics),
             };
@@ -514,17 +518,10 @@ fn planning_lookahead_m(mut speed: f64, dt: f64) -> f64 {
         speed = (speed + net_longitudinal_accel(MAX_LON_ACCEL, speed) * dt).max(0.0);
     }
 
-    let mut braking_speed = speed;
-    let mut braking = 0.0;
-    for _ in 0..10_000 {
-        if braking_speed <= 0.0 {
-            break;
-        }
-        braking += braking_speed * dt;
-        braking_speed =
-            (braking_speed + net_longitudinal_accel(MIN_LON_ACCEL, braking_speed) * dt).max(0.0);
-    }
-    reachable.max(braking) + ROAD_LOOKAHEAD_MARGIN_M
+    // The planner only evaluates PLANNING_HORIZON_S. Extending the road by
+    // the stopping distance *after* that horizon made its barrier scans grow
+    // with a trajectory it could never select, especially on fast straights.
+    reachable + ROAD_LOOKAHEAD_MARGIN_M
 }
 
 fn road_window(track: &Track, x: f64, speed: f64, dt: f64, reachability_sized: bool) -> Road {

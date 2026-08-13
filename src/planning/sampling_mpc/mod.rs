@@ -149,7 +149,12 @@ pub(crate) trait Optimizer: Default {
     /// low-discrepancy Gaussian noise (scaled by the optimizer's own
     /// sigma). `sample_base` is the [`sampling::qmc_normals`] index this
     /// iteration draws from, kept distinct across iterations by the caller.
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize) -> Vec<Vec<Knot>>;
+    fn sample_control_knots(
+        &mut self,
+        nominal: &[Knot],
+        sample_base: usize,
+        num_rollouts: usize,
+    ) -> Vec<Vec<Knot>>;
 
     /// judo `update_nominal_knots`: fold the sampled knot-sets and their
     /// rewards (higher is better) into the next nominal. `&mut self` because
@@ -354,6 +359,14 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let cfg = self.opt.config();
         let num_nodes = cfg.num_nodes;
+        // Offline calibration: the default 4 × 32 rollouts is about 100 ms.
+        let total_rollouts = ctx
+            .compute_budget
+            .scale(cfg.iterations * cfg.num_rollouts, 6);
+        // Keep enough candidates for CEM's six-member elite set; at small
+        // budgets fewer refinement rounds degrade more gracefully.
+        let iterations = cfg.iterations.min(total_rollouts / 6).max(1);
+        let num_rollouts = (total_rollouts / iterations).max(6);
         let path = ctx.time("route", || Path::new(ctx.road.centerline()));
 
         // Warm start: reuse last tick's nominal knot-deviations when the ego
@@ -372,9 +385,11 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         // the shared QMC sequence.
         let mut last_rollouts: Vec<Vec<State>> = Vec::new();
         ctx.time("optimize", || {
-            for it in 0..cfg.iterations {
-                let sample_base = 1 + it * cfg.num_rollouts;
-                let sampled = self.opt.sample_control_knots(&nominal, sample_base);
+            for it in 0..iterations {
+                let sample_base = 1 + it * num_rollouts;
+                let sampled = self
+                    .opt
+                    .sample_control_knots(&nominal, sample_base, num_rollouts);
                 let mut rewards = Vec::with_capacity(sampled.len());
                 let mut states = Vec::with_capacity(sampled.len());
                 for knots in &sampled {
@@ -383,7 +398,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
                     states.push(xs);
                 }
                 nominal = self.opt.update_nominal_knots(&sampled, &rewards);
-                if it == cfg.iterations - 1 {
+                if it == iterations - 1 {
                     last_rollouts = states;
                 }
             }

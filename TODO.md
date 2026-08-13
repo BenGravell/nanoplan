@@ -1,6 +1,33 @@
 # TODO
 
 --
+keyboard space should pause/unpause
+
+--
+src/track/path.rs
+
+should use src/common/types/position.rs
+
+
+--
+/// Take a warm start only if the ego ended up where the previous plan
+/// predicted (within 1 m, the same gate PI²-DDP and the judo planners
+/// use); a diverged warm start describes a maneuver from somewhere else.
+pub(crate) fn take_warm(
+    prev: &mut Option<Vec<Control>>,
+    expected_next: State,
+    ego: State,
+) -> Option<Vec<Control>> {
+    match prev.take() {
+        Some(a) if warm_start_matches(expected_next, ego) => Some(shift_actions(a)),
+        _ => None,
+    }
+}
+
+
+should be moved next to warm_start_matches, use common single definition for all warm starters, and use src/common/types/position.rs
+
+--
 Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 
 
 --

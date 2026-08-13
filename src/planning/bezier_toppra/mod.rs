@@ -411,6 +411,7 @@ mod tests {
                     road: &road,
                     actors: &[],
                     horizon: 100,
+                    compute_budget: crate::planning::ComputeBudget::NOMINAL,
                     latency: None,
                     diagnostics: None,
                 };

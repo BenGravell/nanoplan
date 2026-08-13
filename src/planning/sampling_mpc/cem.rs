@@ -45,7 +45,12 @@ impl Optimizer for Cem {
         self.cfg
     }
 
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize) -> Vec<Vec<Knot>> {
+    fn sample_control_knots(
+        &mut self,
+        nominal: &[Knot],
+        sample_base: usize,
+        num_rollouts: usize,
+    ) -> Vec<Vec<Knot>> {
         // guard against a warm-started nominal whose node count no longer
         // matches this optimizer's adapted-sigma vector
         if self.sigma.len() != nominal.len() {
@@ -54,7 +59,7 @@ impl Optimizer for Cem {
         }
         let cfg = self.cfg;
         let sigma = self.sigma.clone();
-        noised_knots(nominal, cfg.num_rollouts, sample_base, |n| {
+        noised_knots(nominal, num_rollouts, sample_base, |n| {
             let r = ramp(&cfg, n);
             [sigma[n][0] * r, sigma[n][1] * r]
         })

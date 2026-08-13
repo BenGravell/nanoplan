@@ -1,11 +1,15 @@
 //! Interpolation helpers.
 
 use super::types::State;
+use std::ops::{Add, Mul, Sub};
 
 /// Linearly interpolate between a and b with ratio t.
 /// t=0 -> a, t=1 -> b
-pub(crate) fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    (1.0 - t) * a + t * b
+pub(crate) fn lerp<T>(a: T, b: T, t: T) -> T
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+{
+    a + (b - a) * t
 }
 
 /// Linearly interpolate `fp` at `x` using monotonically increasing sample points `xp`.
@@ -53,6 +57,11 @@ mod tests {
     #[test]
     fn interpolates_between_samples() {
         assert_eq!(interp1d(1.5, &[0.0, 1.0, 3.0], &[0.0, 10.0, 20.0]), 12.5);
+    }
+
+    #[test]
+    fn lerp_supports_f32() {
+        assert_eq!(lerp(1.0_f32, 5.0, 0.25), 2.0);
     }
 
     #[test]

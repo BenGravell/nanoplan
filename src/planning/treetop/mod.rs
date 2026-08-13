@@ -211,11 +211,14 @@ impl Planner for TreetopPlanner {
         let warm = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
         });
+        // Offline calibration: 450 tree samples plus the fixed refinement
+        // pass is about 100 ms.
+        let tree_samples = ctx.compute_budget.scale(TREE_SAMPLES, 45);
 
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = rrt::Tree::grow(ego, goal, warm.as_deref(), TREE_SAMPLES, &path, ctx);
+                let tree = rrt::Tree::grow(ego, goal, warm.as_deref(), tree_samples, &path, ctx);
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });

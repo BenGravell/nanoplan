@@ -1,8 +1,9 @@
-use crate::planning::PlannerKind;
+use crate::planning::{COMPUTE_BUDGET_BREAKPOINTS, PlannerKind};
 use bevy_egui::egui;
 
 use super::super::super::colors::DIM_TEXT;
 use super::super::style::caps_font;
+use super::super::widgets::breakpoint_slider;
 use crate::viewer::UiState;
 
 pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
@@ -19,4 +20,19 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
                 ui.selectable_value(&mut state.planner, kind, kind.name());
             }
         });
+    ui.add_space(10.0);
+    ui.label(
+        egui::RichText::new("COMPUTE BUDGET")
+            .font(caps_font(11.0))
+            .color(DIM_TEXT),
+    );
+    breakpoint_slider::show(
+        ui,
+        &mut state.compute_budget_percent,
+        &COMPUTE_BUDGET_BREAKPOINTS,
+        " %",
+    )
+    .on_hover_text(
+        "100% is a calibrated 100 ms allowance; lower values trade search quality for speed.",
+    );
 }

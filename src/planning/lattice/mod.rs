@@ -32,7 +32,9 @@ const S_BREAKPOINTS: usize = 5;
 const D_BREAKPOINTS: usize = 8;
 const V_BREAKPOINTS: usize = 5;
 const GRID_NODES: usize = TIME_LAYERS * S_BREAKPOINTS * D_BREAKPOINTS * V_BREAKPOINTS;
-const MAX_EVALUATED_SEGMENTS: usize = 1_000;
+// Offline calibration: this many segment evaluations is about 100 ms on the
+// reference machine. The UI budget scales this hard bound before search.
+const SEGMENTS_AT_100_MS: usize = 1_000;
 
 const CONTROL_FEASIBILITY_TOLERANCE: f64 = 0.01;
 const ROAD_CLEARANCE_M: f64 = 0.1;
@@ -308,6 +310,7 @@ impl Planner for LatticePlanner {
             ego.speed,
             ctx.road.dt,
         );
+        let max_evaluated_segments = ctx.compute_budget.scale(SEGMENTS_AT_100_MS, 100);
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);
         let node_states = RefCell::new(vec![None; 1 + GRID_NODES]);
@@ -331,7 +334,7 @@ impl Planner for LatticePlanner {
                     vb: f64,
                     layer: usize|
          -> Option<(f64, Segment)> {
-            if evaluated.get() >= MAX_EVALUATED_SEGMENTS {
+            if evaluated.get() >= max_evaluated_segments {
                 return None;
             }
             evaluated.set(evaluated.get() + 1);
@@ -631,7 +634,7 @@ mod tests {
 
     #[test]
     fn segment_budget_is_the_declared_realtime_bound() {
-        assert_eq!(MAX_EVALUATED_SEGMENTS, 1_000);
+        assert_eq!(SEGMENTS_AT_100_MS, 1_000);
     }
 
     #[test]
@@ -649,7 +652,7 @@ mod tests {
         );
         let data = diagnostics.take();
         assert!(!data.trajectories.is_empty());
-        assert!(data.trajectories.len() <= MAX_EVALUATED_SEGMENTS);
+        assert!(data.trajectories.len() <= SEGMENTS_AT_100_MS);
         assert_eq!(data.points.len(), data.trajectories.len());
         for (point, trajectory) in data.points.iter().zip(&data.trajectories) {
             assert_eq!(trajectory.last(), Some(point));
@@ -663,6 +666,23 @@ mod tests {
                 trajectory.first()
             );
         }
+    }
+
+    #[test]
+    fn reduced_budget_caps_search_work() {
+        let road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
+        let diagnostics = crate::planning::Diagnostics::default();
+        let mut ctx = test_ctx(&road, &[]);
+        ctx.compute_budget = crate::planning::ComputeBudget::from_percent(10.0);
+        ctx.diagnostics = Some(&diagnostics);
+        LatticePlanner.plan(
+            State {
+                speed: 8.0,
+                ..Default::default()
+            },
+            &ctx,
+        );
+        assert!(diagnostics.take().trajectories.len() <= 100);
     }
 
     #[test]

@@ -139,6 +139,12 @@ impl Pi2DdpPlanner {
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(ctx.road.centerline()));
+        // Offline calibration: 4 × 32 rollouts is about 100 ms.
+        let total_rollouts = ctx.compute_budget.scale(GENERATIONS * ROLLOUTS, 8);
+        // PI²-DDP needs more samples than its six-dimensional state/action
+        // covariance; shed generations before dropping below that floor.
+        let generations = GENERATIONS.min(total_rollouts / 8).max(1);
+        let rollouts = (total_rollouts / generations).max(8);
 
         // road-informed sampling distribution: curvature exploration sized to
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
@@ -192,16 +198,16 @@ impl Planner for Pi2DdpPlanner {
             _ => Self::init_policy(&path, ego, ctx, sigma_init),
         });
 
-        for generation in 0..GENERATIONS {
+        for generation in 0..generations {
             let (x_nom, _) = noise_free(&pol.u);
 
             // K perturbed rollouts with feedback (Algorithm 2, lines 3-10);
             // custom seam: the sampling workload
-            let mut xs = vec![vec![ego; HORIZON + 1]; ROLLOUTS];
-            let mut us = vec![vec![[0.0; 2]; HORIZON]; ROLLOUTS];
-            let mut ctg = vec![vec![0.0; HORIZON + 1]; ROLLOUTS]; // cost-to-go
+            let mut xs = vec![vec![ego; HORIZON + 1]; rollouts];
+            let mut us = vec![vec![[0.0; 2]; HORIZON]; rollouts];
+            let mut ctg = vec![vec![0.0; HORIZON + 1]; rollouts]; // cost-to-go
             ctx.time("rollouts", || {
-                for k in 0..ROLLOUTS {
+                for k in 0..rollouts {
                     let mut x = ego;
                     for j in 0..HORIZON {
                         let dx = [
@@ -236,7 +242,7 @@ impl Planner for Pi2DdpPlanner {
 
             // diagnostic overlay: the final generation's sampled rollouts,
             // both as a point cloud and as trajectories
-            if generation == GENERATIONS - 1
+            if generation == generations - 1
                 && let Some(diag) = ctx.diagnostics
             {
                 for traj in &xs {
@@ -268,7 +274,7 @@ impl Planner for Pi2DdpPlanner {
 
                     // Σ_τ ← (1−α)Σ_τ + α Σₖ pₖ δτ δτᵀ, δτ relative to the nominal
                     let mut s_tau = [[0.0; 6]; 6];
-                    for k in 0..ROLLOUTS {
+                    for k in 0..rollouts {
                         let xn = &x_nom[j];
                         let xk = &xs[k][j];
                         let dtau = [
@@ -318,7 +324,7 @@ impl Planner for Pi2DdpPlanner {
                         }
                     }
                     let mut k_ff = [0.0; 2];
-                    for k in 0..ROLLOUTS {
+                    for k in 0..rollouts {
                         let dx = [
                             xs[k][j].x - x_nom[j].x,
                             xs[k][j].y - x_nom[j].y,
@@ -364,10 +370,10 @@ impl Planner for Pi2DdpPlanner {
                     // nominal for the next generation: rollout mean plus feedforward
                     for a in 0..2 {
                         pol.u[j][a] =
-                            us.iter().map(|u| u[j][a]).sum::<f64>() / ROLLOUTS as f64 + k_ff[a];
+                            us.iter().map(|u| u[j][a]).sum::<f64>() / rollouts as f64 + k_ff[a];
                     }
                     let mean = |f: fn(&State) -> f64| {
-                        xs.iter().map(|x| f(&x[j])).sum::<f64>() / ROLLOUTS as f64
+                        xs.iter().map(|x| f(&x[j])).sum::<f64>() / rollouts as f64
                     };
                     new_x_nom[j] = State {
                         x: mean(|s| s.x),

@@ -1,6 +1,6 @@
 //! Bevy plumbing for the live driving demo.
 
-use crate::planning::{Latency, LatencyStats, PlannerKind};
+use crate::planning::{ComputeBudget, Latency, LatencyStats, PlannerKind};
 use crate::world::LiveWorld;
 use bevy::prelude::*;
 
@@ -194,6 +194,7 @@ impl Default for Live {
 pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<Time>) {
     live.frame_rate.observe(time.delta_secs_f64());
     live.set_planner(state.planner);
+    live.world.compute_budget = ComputeBudget::from_percent(state.compute_budget_percent);
     live.world.preview_ticks = (state.preview_s as f64 / DT).round() as usize;
     live.world.diagnostics_enabled = state.preview_s > 0.0
         && state.planner.has_diagnostics()

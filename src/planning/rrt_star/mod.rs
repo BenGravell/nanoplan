@@ -560,14 +560,17 @@ impl Planner for RrtStarPlanner {
         // before the Halton pass runs, so its arbitrarily-ordered targets
         // (which don't respect station order) almost always land near an
         // existing node instead of failing for lack of one.
+        // Offline calibration: the default 180 targets is about 100 ms.
+        let grid_stations = ctx.compute_budget.scale(GRID_STATIONS, 1);
+        let qmc_budget = ctx.compute_budget.scale(QMC_BUDGET, GRID_LATERALS);
         ctx.time("optimize", || {
             for (s, d) in sampling::road_frame_samples::<Halton>(
                 s0,
                 s_max,
                 LATERAL_BOUND_M,
-                GRID_STATIONS,
+                grid_stations,
                 GRID_LATERALS,
-                QMC_BUDGET,
+                qmc_budget,
             ) {
                 try_extend(
                     &mut nodes,

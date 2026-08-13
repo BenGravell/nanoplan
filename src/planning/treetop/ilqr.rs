@@ -546,7 +546,9 @@ impl Planner for IlqrPlanner {
             start: ego,
             ctx,
         };
-        let sol = ctx.time("optimize", || solve(&ocp, &init, SOLO_ITERS));
+        // Offline calibration: twelve finite-difference passes is about 100 ms.
+        let iterations = ctx.compute_budget.scale(SOLO_ITERS, 1);
+        let sol = ctx.time("optimize", || solve(&ocp, &init, iterations));
 
         if let Some(diag) = ctx.diagnostics {
             for s in &sol.states {
