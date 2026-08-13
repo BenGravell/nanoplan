@@ -12,21 +12,21 @@ use std::collections::BinaryHeap;
 use crate::common::differencing::forward_difference;
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
-use crate::simulation::{Control, State, world_step};
+use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
 
-pub(crate) struct RoadFrame {
-    pub(crate) path: Path,
+pub(crate) struct RoadFrame<'a> {
+    pub(crate) path: &'a Path,
     pub(crate) s0: f64,
     pub(crate) d0: f64,
     pub(crate) speed: f64,
     pub(crate) horizon_m: f64,
 }
 
-impl RoadFrame {
-    pub(crate) fn new(ego: State, ctx: &Context) -> Self {
-        let path = Path::new(ctx.road.centerline());
+impl<'a> RoadFrame<'a> {
+    pub(crate) fn new(ego: State, ctx: &'a Context) -> Self {
+        let path = ctx.path();
         let (s0, d0) = path.project(ego.position());
         let speed = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
         RoadFrame {
@@ -68,8 +68,8 @@ impl PartialOrd for QueueEntry {
     }
 }
 
-pub(crate) fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+pub(crate) fn dist(a: Position, b: Position) -> f64 {
+    a.distance(b)
 }
 
 /// Whichever of `a`, `b` has the larger magnitude, keeping its sign.
@@ -143,7 +143,10 @@ pub(crate) fn best_first(
     Some(BestFirstResult { goal, parent })
 }
 
-pub(crate) fn record_diagnostics(diag: &Diagnostics, nodes: impl IntoIterator<Item = ([f64; 2], Vec<[f64; 2]>)>) {
+pub(crate) fn record_diagnostics(
+    diag: &Diagnostics,
+    nodes: impl IntoIterator<Item = (crate::simulation::Position, Vec<crate::simulation::Position>)>,
+) {
     for (point, trajectory) in nodes {
         diag.record_point(point);
         diag.record_trajectory(trajectory);
@@ -244,9 +247,10 @@ pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Contex
         .map(|i| {
             let s = (speed * dt * (i + 1) as f64 + lookahead).min(total_len);
             let (target, _) = path.pose_at(s);
-            let dx = target[0] - x.x;
-            let dy = target[1] - x.y;
-            let local_y = -dx * x.yaw.sin() + dy * x.yaw.cos();
+            let dx = target.x - x.position().x;
+            let dy = target.y - x.position().y;
+            let left = Position::from_angle(x.pose.yaw + std::f64::consts::FRAC_PI_2);
+            let local_y = dx * left.x + dy * left.y;
             let ld2 = (dx * dx + dy * dy).max(1e-6);
             let curvature = 2.0 * PATH_TRACK_CURVATURE_GAIN * local_y / ld2;
             let accel = (0.5 * (speed - x.speed)).clamp(-4.0, 2.0);

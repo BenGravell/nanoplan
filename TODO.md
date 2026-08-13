@@ -1,28 +1,34 @@
 # TODO
 
---
-src/track/path.rs
-
-should use src/common/types/position.rs
-
 
 --
-/// Take a warm start only if the ego ended up where the previous plan
-/// predicted (within 1 m, the same gate PI²-DDP and the judo planners
-/// use); a diverged warm start describes a maneuver from somewhere else.
-pub(crate) fn take_warm(
-    prev: &mut Option<Vec<Control>>,
-    expected_next: State,
-    ego: State,
-) -> Option<Vec<Control>> {
-    match prev.take() {
-        Some(a) if warm_start_matches(expected_next, ego) => Some(shift_actions(a)),
-        _ => None,
-    }
-}
+
+src/world/mod.rs
+
+self.actors.push(SmartActor {
+                id: next_id,
+                state: State::from((
+                    Position::new(p.x + lateral * left.x, p.y + lateral * left.y),
+                    yaw,
+                    5.0 + 4.0 * rng.uniform(),
+                )),
+                personality,
+                track_x: x,
+                lateral,
+                lateral_target: lateral,
+                next_wander_x: x + 15.0 + 25.0 * actor_rng.uniform(),
+                rng: actor_rng,
+            });
 
 
-should be moved next to warm_start_matches, use common single definition for all warm starters, and use src/common/types/position.rs
+no magic numbers, use named constants
+
+
+
+--
+src/world/mod.rs
+
+file is too big, split up using conceptual divisions
 
 --
 Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 

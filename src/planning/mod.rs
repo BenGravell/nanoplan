@@ -1,5 +1,7 @@
 //! The planner interface and one module per planner.
 
+use std::cell::OnceCell;
+
 pub(crate) mod basic;
 pub(crate) mod bezier_toppra;
 mod catalog;
@@ -20,12 +22,13 @@ pub(crate) mod steering;
 pub(crate) mod straight;
 mod trajectory_cost;
 pub(crate) mod treetop;
+mod warm_start;
 
 pub(crate) use basic::BasicPlanner;
 pub(crate) use bezier_toppra::BezierToppraPlanner;
 pub(crate) use catalog::PlannerKind;
 pub(crate) use compute_budget::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT};
-pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS, warm_start_matches};
+pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats};
 pub(crate) use lattice::LatticePlanner;
@@ -35,12 +38,16 @@ pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub(crate) use straight::StraightPlanner;
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
+pub(crate) use warm_start::take_warm;
 
+#[cfg(test)]
+use crate::simulation::Position;
 use crate::simulation::{Control, State};
-use crate::track::Road;
+use crate::track::{Path, Road};
 
 /// Everything a planner sees besides the ego state.
 pub(crate) struct Context<'a> {
+    path: OnceCell<Path>,
     /// The fixed setting of the run: centerline, target speed, tick length.
     pub(crate) road: &'a Road,
     /// Current states of the other actors.
@@ -57,7 +64,30 @@ pub(crate) struct Context<'a> {
     pub(crate) diagnostics: Option<&'a Diagnostics>,
 }
 
-impl Context<'_> {
+impl<'a> Context<'a> {
+    pub(crate) fn new(
+        road: &'a Road,
+        actors: &'a [State],
+        horizon: usize,
+        compute_budget: ComputeBudget,
+        latency: Option<&'a Latency>,
+        diagnostics: Option<&'a Diagnostics>,
+    ) -> Self {
+        Context {
+            path: OnceCell::new(),
+            road,
+            actors,
+            horizon,
+            compute_budget,
+            latency,
+            diagnostics,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.path.get_or_init(|| Path::new(self.road.centerline()))
+    }
+
     /// Time `f` under the seam `name` when diagnostics are on; otherwise
     /// just run it. See [`latency`] for the standardized seam names.
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
@@ -92,20 +122,22 @@ pub(crate) trait Planner {
 pub(crate) const TEST_HALF_WIDTH_M: f64 = 5.5;
 
 #[cfg(test)]
-pub(crate) fn test_road(centerline: &[[f64; 2]]) -> Road {
+pub(crate) fn test_road<P: Copy + Into<crate::simulation::Position>>(centerline: &[P]) -> Road {
     Road::new(centerline.to_vec(), 10.0, TEST_HALF_WIDTH_M, 0.1)
 }
 
 #[cfg(test)]
 pub(crate) fn test_ctx<'a>(road: &'a Road, actors: &'a [State]) -> Context<'a> {
-    Context {
-        road,
-        actors,
-        horizon: 10,
-        compute_budget: ComputeBudget::NOMINAL,
-        latency: None,
-        diagnostics: None,
-    }
+    Context::new(road, actors, 10, ComputeBudget::NOMINAL, None, None)
+}
+
+#[cfg(test)]
+#[test]
+fn context_reuses_its_path() {
+    let road = test_road(&[[0.0, 0.0], [10.0, 0.0]]);
+    let ctx = test_ctx(&road, &[]);
+
+    assert!(std::ptr::eq(ctx.path(), ctx.path()));
 }
 
 #[cfg(test)]
@@ -152,17 +184,19 @@ pub(crate) fn test_run_on(
                 ) else {
                     return state;
                 };
-                let mut velocity = [state.speed * state.yaw.cos(), state.speed * state.yaw.sin()];
+                let direction = Position::from_angle(state.pose.yaw);
+                let mut velocity = [state.speed * direction.x, state.speed * direction.y];
                 let normal_speed = velocity[0] * hit.normal[0] + velocity[1] * hit.normal[1];
                 if normal_speed < 0.0 {
                     velocity[0] -= 1.1 * normal_speed * hit.normal[0];
                     velocity[1] -= 1.1 * normal_speed * hit.normal[1];
                 }
-                State {
-                    x: state.x + hit.normal[0] * hit.depth,
-                    y: state.y + hit.normal[1] * hit.depth,
-                    speed: velocity[0].hypot(velocity[1]),
-                    ..state
+                {
+                    let mut state = state;
+                    state.pose.position.x = state.position().x + hit.normal[0] * hit.depth;
+                    state.pose.position.y = state.position().y + hit.normal[1] * hit.depth;
+                    state.speed = velocity[0].hypot(velocity[1]);
+                    state
                 }
             });
             sim.state

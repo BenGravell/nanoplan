@@ -8,7 +8,7 @@ mod polygon;
 mod road_polygon;
 
 use crate::common::measure::dot;
-use crate::simulation::Pose;
+use crate::simulation::{Pose, Position};
 use crate::vehicle::{BODY_LENGTH_M, BODY_WIDTH_M};
 
 pub(crate) use footprint::Footprint;
@@ -39,7 +39,7 @@ pub(crate) fn overlap_mtv(
 ) -> Option<Overlap> {
     let a = a_footprint.center(a_rear);
     let b = b_footprint.center(b_rear);
-    let delta = [a.x - b.x, a.y - b.y];
+    let delta = [a.position.x - b.position.x, a.position.y - b.position.y];
     let mut best = Overlap {
         normal: [1.0, 0.0],
         depth: f64::INFINITY,
@@ -68,8 +68,8 @@ pub(crate) fn footprints_overlap(a: Pose, a_footprint: Footprint, b: Pose, b_foo
 }
 
 fn axes(yaw: f64) -> [[f64; 2]; 2] {
-    let forward = [yaw.cos(), yaw.sin()];
-    [forward, [-forward[1], forward[0]]]
+    let forward = Position::from_angle(yaw);
+    [forward.xy(), [-forward.y, forward.x]]
 }
 
 #[cfg(test)]
@@ -80,25 +80,25 @@ mod tests {
     fn rectangles_touching_edges_do_not_overlap() {
         let gap = CAR_FOOTPRINT.length;
         assert!(!footprints_overlap(
-            Pose::new(0.0, 0.0, 0.0),
+            Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
             CAR_FOOTPRINT,
-            Pose::new(gap, 0.0, 0.0),
+            Pose::new(crate::simulation::Position::new(gap, 0.0), 0.0),
             CAR_FOOTPRINT
         ));
         assert!(footprints_overlap(
-            Pose::new(0.0, 0.0, 0.0),
+            Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
             CAR_FOOTPRINT,
-            Pose::new(gap - 0.01, 0.0, 0.0),
+            Pose::new(crate::simulation::Position::new(gap - 0.01, 0.0), 0.0),
             CAR_FOOTPRINT
         ));
     }
 
     #[test]
     fn pose_is_the_rear_of_the_footprint() {
-        let rear = Pose::new(2.0, 3.0, std::f64::consts::FRAC_PI_2);
+        let rear = Pose::new(crate::simulation::Position::new(2.0, 3.0), std::f64::consts::FRAC_PI_2);
         let center = CAR_FOOTPRINT.center(rear);
 
-        assert!((center.x - 2.0).abs() < 1e-12);
-        assert!((center.y - (3.0 + CAR_FOOTPRINT.length / 2.0)).abs() < 1e-12);
+        assert!((center.position.x - 2.0).abs() < 1e-12);
+        assert!((center.position.y - (3.0 + CAR_FOOTPRINT.length / 2.0)).abs() < 1e-12);
     }
 }

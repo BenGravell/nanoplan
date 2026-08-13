@@ -3,7 +3,9 @@
 use super::model::{GeneratedTrack, limit_widths_for_curvature, road_is_simple};
 #[cfg(test)]
 use super::model::{SAMPLE_COUNT, TrainingTrack};
+use crate::common::interp::lerp;
 use crate::geometry::distance::dist;
+use crate::simulation::Position;
 use splinefit::{ClosedCubicSplineFit2D, evaluate::evaluate};
 
 const SAMPLE_SPACING_M: f64 = 1.0;
@@ -11,7 +13,7 @@ const SPLINE_ARC_STEP_M: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Sample {
-    pub(super) point: [f64; 2],
+    pub(super) point: Position,
     right: f64,
     left: f64,
 }
@@ -42,7 +44,7 @@ impl Circuit {
                     return Err(format!("line {}: track widths must be positive", index + 2));
                 }
                 Ok(Sample {
-                    point: [fields[0], fields[1]],
+                    point: Position::new(fields[0], fields[1]),
                     right: fields[2],
                     left: fields[3],
                 })
@@ -133,13 +135,10 @@ impl Circuit {
         (a, b, (progress - start) / length.max(1e-9))
     }
 
-    pub(super) fn pose(&self, progress: f64) -> ([f64; 2], f64) {
+    pub(super) fn pose(&self, progress: f64) -> (Position, f64) {
         let (a, b, u) = self.segment(progress);
         let (a, b) = (self.samples[a].point, self.samples[b].point);
-        (
-            [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u],
-            (b[1] - a[1]).atan2(b[0] - a[0]),
-        )
+        (lerp(a, b, u), (b.y - a.y).atan2(b.x - a.x))
     }
 
     pub(super) fn widths(&self, progress: f64) -> (f64, f64) {
@@ -148,15 +147,15 @@ impl Circuit {
         (a.right + (b.right - a.right) * u, a.left + (b.left - a.left) * u)
     }
 
-    pub(super) fn project(&self, point: [f64; 2], hint: f64) -> f64 {
+    pub(super) fn project(&self, point: Position, hint: f64) -> f64 {
         let mut best = (0.0, f64::INFINITY);
         for a in 0..self.samples.len() {
             let b = (a + 1) % self.samples.len();
             let (p, q) = (self.samples[a].point, self.samples[b].point);
-            let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+            let (dx, dy) = (q.x - p.x, q.y - p.y);
             let length_squared = (dx * dx + dy * dy).max(1e-12);
-            let u = (((point[0] - p[0]) * dx + (point[1] - p[1]) * dy) / length_squared).clamp(0.0, 1.0);
-            let candidate = [p[0] + dx * u, p[1] + dy * u];
+            let u = (((point.x - p.x) * dx + (point.y - p.y) * dy) / length_squared).clamp(0.0, 1.0);
+            let candidate = Position::new(p.x + dx * u, p.y + dy * u);
             let error = dist(point, candidate);
             if error < best.1 {
                 best = (self.distance[a] + length_squared.sqrt() * u, error);
@@ -191,7 +190,7 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
     let coordinates = anchors
         .iter()
         .chain(std::iter::once(&anchors[0]))
-        .flat_map(|anchor| anchor.point)
+        .flat_map(|anchor| anchor.point.xy())
         .collect();
     let spline = ClosedCubicSplineFit2D::new(anchor_parameters.clone(), coordinates)
         .and_then(ClosedCubicSplineFit2D::interpolating_spline)
@@ -200,7 +199,7 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
         evaluate(&spline, parameters)
             .expect("spline evaluation parameters must lie inside the track domain")
             .chunks_exact(2)
-            .map(|point| [point[0], point[1]])
+            .map(|point| Position::new(point[0], point[1]))
             .collect::<Vec<_>>()
     };
 
@@ -269,8 +268,9 @@ mod tests {
         let samples = (0..8)
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / 8.0;
+                let unit = Position::from_angle(angle);
                 Sample {
-                    point: [10.0 * angle.cos(), 10.0 * angle.sin()],
+                    point: Position::new(10.0 * unit.x, 10.0 * unit.y),
                     right: 20.0,
                     left: 20.0,
                 }
@@ -288,8 +288,9 @@ mod tests {
         let anchors = (0..8)
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / 8.0;
+                let unit = Position::from_angle(angle);
                 Sample {
-                    point: [20.0 * angle.cos(), 20.0 * angle.sin()],
+                    point: Position::new(20.0 * unit.x, 20.0 * unit.y),
                     right: 4.0 + i as f64,
                     left: 5.0,
                 }
@@ -305,10 +306,6 @@ mod tests {
                 .enumerate()
                 .all(|(i, sample)| { dist(sample.point, samples[(i + 1) % samples.len()].point) <= 1.01 })
         );
-        assert!(
-            samples
-                .iter()
-                .all(|sample| sample.point[0].hypot(sample.point[1]) > 19.0)
-        );
+        assert!(samples.iter().all(|sample| sample.point.x.hypot(sample.point.y) > 19.0));
     }
 }

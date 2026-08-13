@@ -22,10 +22,10 @@ pub(crate) struct BasicPlanner;
 impl Planner for BasicPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0, lane_speed) = ctx.time("route", || {
-            let path = Path::new(ctx.road.centerline());
+            let path = ctx.path();
             let (s0, _) = path.project(ego.position());
             let (_, lane_yaw) = path.pose_at(s0);
-            let heading_err = wrap_angle(ego.yaw - lane_yaw);
+            let heading_err = wrap_angle(ego.pose.yaw - lane_yaw);
             let lane_speed = (ego.speed * heading_err.cos()).max(0.0);
             (path, s0, lane_speed)
         });
@@ -33,10 +33,10 @@ impl Planner for BasicPlanner {
             let mut best: Option<(f64, Vec<Control>)> = None;
             for distance in FIRST_TARGETS_M {
                 for factor in DURATION_FACTORS {
-                    let Some(controls) = candidate(ego, &path, ctx, s0, lane_speed, distance, factor) else {
+                    let Some(controls) = candidate(ego, path, ctx, s0, lane_speed, distance, factor) else {
                         continue;
                     };
-                    let Some(cost) = candidate_cost(ego, &controls, &path, ctx) else {
+                    let Some(cost) = candidate_cost(ego, &controls, path, ctx) else {
                         continue;
                     };
                     if best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
@@ -121,7 +121,7 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
     let mut total = 0.0;
     let mut feasible = true;
     let mut previous_accel: Option<(f64, f64)> = None;
-    let mut trajectory = ctx.diagnostics.map(|_| vec![ego.position().into()]);
+    let mut trajectory = ctx.diagnostics.map(|_| vec![ego.position()]);
     for (tick, &u) in controls.iter().enumerate() {
         let prev = x;
         x = world_step(x, u, ctx.road.dt);
@@ -129,7 +129,7 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
             feasible = false;
         }
         if let Some(points) = &mut trajectory {
-            points.push(x.position().into());
+            points.push(x.position());
         }
         let (s, lateral) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
@@ -144,10 +144,10 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
             .unwrap_or_default();
         previous_accel = Some(accel);
         let sample = Sample {
-            xy: x.position().into(),
+            position: x.position(),
             lateral,
             road_bounds: None,
-            heading_err: wrap_angle(x.yaw - lane_yaw),
+            heading_err: wrap_angle(x.pose.yaw - lane_yaw),
             speed: x.speed,
             station_speed: None,
             lon_jerk,
@@ -168,8 +168,8 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
 }
 
 fn path_state(path: &Path, s: f64, speed: f64) -> State {
-    let ([x, y], yaw) = path.pose_at(s);
-    State { x, y, yaw, speed }
+    let (position, yaw) = path.pose_at(s);
+    (position, yaw, speed).into()
 }
 
 #[cfg(test)]
@@ -177,19 +177,19 @@ mod tests {
     use super::*;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
     use crate::simulation::MAX_TERMINAL_SPEED_MPS;
+    use crate::simulation::Position;
     use crate::simulation::world_step;
     use crate::track::Track;
 
     #[test]
     fn converges_to_centerline() {
-        let ego = State {
-            y: 3.0,
-            speed: 8.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 3.0), 0.0),
+            8.0,
+        );
         let trace = test_run(&mut BasicPlanner, ego, &[], 200);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 0.4, "offset {}", end.y);
+        assert!(end.position().y.abs() < 0.4, "offset {}", end.position().y);
     }
 
     #[test]
@@ -199,12 +199,8 @@ mod tests {
         road.target_speed = *MAX_TERMINAL_SPEED_MPS;
         let path = Path::new(road.centerline());
         let (p, yaw) = path.pose_at(50.0);
-        let ego = State {
-            x: p[0] - 3.0 * yaw.sin(),
-            y: p[1] + 3.0 * yaw.cos(),
-            yaw,
-            speed: 8.0,
-        };
+        let left = Position::from_angle(yaw + std::f64::consts::FRAC_PI_2);
+        let ego = State::from((Position::new(p.x + 3.0 * left.x, p.y + 3.0 * left.y), yaw, 8.0));
 
         let trace = test_run_on(&mut BasicPlanner, &road, ego, &[], 20);
         let (_, d) = path.project(trace.last().unwrap().position());
@@ -228,29 +224,26 @@ mod tests {
         let road = test_road(&[[-5.0, 0.0], [25.0, 0.0]]);
         let trace = test_run_on(&mut BasicPlanner, &road, ego, &[], 200);
         let end = trace.last().unwrap();
-        assert!(end.x > 20.0 && end.x < 30.0, "x {}", end.x);
+        assert!(
+            end.position().x > 20.0 && end.position().x < 30.0,
+            "x {}",
+            end.position().x
+        );
         assert!(end.speed < 0.8, "speed {}", end.speed);
     }
 
     #[test]
     fn preview_plan_stops_at_goal_instead_of_overshooting() {
         let road = test_road(&[[-5.0, 0.0], [50.0, 0.0]]);
-        let ctx = Context {
-            road: &road,
-            actors: &[],
-            horizon: 100,
-            compute_budget: crate::planning::ComputeBudget::NOMINAL,
-            latency: None,
-            diagnostics: None,
-        };
+        let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
         let mut state = State {
             speed: 8.0,
             ..Default::default()
         };
-        let mut max_x = state.x;
+        let mut max_x = state.position().x;
         for u in BasicPlanner.plan(state, &ctx) {
             state = world_step(state, u, road.dt);
-            max_x = max_x.max(state.x);
+            max_x = max_x.max(state.position().x);
         }
         assert!(max_x <= 52.0, "preview reached x {max_x}");
         assert!(state.speed < 1.0, "speed {}", state.speed);
@@ -258,10 +251,13 @@ mod tests {
 
     #[test]
     fn route_goal_state_has_full_stop_boundary() {
-        let path = Path::new(&[[-5.0, 0.0], [20.0, 5.0]]);
+        let path = Path::new(&[Position::new(-5.0, 0.0), Position::new(20.0, 5.0)]);
         let goal = path_state(&path, path.length(), 0.0);
-        let ([x, y], yaw) = path.pose_at(path.length());
-        assert_eq!((goal.x, goal.y, goal.yaw), (x, y, yaw));
+        let (position, yaw) = path.pose_at(path.length());
+        assert_eq!(
+            (goal.position().x, goal.position().y, goal.pose.yaw),
+            (position.x, position.y, yaw)
+        );
         assert_eq!(goal.speed, 0.0);
     }
 
@@ -270,11 +266,10 @@ mod tests {
         let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = test_ctx(&road, &[]);
         let plan = BasicPlanner.plan(
-            State {
-                y: 2.0,
-                speed: 6.0,
-                ..Default::default()
-            },
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+                6.0,
+            ),
             &ctx,
         );
         assert_eq!(plan.len(), ctx.horizon);
@@ -314,20 +309,8 @@ mod tests {
                 let centerline = track.centerline(progress - 50.0, progress + 250.0, 15.0);
                 let road = Road::new(centerline, *MAX_TERMINAL_SPEED_MPS, track.half_width(progress), 0.1);
                 let (p, yaw) = track.pose(progress);
-                let ego = State {
-                    x: p[0],
-                    y: p[1],
-                    yaw,
-                    speed: 20.0,
-                };
-                let ctx = Context {
-                    road: &road,
-                    actors: &[],
-                    horizon: 100,
-                    compute_budget: crate::planning::ComputeBudget::NOMINAL,
-                    latency: None,
-                    diagnostics: None,
-                };
+                let ego = State::from((p, yaw, 20.0));
+                let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
                 let mut state = ego;
                 for (tick, control) in BasicPlanner.plan(ego, &ctx).into_iter().enumerate() {
                     state = world_step(state, control, road.dt);

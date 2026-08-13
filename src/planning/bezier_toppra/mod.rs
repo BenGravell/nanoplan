@@ -7,6 +7,7 @@ use crate::geometry::{CAR_COLLISION_RADIUS_M, EGO_COLLISION_RADIUS_M};
 use crate::planning::policy::centerline_feedback;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
+use crate::simulation::Position;
 use crate::simulation::curvature_limit;
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
@@ -22,14 +23,14 @@ pub(crate) struct BezierToppraPlanner;
 impl Planner for BezierToppraPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let (path, s0) = ctx.time("route", || {
-            let path = Path::new(ctx.road.centerline());
+            let path = ctx.path();
             let (s0, _) = path.project(ego.position());
             ctx.work(ctx.road.centerline().len() as u64);
             (path, s0)
         });
         let lookahead = (3.0 * ego.speed).max(15.0);
         let b = ctx.time("bezier_fit", || {
-            let bezier = fit_bezier(ego, &path, s0, lookahead);
+            let bezier = fit_bezier(ego, path, s0, lookahead);
             ctx.work(1);
             bezier
         });
@@ -43,7 +44,7 @@ impl Planner for BezierToppraPlanner {
                 .map(|i| {
                     ctx.work(1);
                     let d = i as f64 * ds;
-                    let curvature = planned_curvature(&b, &path, s0, lookahead, d);
+                    let curvature = planned_curvature(&b, path, s0, lookahead, d);
                     let lateral = if curvature.abs() > 1e-9 {
                         MAX_ABS_LAT_ACCEL / curvature.abs()
                     } else {
@@ -65,11 +66,11 @@ impl Planner for BezierToppraPlanner {
                 let mut changed = false;
                 for (i, &time) in times.iter().enumerate().skip(1) {
                     let d = i as f64 * ds;
-                    let xy = planned_position(&b, &path, s0, lookahead, d);
+                    let xy = planned_position(&b, path, s0, lookahead, d);
                     if ctx.actors.iter().any(|actor| {
                         ctx.work(1);
-                        let p = predict(actor, &path, time);
-                        (xy[0] - p.x).hypot(xy[1] - p.y) < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
+                        let p = predict(actor, path, time);
+                        xy.distance(p.into()) < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
                     }) {
                         let stop = i - 1;
                         if max_speed2[stop] != 0.0 {
@@ -87,7 +88,7 @@ impl Planner for BezierToppraPlanner {
             // Feed the first full-footprint road collision back into the
             // speed envelope until the complete rollout is feasible.
             for _ in 0..GRID_STEPS {
-                let controls = extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
+                let controls = extract_controls_clocked(ego, ctx, path, s0, &b, lookahead, ds, &speed2);
                 let mut state = ego;
                 let mut distance = 0.0;
                 let collision = controls.into_iter().find_map(|u| {
@@ -110,7 +111,7 @@ impl Planner for BezierToppraPlanner {
             speed2
         });
         ctx.time("extract", || {
-            extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2)
+            extract_controls_clocked(ego, ctx, path, s0, &b, lookahead, ds, &speed2)
         })
     }
 }
@@ -171,7 +172,7 @@ fn extract_controls_clocked(
     ctx: &Context,
     path: &Path,
     s0: f64,
-    b: &[[f64; 2]; 4],
+    b: &[Position; 4],
     lookahead: f64,
     ds: f64,
     speed2: &[f64],
@@ -187,7 +188,7 @@ fn extract_controls(
     ctx: &Context,
     path: &Path,
     s0: f64,
-    b: &[[f64; 2]; 4],
+    b: &[Position; 4],
     lookahead: f64,
     ds: f64,
     speed2: &[f64],
@@ -212,18 +213,23 @@ fn extract_controls(
         .collect()
 }
 
-fn fit_bezier(ego: State, path: &Path, s0: f64, lookahead: f64) -> [[f64; 2]; 4] {
+fn fit_bezier(ego: State, path: &Path, s0: f64, lookahead: f64) -> [Position; 4] {
     let (end, end_yaw) = path.pose_at(s0 + lookahead);
     let l3 = lookahead / 3.0;
+    let start_forward = Position::from_angle(ego.pose.yaw);
+    let end_forward = Position::from_angle(end_yaw);
     [
-        [ego.x, ego.y],
-        [ego.x + l3 * ego.yaw.cos(), ego.y + l3 * ego.yaw.sin()],
-        [end[0] - l3 * end_yaw.cos(), end[1] - l3 * end_yaw.sin()],
+        ego.position(),
+        Position::new(
+            ego.position().x + l3 * start_forward.x,
+            ego.position().y + l3 * start_forward.y,
+        ),
+        Position::new(end.x - l3 * end_forward.x, end.y - l3 * end_forward.y),
         end,
     ]
 }
 
-fn planned_position(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> [f64; 2] {
+fn planned_position(b: &[Position; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> Position {
     if distance <= lookahead {
         bezier_point(b, distance / lookahead)
     } else {
@@ -231,7 +237,7 @@ fn planned_position(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, dis
     }
 }
 
-fn planned_curvature(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> f64 {
+fn planned_curvature(b: &[Position; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> f64 {
     if distance <= lookahead {
         bezier_curvature(b, distance / lookahead)
     } else {
@@ -244,33 +250,33 @@ fn planned_curvature(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, di
     }
 }
 
-fn bezier_point(p: &[[f64; 2]; 4], t: f64) -> [f64; 2] {
+fn bezier_point(p: &[Position; 4], t: f64) -> Position {
     let mt = 1.0 - t;
     let c = [mt.powi(3), 3.0 * mt * mt * t, 3.0 * mt * t * t, t.powi(3)];
-    [
-        c.iter().zip(p).map(|(c, p)| c * p[0]).sum(),
-        c.iter().zip(p).map(|(c, p)| c * p[1]).sum(),
-    ]
+    Position::new(
+        c.iter().zip(p).map(|(c, p)| c * p.x).sum(),
+        c.iter().zip(p).map(|(c, p)| c * p.y).sum(),
+    )
 }
 
-fn bezier_d1(p: &[[f64; 2]; 4], t: f64) -> [f64; 2] {
+fn bezier_d1(p: &[Position; 4], t: f64) -> [f64; 2] {
     let mt = 1.0 - t;
     let c = [3.0 * mt * mt, 6.0 * mt * t, 3.0 * t * t];
     [
-        c[0] * (p[1][0] - p[0][0]) + c[1] * (p[2][0] - p[1][0]) + c[2] * (p[3][0] - p[2][0]),
-        c[0] * (p[1][1] - p[0][1]) + c[1] * (p[2][1] - p[1][1]) + c[2] * (p[3][1] - p[2][1]),
+        c[0] * (p[1].x - p[0].x) + c[1] * (p[2].x - p[1].x) + c[2] * (p[3].x - p[2].x),
+        c[0] * (p[1].y - p[0].y) + c[1] * (p[2].y - p[1].y) + c[2] * (p[3].y - p[2].y),
     ]
 }
 
-fn bezier_d2(p: &[[f64; 2]; 4], t: f64) -> [f64; 2] {
+fn bezier_d2(p: &[Position; 4], t: f64) -> [f64; 2] {
     let mt = 1.0 - t;
     [
-        6.0 * mt * (p[2][0] - 2.0 * p[1][0] + p[0][0]) + 6.0 * t * (p[3][0] - 2.0 * p[2][0] + p[1][0]),
-        6.0 * mt * (p[2][1] - 2.0 * p[1][1] + p[0][1]) + 6.0 * t * (p[3][1] - 2.0 * p[2][1] + p[1][1]),
+        6.0 * mt * (p[2].x - 2.0 * p[1].x + p[0].x) + 6.0 * t * (p[3].x - 2.0 * p[2].x + p[1].x),
+        6.0 * mt * (p[2].y - 2.0 * p[1].y + p[0].y) + 6.0 * t * (p[3].y - 2.0 * p[2].y + p[1].y),
     ]
 }
 
-fn bezier_curvature(p: &[[f64; 2]; 4], t: f64) -> f64 {
+fn bezier_curvature(p: &[Position; 4], t: f64) -> f64 {
     let d1 = bezier_d1(p, t);
     let d2 = bezier_d2(p, t);
     let speed = d1[0].hypot(d1[1]).max(1e-6);
@@ -293,14 +299,13 @@ mod tests {
 
     #[test]
     fn converges_to_centerline_and_target_speed() {
-        let ego = State {
-            y: 3.0,
-            speed: 5.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 3.0), 0.0),
+            5.0,
+        );
         let trace = test_run(&mut BezierToppraPlanner, ego, &[], 200);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 0.3, "offset {}", end.y);
+        assert!(end.position().y.abs() < 0.3, "offset {}", end.position().y);
         assert!((end.speed - 10.0).abs() < 0.5, "speed {}", end.speed);
     }
 
@@ -310,17 +315,17 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let actor = State {
-            x: 50.0,
-            ..Default::default()
-        };
+        let actor = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = test_run(&mut BezierToppraPlanner, ego, &[actor], 300);
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
         assert!(
-            end.x <= actor.x - crate::geometry::EGO_FOOTPRINT.length + 1e-9,
+            end.position().x <= actor.position().x - crate::geometry::EGO_FOOTPRINT.length + 1e-9,
             "x {}",
-            end.x
+            end.position().x
         );
     }
 
@@ -334,14 +339,13 @@ mod tests {
         let mut planner = BezierToppraPlanner;
         let mut limiter = CommandLimiter::new();
         let mut ego = State::default();
-        let mut lead = State {
-            x: 55.0,
-            speed: 7.0,
-            ..Default::default()
-        };
+        let mut lead = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(55.0, 0.0), 0.0),
+            7.0,
+        );
 
         for tick in 0..300 {
-            lead.x += lead.speed * road.dt;
+            lead.pose.position.x += lead.speed * road.dt;
             let actors = [lead];
             let controls = planner.plan(ego, &test_ctx(&road, &actors));
             ego = limiter.step(ego, controls[0], road.dt);
@@ -370,20 +374,8 @@ mod tests {
                     0.1,
                 );
                 let (p, yaw) = track.pose(progress);
-                let ego = State {
-                    x: p[0],
-                    y: p[1],
-                    yaw,
-                    speed: 20.0,
-                };
-                let ctx = Context {
-                    road: &road,
-                    actors: &[],
-                    horizon: 100,
-                    compute_budget: crate::planning::ComputeBudget::NOMINAL,
-                    latency: None,
-                    diagnostics: None,
-                };
+                let ego = State::from((p, yaw, 20.0));
+                let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
                 let path = Path::new(road.centerline());
                 let mut state = ego;
                 for (tick, control) in BezierToppraPlanner.plan(ego, &ctx).into_iter().enumerate() {
@@ -393,7 +385,7 @@ mod tests {
                         !collides_with_road_barrier(state, &road),
                         "seed {seed} progress {progress} width {} tick {tick} d {d} heading_err {} control {control:?} state {state:?}",
                         road.half_width,
-                        wrap_angle(state.yaw - path.pose_at(s).1)
+                        wrap_angle(state.pose.yaw - path.pose_at(s).1)
                     );
                 }
             }

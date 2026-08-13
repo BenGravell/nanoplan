@@ -1,4 +1,4 @@
-use crate::common::interp::interpolate_state;
+use crate::common::interp::lerp_state;
 use crate::geometry::curvature::curvature_between;
 use crate::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::simulation::State;
@@ -30,11 +30,9 @@ pub(in crate::viewer::live) fn draw_actor(
         .iter()
         .find(|(id, _)| *id == actor.id)
         .map(|(_, state)| *state);
-    let distance = previous.map_or(f64::INFINITY, |state| {
-        (actor.state.x - state.x).hypot(actor.state.y - state.y)
-    });
+    let distance = previous.map_or(f64::INFINITY, |state| actor.state.position().distance(state.position()));
     let state = if distance <= MAX_ACTOR_INTERPOLATION_M {
-        interpolate_state(previous.unwrap(), actor.state, render_alpha)
+        lerp_state(previous.unwrap(), actor.state, render_alpha)
     } else {
         actor.state
     };
@@ -51,7 +49,7 @@ pub(in crate::viewer::live) fn draw_actor(
 fn draw_vehicle(gizmos: &mut Gizmos, state: &State, curvature: f64, footprint: Footprint, color: Color) {
     let size = Vec2::new(footprint.length as f32, footprint.width as f32);
     let center = footprint.center(state.pose());
-    let iso = Isometry2d::new(px(&center.into()), Rot2::radians(state.yaw as f32));
+    let iso = Isometry2d::new(px(&center.into()), Rot2::radians(state.pose.yaw as f32));
     gizmos.rect_2d(iso, size * PX_PER_M, color);
     gizmos.line_2d(iso * Vec2::ZERO, iso * Vec2::new(size.x * PX_PER_M / 2.0, 0.0), color);
     let steering = (curvature * footprint.length).atan() as f32;
@@ -75,7 +73,7 @@ fn draw_vehicle(gizmos: &mut Gizmos, state: &State, curvature: f64, footprint: F
             gizmos.rect_2d(
                 Isometry2d::new(
                     iso * (Vec2::new(x, y) * PX_PER_M),
-                    Rot2::radians(state.yaw as f32 + angle),
+                    Rot2::radians(state.pose.yaw as f32 + angle),
                 ),
                 Vec2::new(diameter, width) * PX_PER_M,
                 VEHICLE_TIRE,

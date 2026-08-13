@@ -4,28 +4,28 @@ use super::{Pose, Position};
 /// Vehicle state at the rear midpoint: pose and speed.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct State {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) yaw: f64,
+    pub(crate) pose: Pose,
     pub(crate) speed: f64,
 }
 
 impl State {
+    pub(crate) const fn new(pose: Pose, speed: f64) -> Self {
+        Self { pose, speed }
+    }
+
     pub(crate) fn pose(self) -> Pose {
-        self.into()
+        self.pose
     }
 
     pub(crate) fn position(self) -> Position {
-        self.into()
+        self.pose.position
     }
 }
 
 impl From<V4> for State {
     fn from(v: V4) -> Self {
         State {
-            x: v[0],
-            y: v[1],
-            yaw: v[2],
+            pose: Pose::new(Position::new(v[0], v[1]), v[2]),
             speed: v[3],
         }
     }
@@ -33,25 +33,22 @@ impl From<V4> for State {
 
 impl From<Position> for State {
     fn from(p: Position) -> Self {
-        State {
-            x: p.x,
-            y: p.y,
-            ..Default::default()
-        }
+        (p, 0.0, 0.0).into()
+    }
+}
+
+impl From<(Position, f64, f64)> for State {
+    fn from((position, yaw, speed): (Position, f64, f64)) -> Self {
+        State::new(Pose::new(position, yaw), speed)
     }
 }
 
 impl From<Pose> for State {
     fn from(p: Pose) -> Self {
-        State {
-            x: p.x,
-            y: p.y,
-            yaw: p.yaw,
-            ..Default::default()
-        }
+        (Position::from(p), p.yaw, 0.0).into()
     }
 }
 
 pub(crate) fn state(s: &State) -> V4 {
-    [s.x, s.y, s.yaw, s.speed]
+    [s.pose.position.x, s.pose.position.y, s.pose.yaw, s.speed]
 }

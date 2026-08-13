@@ -1,21 +1,23 @@
 //! Canonical road strip derived from centerline stations and side widths.
 
+use crate::common::types::Position;
+
 /// A sampled road represented by its source stations and two continuous
 /// boundary polylines. All rendered and physical road geometry is derived from
 /// this type so corners use the same miter joins everywhere.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoadPolygon {
-    centerline: Vec<[f64; 2]>,
+    centerline: Vec<Position>,
     right_widths: Vec<f64>,
     left_widths: Vec<f64>,
-    right_boundary: Vec<[f64; 2]>,
-    left_boundary: Vec<[f64; 2]>,
+    right_boundary: Vec<Position>,
+    left_boundary: Vec<Position>,
     closed: bool,
 }
 
 impl RoadPolygon {
     pub(crate) fn new(
-        centerline: Vec<[f64; 2]>,
+        centerline: Vec<Position>,
         right_widths: Vec<f64>,
         left_widths: Vec<f64>,
         closed: bool,
@@ -23,7 +25,7 @@ impl RoadPolygon {
         if centerline.len() != right_widths.len()
             || centerline.len() != left_widths.len()
             || centerline.len() < 2
-            || centerline.iter().flatten().any(|value| !value.is_finite())
+            || centerline.iter().any(|point| !point.is_finite())
             || right_widths
                 .iter()
                 .chain(&left_widths)
@@ -37,8 +39,8 @@ impl RoadPolygon {
             .map(|i| {
                 let next = (i + 1) % centerline.len();
                 let tangent = [
-                    centerline[next][0] - centerline[i][0],
-                    centerline[next][1] - centerline[i][1],
+                    centerline[next].x - centerline[i].x,
+                    centerline[next].y - centerline[i].y,
                 ];
                 let length = tangent[0].hypot(tangent[1]);
                 (length >= 1e-9).then_some([-tangent[1] / length, tangent[0] / length])
@@ -60,14 +62,14 @@ impl RoadPolygon {
                     )
                 };
                 (denominator > 1e-9).then_some((
-                    [
-                        centerline[i][0] - right_widths[i] * miter[0] / denominator,
-                        centerline[i][1] - right_widths[i] * miter[1] / denominator,
-                    ],
-                    [
-                        centerline[i][0] + left_widths[i] * miter[0] / denominator,
-                        centerline[i][1] + left_widths[i] * miter[1] / denominator,
-                    ],
+                    Position::new(
+                        centerline[i].x - right_widths[i] * miter[0] / denominator,
+                        centerline[i].y - right_widths[i] * miter[1] / denominator,
+                    ),
+                    Position::new(
+                        centerline[i].x + left_widths[i] * miter[0] / denominator,
+                        centerline[i].y + left_widths[i] * miter[1] / denominator,
+                    ),
                 ))
             })
             .collect::<Option<Vec<_>>>()?;
@@ -84,12 +86,17 @@ impl RoadPolygon {
     }
 
     #[cfg(test)]
-    pub(crate) fn uniform(centerline: Vec<[f64; 2]>, half_width: f64) -> Option<Self> {
+    pub(crate) fn uniform<P: Into<Position>>(centerline: Vec<P>, half_width: f64) -> Option<Self> {
         let widths = vec![half_width; centerline.len()];
-        Self::new(centerline, widths.clone(), widths, false)
+        Self::new(
+            centerline.into_iter().map(Into::into).collect(),
+            widths.clone(),
+            widths,
+            false,
+        )
     }
 
-    pub(crate) fn centerline(&self) -> &[[f64; 2]] {
+    pub(crate) fn centerline(&self) -> &[Position] {
         &self.centerline
     }
 
@@ -101,11 +108,11 @@ impl RoadPolygon {
         &self.left_widths
     }
 
-    pub(crate) fn right_boundary(&self) -> &[[f64; 2]] {
+    pub(crate) fn right_boundary(&self) -> &[Position] {
         &self.right_boundary
     }
 
-    pub(crate) fn left_boundary(&self) -> &[[f64; 2]] {
+    pub(crate) fn left_boundary(&self) -> &[Position] {
         &self.left_boundary
     }
 
@@ -117,7 +124,7 @@ impl RoadPolygon {
         self.closed
     }
 
-    pub(crate) fn quads(&self) -> impl Iterator<Item = [[f64; 2]; 4]> + '_ {
+    pub(crate) fn quads(&self) -> impl Iterator<Item = [Position; 4]> + '_ {
         (0..self.segment_count()).map(|i| {
             let next = (i + 1) % self.centerline.len();
             [
@@ -136,18 +143,52 @@ mod tests {
 
     #[test]
     fn high_curvature_corner_has_continuous_mitered_boundaries() {
-        let road = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).unwrap();
+        let road = RoadPolygon::uniform(
+            vec![
+                Position::new(0.0, 0.0),
+                Position::new(10.0, 0.0),
+                Position::new(10.0, 10.0),
+            ],
+            2.0,
+        )
+        .unwrap();
 
-        assert_eq!(road.right_boundary(), &[[0.0, -2.0], [12.0, -2.0], [12.0, 10.0]]);
-        assert_eq!(road.left_boundary(), &[[0.0, 2.0], [8.0, 2.0], [8.0, 10.0]]);
+        assert_eq!(
+            road.right_boundary(),
+            &[
+                Position::new(0.0, -2.0),
+                Position::new(12.0, -2.0),
+                Position::new(12.0, 10.0)
+            ]
+        );
+        assert_eq!(
+            road.left_boundary(),
+            &[
+                Position::new(0.0, 2.0),
+                Position::new(8.0, 2.0),
+                Position::new(8.0, 10.0)
+            ]
+        );
         assert_eq!(road.quads().count(), 2);
     }
 
     #[test]
     fn each_side_uses_its_own_station_width() {
-        let road = RoadPolygon::new(vec![[0.0, 0.0], [10.0, 0.0]], vec![1.0, 2.0], vec![3.0, 4.0], false).unwrap();
+        let road = RoadPolygon::new(
+            vec![Position::new(0.0, 0.0), Position::new(10.0, 0.0)],
+            vec![1.0, 2.0],
+            vec![3.0, 4.0],
+            false,
+        )
+        .unwrap();
 
-        assert_eq!(road.right_boundary(), &[[0.0, -1.0], [10.0, -2.0]]);
-        assert_eq!(road.left_boundary(), &[[0.0, 3.0], [10.0, 4.0]]);
+        assert_eq!(
+            road.right_boundary(),
+            &[Position::new(0.0, -1.0), Position::new(10.0, -2.0)]
+        );
+        assert_eq!(
+            road.left_boundary(),
+            &[Position::new(0.0, 3.0), Position::new(10.0, 4.0)]
+        );
     }
 }

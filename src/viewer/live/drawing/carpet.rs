@@ -5,11 +5,12 @@ use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use colorgrad::Gradient;
 
+use crate::common::interp::lerp_state;
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
-use crate::simulation::{MAX_TERMINAL_SPEED_MPS, State};
+use crate::simulation::{MAX_TERMINAL_SPEED_MPS, Position, State};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 #[cfg(test)]
 use crate::viewer::colors::GUPPY_ORANGE;
@@ -40,23 +41,23 @@ struct TimedState {
     state: State,
     time: f64,
     arc_m: f64,
-    center: [f64; 2],
-    forward: [f64; 2],
-    left: [f64; 2],
+    center: Position,
+    forward: Position,
+    left: Position,
 }
 
 impl TimedState {
     fn new(state: State, time: f64, arc_m: f64) -> Self {
-        let forward = [state.yaw.cos(), state.yaw.sin()];
-        let left = [-forward[1], forward[0]];
+        let forward = Position::from_angle(state.pose.yaw);
+        let left = Position::new(-forward.y, forward.x);
         Self {
             state,
             time,
             arc_m,
-            center: [
-                state.x + 0.5 * EGO_FOOTPRINT.length * forward[0],
-                state.y + 0.5 * EGO_FOOTPRINT.length * forward[1],
-            ],
+            center: Position::new(
+                state.position().x + 0.5 * EGO_FOOTPRINT.length * forward.x,
+                state.position().y + 0.5 * EGO_FOOTPRINT.length * forward.y,
+            ),
             forward,
             left,
         }
@@ -70,14 +71,14 @@ struct Station {
     slab_m: f64,
     padding_m: f64,
     turn_boundary: bool,
-    forward: [f64; 2],
-    left: [f64; 2],
+    forward: Position,
+    left: Position,
 }
 
 #[derive(Clone, Copy)]
 struct CrossSection {
-    right: [f64; 2],
-    left: [f64; 2],
+    right: Position,
+    left: Position,
     time: f64,
 }
 
@@ -211,8 +212,8 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
     let mut previous = ego;
     let mut arc_m = 0.0;
     for (i, &next) in plan.iter().enumerate() {
-        let translation = (next.x - previous.x).hypot(next.y - previous.y);
-        let yaw_delta = wrap_angle(next.yaw - previous.yaw).abs();
+        let translation = next.position().distance(previous.position());
+        let yaw_delta = wrap_angle(next.pose.yaw - previous.pose.yaw).abs();
         // Translation alone needs no subdivision: the trapezoid between two
         // equal-heading footprints is the exact straight sweep. Refine only
         // rotation, where the corners follow arcs rather than straight lines.
@@ -220,7 +221,7 @@ fn sample_footprints(ego: State, plan: &[State], dt: f64) -> Vec<TimedState> {
         for step in 1..=steps {
             let alpha = step as f64 / steps as f64;
             samples.push(TimedState::new(
-                interpolate_state(previous, next, alpha),
+                lerp_state(previous, next, alpha),
                 (i as f64 + alpha) * dt,
                 arc_m + alpha * translation,
             ));
@@ -279,8 +280,9 @@ fn footprint_stations(footprints: &[TimedState]) -> Vec<Station> {
         })
         .collect();
     let mut terminal_front = footprints.last().unwrap().state;
-    terminal_front.x += EGO_FOOTPRINT.length * terminal_front.yaw.cos();
-    terminal_front.y += EGO_FOOTPRINT.length * terminal_front.yaw.sin();
+    let forward = Position::from_angle(terminal_front.pose.yaw);
+    terminal_front.pose.position.x += EGO_FOOTPRINT.length * forward.x;
+    terminal_front.pose.position.y += EGO_FOOTPRINT.length * forward.y;
     stations.push(Station {
         state: terminal_front,
         arc_m: footprints.last().unwrap().arc_m + EGO_FOOTPRINT.length,
@@ -291,7 +293,7 @@ fn footprint_stations(footprints: &[TimedState]) -> Vec<Station> {
         left: footprints.last().unwrap().left,
     });
     for i in 0..stations.len() {
-        let distance = |a: Station, b: Station| (a.state.x - b.state.x).hypot(a.state.y - b.state.y);
+        let distance = |a: Station, b: Station| a.state.position().distance(b.state.position());
         let previous = i
             .checked_sub(1)
             .map(|previous| distance(stations[previous], stations[i]))
@@ -308,10 +310,10 @@ fn footprint_stations(footprints: &[TimedState]) -> Vec<Station> {
             0.5 * previous.max(next)
         };
         let turns_from_previous =
-            i > 0 && wrap_angle(stations[i].state.yaw - stations[i - 1].state.yaw).abs() > f64::EPSILON;
+            i > 0 && wrap_angle(stations[i].state.pose.yaw - stations[i - 1].state.pose.yaw).abs() > f64::EPSILON;
         let turns_to_next = stations
             .get(i + 1)
-            .is_some_and(|next| wrap_angle(next.state.yaw - stations[i].state.yaw).abs() > f64::EPSILON);
+            .is_some_and(|next| wrap_angle(next.state.pose.yaw - stations[i].state.pose.yaw).abs() > f64::EPSILON);
         stations[i].turn_boundary = turns_from_previous || turns_to_next;
     }
     let padding_reach = EGO_FOOTPRINT.length + EGO_FOOTPRINT.width;
@@ -354,14 +356,14 @@ fn cross_section(station: Station, footprints: &[TimedState]) -> (Option<CrossSe
         occupants += 1;
     }
     let section = (occupants > 0).then(|| CrossSection {
-        right: [
-            station.state.x + (right - padding_m) * station.left[0],
-            station.state.y + (right - padding_m) * station.left[1],
-        ],
-        left: [
-            station.state.x + (leftmost + padding_m) * station.left[0],
-            station.state.y + (leftmost + padding_m) * station.left[1],
-        ],
+        right: Position::new(
+            station.state.position().x + (right - padding_m) * station.left.x,
+            station.state.position().y + (right - padding_m) * station.left.y,
+        ),
+        left: Position::new(
+            station.state.position().x + (leftmost + padding_m) * station.left.x,
+            station.state.position().y + (leftmost + padding_m) * station.left.y,
+        ),
         time: total_time / occupants as f64,
     });
     (section, local.len() as u64)
@@ -381,12 +383,12 @@ fn local_footprints(station: Station, footprints: &[TimedState]) -> &[TimedState
 
 fn footprint_lateral_interval(station: Station, footprint: &TimedState) -> Option<[f64; 2]> {
     let delta = [
-        footprint.center[0] - station.state.x,
-        footprint.center[1] - station.state.y,
+        footprint.center.x - station.state.position().x,
+        footprint.center.y - station.state.position().y,
     ];
-    let project = |axis: [f64; 2]| delta[0] * axis[0] + delta[1] * axis[1];
-    let cos_relative = footprint.forward[0] * station.forward[0] + footprint.forward[1] * station.forward[1];
-    let sin_relative = footprint.forward[0] * station.left[0] + footprint.forward[1] * station.left[1];
+    let project = |axis: Position| delta[0] * axis.x + delta[1] * axis.y;
+    let cos_relative = footprint.forward.x * station.forward.x + footprint.forward.y * station.forward.y;
+    let sin_relative = footprint.forward.x * station.left.x + footprint.forward.y * station.left.y;
     let longitudinal_radius =
         0.5 * (EGO_FOOTPRINT.length * cos_relative.abs() + EGO_FOOTPRINT.width * sin_relative.abs());
     let longitudinal = project(station.forward);
@@ -397,17 +399,6 @@ fn footprint_lateral_interval(station: Station, footprint: &TimedState) -> Optio
                 0.5 * (EGO_FOOTPRINT.length * sin_relative.abs() + EGO_FOOTPRINT.width * cos_relative.abs());
             [lateral - lateral_radius, lateral + lateral_radius]
         })
-}
-
-fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
-    let yaw_delta =
-        (current.yaw - previous.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-    State {
-        x: previous.x + (current.x - previous.x) * alpha,
-        y: previous.y + (current.y - previous.y) * alpha,
-        yaw: previous.yaw + yaw_delta * alpha,
-        speed: previous.speed + (current.speed - previous.speed) * alpha,
-    }
 }
 
 fn empty_mesh() -> Mesh {
@@ -421,7 +412,7 @@ fn empty_mesh() -> Mesh {
 }
 
 fn push_patch(vertices: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>, patch: CarpetPatch, color: [f32; 4]) {
-    let point = |point: [f64; 2]| [point[0] as f32 * PX_PER_M, point[1] as f32 * PX_PER_M, 0.0];
+    let point = |point: Position| [point.x as f32 * PX_PER_M, point.y as f32 * PX_PER_M, 0.0];
     vertices.extend([
         point(patch.rear.left),
         point(patch.rear.right),
@@ -453,15 +444,7 @@ mod tests {
             speed,
             ..Default::default()
         };
-        let samples = sample_footprints(
-            ego,
-            &[State {
-                x: speed * DT,
-                speed,
-                ..Default::default()
-            }],
-            DT,
-        );
+        let samples = sample_footprints(ego, &[State::from((Position::new(speed * DT, 0.0), 0.0, speed))], DT);
 
         assert_eq!(samples.len(), 2);
     }
@@ -480,38 +463,38 @@ mod tests {
 
     #[test]
     fn covers_rotated_footprints() {
-        let state = State {
-            yaw: 0.7,
-            ..Default::default()
-        };
+        let state = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.7),
+            0.0,
+        );
         let patches = carpet_patches(&[TimedState::new(state, 0.0, 0.0)]);
         let rear = patches.first().unwrap().rear;
-        let width = (rear.left[0] - rear.right[0]).hypot(rear.left[1] - rear.right[1]);
+        let width = rear.left.distance(rear.right);
 
         assert!((width - EGO_FOOTPRINT.width).abs() < 1e-9);
     }
 
     #[test]
     fn carpet_includes_the_entire_current_and_terminal_footprints() {
-        let terminal = State {
-            x: EGO_FOOTPRINT.length * 2.0,
-            ..Default::default()
-        };
+        let terminal = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(EGO_FOOTPRINT.length * 2.0, 0.0), 0.0),
+            0.0,
+        );
         let footprints = sample_footprints(State::default(), &[terminal], 1.0);
 
         let patches = carpet_patches(&footprints);
         let rear = patches
             .iter()
-            .flat_map(|patch| [patch.rear.right[0], patch.rear.left[0]])
+            .flat_map(|patch| [patch.rear.right.x, patch.rear.left.x])
             .fold(f64::INFINITY, f64::min);
         let front = patches
             .iter()
-            .flat_map(|patch| [patch.front.right[0], patch.front.left[0]])
+            .flat_map(|patch| [patch.front.right.x, patch.front.left.x])
             .fold(f64::NEG_INFINITY, f64::max);
 
         assert!(!patches.is_empty());
         assert!(rear <= FOOTPRINT_EPSILON_M);
-        assert!(front >= terminal.x + EGO_FOOTPRINT.length - FOOTPRINT_EPSILON_M);
+        assert!(front >= terminal.position().x + EGO_FOOTPRINT.length - FOOTPRINT_EPSILON_M);
     }
 
     #[test]
@@ -520,12 +503,10 @@ mod tests {
 
         let plan = [
             State::default(),
-            State {
-                x: 2.0,
-                y: 1.0,
-                yaw: 0.4,
-                ..Default::default()
-            },
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(2.0, 1.0), 0.4),
+                0.0,
+            ),
         ];
         let footprints = sample_footprints(State::default(), &plan, 0.5);
         let patches = carpet_patches(&footprints);
@@ -553,43 +534,50 @@ mod tests {
     fn hairpin_does_not_join_its_opposite_legs() {
         let radius = 5.0;
         let mut plan = (1..=20)
-            .map(|x| State {
-                x: x as f64,
-                ..Default::default()
+            .map(|x| {
+                State::new(
+                    crate::simulation::Pose::new(crate::simulation::Position::new(x as f64, 0.0), 0.0),
+                    0.0,
+                )
             })
             .collect::<Vec<_>>();
         plan.extend((1..=20).map(|i| {
             let angle = -std::f64::consts::FRAC_PI_2 + i as f64 / 20.0 * std::f64::consts::PI;
-            State {
-                x: 20.0 + radius * angle.cos(),
-                y: radius + radius * angle.sin(),
-                yaw: angle + std::f64::consts::FRAC_PI_2,
-                ..Default::default()
-            }
+            let unit = Position::from_angle(angle);
+            State::new(
+                crate::simulation::Pose::new(
+                    Position::new(20.0 + radius * unit.x, radius + radius * unit.y),
+                    angle + std::f64::consts::FRAC_PI_2,
+                ),
+                0.0,
+            )
         }));
-        plan.extend((0..20).rev().map(|x| State {
-            x: x as f64,
-            y: 2.0 * radius,
-            yaw: std::f64::consts::PI,
-            ..Default::default()
+        plan.extend((0..20).rev().map(|x| {
+            State::new(
+                crate::simulation::Pose::new(
+                    crate::simulation::Position::new(x as f64, 2.0 * radius),
+                    std::f64::consts::PI,
+                ),
+                0.0,
+            )
         }));
 
         let footprints = sample_footprints(State::default(), &plan, 0.1);
         let patch = carpet_patches(&footprints)
             .into_iter()
             .find(|patch| {
-                let x = 0.25 * (patch.rear.left[0] + patch.rear.right[0] + patch.front.left[0] + patch.front.right[0]);
-                let y = 0.25 * (patch.rear.left[1] + patch.rear.right[1] + patch.front.left[1] + patch.front.right[1]);
+                let x = 0.25 * (patch.rear.left.x + patch.rear.right.x + patch.front.left.x + patch.front.right.x);
+                let y = 0.25 * (patch.rear.left.y + patch.rear.right.y + patch.front.left.y + patch.front.right.y);
                 (x - 10.5).abs() < BAND_M && y.abs() < BAND_M
             })
             .expect("outbound leg must contain a patch near x=10");
 
         assert!(
             [
-                patch.rear.left[1],
-                patch.rear.right[1],
-                patch.front.left[1],
-                patch.front.right[1],
+                patch.rear.left.y,
+                patch.rear.right.y,
+                patch.front.left.y,
+                patch.front.right.y,
             ]
             .into_iter()
             .all(|y| y.abs() < 0.5 * radius)
@@ -601,12 +589,11 @@ mod tests {
         let plan = (1..=30)
             .map(|i| {
                 let angle = i as f64 * 0.04;
-                State {
-                    x: 8.0 * angle.sin(),
-                    y: 8.0 * (1.0 - angle.cos()),
-                    yaw: angle,
-                    ..Default::default()
-                }
+                let unit = Position::from_angle(angle);
+                State::new(
+                    crate::simulation::Pose::new(Position::new(8.0 * unit.y, 8.0 * (1.0 - unit.x)), angle),
+                    0.0,
+                )
             })
             .collect::<Vec<_>>();
         assert_carpet_contains(State::default(), &plan);
@@ -627,12 +614,8 @@ mod tests {
         let plan = (1..=20)
             .map(|i| {
                 let yaw = i as f64 * yaw_step;
-                State {
-                    x: radius * yaw.sin(),
-                    y: radius * (1.0 - yaw.cos()),
-                    yaw,
-                    speed: 7.0,
-                }
+                let forward = Position::from_angle(yaw);
+                State::from((Position::new(radius * forward.y, radius * (1.0 - forward.x)), yaw, 7.0))
             })
             .collect::<Vec<_>>();
         let footprints = sample_footprints(
@@ -645,34 +628,32 @@ mod tests {
         );
 
         assert!(footprints.windows(2).all(|pair| {
-            wrap_angle(pair[1].state.yaw - pair[0].state.yaw).abs() <= MAX_YAW_STEP_RAD + f64::EPSILON
+            wrap_angle(pair[1].state.pose.yaw - pair[0].state.pose.yaw).abs() <= MAX_YAW_STEP_RAD + f64::EPSILON
         }));
     }
 
     fn assert_carpet_contains(ego: State, plan: &[State]) {
         let footprints = sample_footprints(ego, plan, DT);
         let patches = carpet_patches(&footprints);
-        let states =
+        let states = footprints.iter().map(|sample| sample.state).chain(
             footprints
-                .iter()
-                .map(|sample| sample.state)
-                .chain(footprints.windows(2).flat_map(|pair| {
-                    [0.25, 0.5, 0.75].map(|alpha| interpolate_state(pair[0].state, pair[1].state, alpha))
-                }));
+                .windows(2)
+                .flat_map(|pair| [0.25, 0.5, 0.75].map(|alpha| lerp_state(pair[0].state, pair[1].state, alpha))),
+        );
 
         for state in states {
-            let forward = [state.yaw.cos(), state.yaw.sin()];
-            let left = [-forward[1], forward[0]];
+            let forward = Position::from_angle(state.pose.yaw);
+            let left = Position::new(-forward.y, forward.x);
             for longitudinal in [0.0, 0.25, 0.5, 0.75, 1.0] {
                 for lateral in [-0.5, 0.0, 0.5] {
-                    let point = [
-                        state.x
-                            + longitudinal * EGO_FOOTPRINT.length * forward[0]
-                            + lateral * EGO_FOOTPRINT.width * left[0],
-                        state.y
-                            + longitudinal * EGO_FOOTPRINT.length * forward[1]
-                            + lateral * EGO_FOOTPRINT.width * left[1],
-                    ];
+                    let point = Position::new(
+                        state.position().x
+                            + longitudinal * EGO_FOOTPRINT.length * forward.x
+                            + lateral * EGO_FOOTPRINT.width * left.x,
+                        state.position().y
+                            + longitudinal * EGO_FOOTPRINT.length * forward.y
+                            + lateral * EGO_FOOTPRINT.width * left.y,
+                    );
                     assert!(
                         patches.iter().any(|patch| point_in_patch(point, patch)),
                         "footprint point {point:?} at {state:?} is outside the carpet"
@@ -685,9 +666,11 @@ mod tests {
     #[test]
     fn long_carpet_work_scales_linearly() {
         let plan = (1..=100)
-            .map(|i| State {
-                x: i as f64 * 10.0,
-                ..Default::default()
+            .map(|i| {
+                State::new(
+                    crate::simulation::Pose::new(crate::simulation::Position::new(i as f64 * 10.0, 0.0), 0.0),
+                    0.0,
+                )
             })
             .collect::<Vec<_>>();
         let footprints = sample_footprints(State::default(), &plan, 0.1);
@@ -740,10 +723,14 @@ mod tests {
                 ..Default::default()
             },
             (1..=100)
-                .map(|tick| State {
-                    x: tick as f64 * terminal_speed * DT,
-                    speed: terminal_speed,
-                    ..Default::default()
+                .map(|tick| {
+                    State::new(
+                        crate::simulation::Pose::new(
+                            crate::simulation::Position::new(tick as f64 * terminal_speed * DT, 0.0),
+                            0.0,
+                        ),
+                        terminal_speed,
+                    )
                 })
                 .collect::<Vec<_>>(),
         );
@@ -889,10 +876,11 @@ mod tests {
         (0..100)
             .map(|tick| {
                 let yaw_delta = speed * curvature(tick) * DT;
-                let mid_yaw = state.yaw + 0.5 * yaw_delta;
-                state.x += speed * DT * mid_yaw.cos();
-                state.y += speed * DT * mid_yaw.sin();
-                state.yaw = wrap_angle(state.yaw + yaw_delta);
+                let mid_yaw = state.pose.yaw + 0.5 * yaw_delta;
+                let forward = Position::from_angle(mid_yaw);
+                state.pose.position.x += speed * DT * forward.x;
+                state.pose.position.y += speed * DT * forward.y;
+                state.pose.yaw = wrap_angle(state.pose.yaw + yaw_delta);
                 state
             })
             .collect()
@@ -958,14 +946,13 @@ mod tests {
         assert_eq!(GUPPY_BLUE.at(1.0), GUPPY.at(0.5));
     }
 
-    fn point_in_patch(point: [f64; 2], patch: &CarpetPatch) -> bool {
+    fn point_in_patch(point: Position, patch: &CarpetPatch) -> bool {
         let triangles = [
             [patch.rear.left, patch.rear.right, patch.front.right],
             [patch.rear.left, patch.front.right, patch.front.left],
         ];
         triangles.into_iter().any(|triangle| {
-            let cross =
-                |a: [f64; 2], b: [f64; 2]| (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0]);
+            let cross = |a: Position, b: Position| (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
             let signs = [
                 cross(triangle[0], triangle[1]),
                 cross(triangle[1], triangle[2]),

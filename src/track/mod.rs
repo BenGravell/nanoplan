@@ -63,7 +63,7 @@ mod tests {
             );
             let (point, yaw) = track.pose(100.0);
             let widths = track.widths(100.0);
-            assert!(point.into_iter().chain([yaw, widths.0, widths.1]).all(f64::is_finite));
+            assert!(point.is_finite() && [yaw, widths.0, widths.1].into_iter().all(f64::is_finite));
             assert!(widths.0 > 0.0 && widths.1 > 0.0);
         }
     }
@@ -84,7 +84,7 @@ mod tests {
                 let progress = length * i as f64 / circuit.samples.len() as f64;
                 let (point, yaw) = track.pose(progress);
                 let (right, left) = track.widths(progress);
-                assert!(point.into_iter().chain([yaw, right, left]).all(f64::is_finite));
+                assert!(point.is_finite() && [yaw, right, left].into_iter().all(f64::is_finite));
                 assert!(right > 0.0 && left > 0.0);
             }
         }

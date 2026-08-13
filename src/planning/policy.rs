@@ -11,7 +11,7 @@ pub(crate) const SPEED_HOLD_MAX_ACCEL: f64 = 1.5;
 pub(crate) fn centerline_feedback(path: &Path, x: &State, target_speed: f64) -> Control {
     let (s, d) = path.project(x.position());
     let (_, lane_yaw) = path.pose_at(s);
-    let heading_err = wrap_angle(x.yaw - lane_yaw);
+    let heading_err = wrap_angle(x.pose.yaw - lane_yaw);
     Control {
         acceleration: speed_hold_accel(x.speed, target_speed),
         curvature: -(CENTERLINE_LATERAL_GAIN * d + CENTERLINE_HEADING_GAIN * heading_err),

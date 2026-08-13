@@ -53,14 +53,14 @@ mod tests {
             20
         ];
         for state in &mut ego[1..] {
-            state.x = 1.0;
+            state.pose.position.x = 1.0;
             state.speed = 0.0;
         }
         let parked = vec![
-            State {
-                x: 10.0,
-                ..Default::default()
-            };
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(10.0, 0.0), 0.0,),
+                0.0,
+            );
             ego.len()
         ];
 
@@ -71,17 +71,19 @@ mod tests {
     #[test]
     fn ttc_uses_the_actual_accelerating_actor_trajectory() {
         let ego: Vec<State> = (0..20)
-            .map(|i| State {
-                x: i as f64,
-                speed: 10.0,
-                ..Default::default()
+            .map(|i| {
+                State::new(
+                    crate::simulation::Pose::new(crate::simulation::Position::new(i as f64, 0.0), 0.0),
+                    10.0,
+                )
             })
             .collect();
         let actor: Vec<State> = (0..20)
-            .map(|i| State {
-                x: 10.0 + 2.0 * i as f64,
-                speed: if i == 0 { 0.0 } else { 20.0 },
-                ..Default::default()
+            .map(|i| {
+                State::new(
+                    crate::simulation::Pose::new(crate::simulation::Position::new(10.0 + 2.0 * i as f64, 0.0), 0.0),
+                    if i == 0 { 0.0 } else { 20.0 },
+                )
             })
             .collect();
 
@@ -93,13 +95,13 @@ mod tests {
     fn ttc_detects_a_future_collision_from_the_actual_trajectories() {
         let ego = vec![State::default(); 20];
         let mut actor = vec![
-            State {
-                x: 10.0,
-                ..Default::default()
-            };
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(10.0, 0.0), 0.0,),
+                0.0,
+            );
             20
         ];
-        actor[5].x = 0.0;
+        actor[5].pose.position.x = 0.0;
 
         let controls = vec![Control::default(); ego.len()];
         assert_eq!(evaluate_trace(&ego, &controls, &[actor], &road()).per_tick[0][0], 0.0);

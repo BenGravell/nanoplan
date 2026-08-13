@@ -17,7 +17,7 @@ use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_ba
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{RoadFrame, best_first, parent_chain, stop_controls};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
-use crate::simulation::{Control, State, world_step};
+use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
@@ -50,7 +50,7 @@ struct Reach {
 struct Segment {
     controls: Vec<Control>,
     samples: Vec<Sample>,
-    points: Vec<[f64; 2]>,
+    points: Vec<crate::simulation::Position>,
     end: State,
 }
 
@@ -187,7 +187,7 @@ fn segment(
             let u = tick as f64 / TICKS_PER_EDGE as f64;
             let s = hermite(s0, s1, v0 * duration, v1 * duration, u);
             let d = hermite(d0, d1, 0.0, 0.0, u);
-            (s, path.frenet_to_xy(s, d))
+            (s, path.frenet_to_position(s, d))
         })
         .collect();
     let acceleration = edge_acceleration(start.speed, v1, dt);
@@ -206,11 +206,11 @@ fn segment(
             || path.pose_at(s1).1,
             |&(_, next)| {
                 let current = targets[lookahead_tick].1;
-                (next[1] - current[1]).atan2(next[0] - current[0])
+                (next.y - current.y).atan2(next.x - current.x)
             },
         );
         let curvature = if actual.speed > LOW_SPEED_LIMIT_MPS {
-            wrap_angle(target_yaw - actual.yaw) / (actual.speed * STEERING_LOOKAHEAD_TICKS as f64 * dt)
+            wrap_angle(target_yaw - actual.pose.yaw) / (actual.speed * STEERING_LOOKAHEAD_TICKS as f64 * dt)
         } else {
             0.0
         };
@@ -233,11 +233,11 @@ fn segment(
         let (body_s, body_d) = path.project_near(body_center, actual_s, 30.0);
         let (right, left) = ctx.road.lateral_bounds_at(body_s);
         let (_, body_lane_yaw) = path.pose_at(body_s);
-        let road_normal = [-body_lane_yaw.sin(), body_lane_yaw.cos()];
+        let road_normal = Position::from_angle(body_lane_yaw + std::f64::consts::FRAC_PI_2).xy();
         let half_length = EGO_FOOTPRINT.length / 2.0;
         let curvature_margin = 0.5 * path_curvature(path, body_s).abs() * half_length.powi(2);
         let lateral_margin =
-            EGO_FOOTPRINT.support_radius(actual.yaw, road_normal) + curvature_margin + ROAD_CLEARANCE_M;
+            EGO_FOOTPRINT.support_radius(actual.pose.yaw, road_normal) + curvature_margin + ROAD_CLEARANCE_M;
         if body_d < right + lateral_margin || body_d > left - lateral_margin {
             return None;
         }
@@ -248,11 +248,11 @@ fn segment(
             return None;
         }
         let (s, d) = (actual_s, actual_d);
-        let xy = [actual.x, actual.y];
+        let position = actual.position();
         let lat_accel = lateral_acceleration(actual.speed, control.curvature);
         let (_, lane_yaw) = path.pose_at(s);
         let lane_curvature = path_curvature(path, s);
-        let heading_err = wrap_angle(actual.yaw - lane_yaw);
+        let heading_err = wrap_angle(actual.pose.yaw - lane_yaw);
         let station_speed = actual.speed * heading_err.cos() / (1.0 - lane_curvature * d).max(0.1);
         let (lon_jerk, lat_jerk) = previous_dynamics.map_or((0.0, 0.0), |(previous, lat)| {
             (
@@ -261,7 +261,7 @@ fn segment(
             )
         });
         samples.push(Sample {
-            xy,
+            position,
             lateral: d,
             road_bounds: Some((right, left)),
             heading_err,
@@ -271,7 +271,7 @@ fn segment(
             lat_jerk,
             t: start_time + (tick + 1) as f64 * dt,
         });
-        points.push(xy);
+        points.push(position);
         controls.push(control);
         previous_dynamics = Some((control, lat_accel));
     }
@@ -293,7 +293,7 @@ impl Planner for LatticePlanner {
         debug_assert!((ctx.road.dt - PLANNING_DT_S).abs() < 1e-9);
         let RoadFrame { path, s0, d0, .. } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let reach = reachable(ego.speed, ctx.road.dt);
-        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, &path, ego.speed, ctx.road.dt);
+        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
         let max_evaluated_segments = ctx.compute_budget.scale(SEGMENTS_AT_100_MS, 100);
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);
@@ -322,7 +322,7 @@ impl Planner for LatticePlanner {
                 return None;
             }
             evaluated.set(evaluated.get() + 1);
-            let segment = segment(&path, ctx, start, sa, da, va, sb, db, vb, layer as f64)?;
+            let segment = segment(path, ctx, start, sa, da, va, sb, db, vb, layer as f64)?;
             let mut cost = 0.0;
             for sample in &segment.samples {
                 let point = ctx.time("cost", || constraints.point_cost(sample));
@@ -362,13 +362,8 @@ impl Planner for LatticePlanner {
                         (usize::MAX, 0, 0, 0, s0, d0, ego.speed.max(0.0), ego)
                     } else {
                         let (layer, si, di, vi, s, d, v) = node_state(node);
-                        let (xy, yaw) = path.pose_at(s);
-                        let nominal = State {
-                            x: xy[0] - d * yaw.sin(),
-                            y: xy[1] + d * yaw.cos(),
-                            yaw,
-                            speed: v,
-                        };
+                        let (_, yaw) = path.pose_at(s);
+                        let nominal = State::from((path.frenet_to_position(s, d), yaw, v));
                         let start = node_states.borrow()[node].unwrap_or(nominal);
                         let (actual_s, actual_d) = path.project_near(start.position(), s, 30.0);
                         (layer, si, di, vi, actual_s, actual_d, start.speed, start)
@@ -405,9 +400,9 @@ impl Planner for LatticePlanner {
                                 let successor = node_id(next_layer, next_si, next_di, next_vi);
                                 pending_states.borrow_mut()[successor] = Some(segment.end);
                                 if let Some(diag) = ctx.diagnostics {
-                                    diag.record_point([segment.end.x, segment.end.y]);
+                                    diag.record_point(segment.end.into());
                                     diag.record_trajectory(
-                                        std::iter::once([start.x, start.y])
+                                        std::iter::once(start.position())
                                             .chain(segment.points.iter().copied())
                                             .collect(),
                                     );
@@ -443,7 +438,7 @@ impl Planner for LatticePlanner {
             for node in chain {
                 let (_, _, _, _, sb, db, vb) = node_state(node);
                 let layer = controls.len() / TICKS_PER_EDGE;
-                let Some(segment) = segment(&path, ctx, start, sa, da, va, sb, db, vb, layer as f64) else {
+                let Some(segment) = segment(path, ctx, start, sa, da, va, sb, db, vb, layer as f64) else {
                     break;
                 };
                 start = segment.end;
@@ -514,10 +509,10 @@ mod tests {
     #[test]
     fn brakes_for_road_curvature() {
         let radius = 20.0;
-        let centerline: Vec<[f64; 2]> = (0..=80)
+        let centerline: Vec<crate::simulation::Position> = (0..=80)
             .map(|i| {
                 let a = i as f64 * 0.02;
-                [radius * a.sin(), radius * (1.0 - a.cos())]
+                crate::simulation::Position::new(radius * a.sin(), radius * (1.0 - a.cos()))
             })
             .collect();
         let road = Road::new(centerline, 60.0, 5.5, 0.1);
@@ -535,15 +530,14 @@ mod tests {
     fn stays_on_road_actor_free() {
         let trace = test_run(
             &mut LatticePlanner,
-            State {
-                y: 1.0,
-                speed: 8.0,
-                ..Default::default()
-            },
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 1.0), 0.0),
+                8.0,
+            ),
             &[],
             80,
         );
-        assert!(trace.iter().all(|state| state.y.abs() <= 5.5));
+        assert!(trace.iter().all(|state| state.position().y.abs() <= 5.5));
         assert!(
             trace.last().unwrap().speed > 8.0,
             "final state {:?}",
@@ -554,12 +548,14 @@ mod tests {
     #[test]
     fn uses_the_road_width_through_a_corner() {
         let radius = 25.0;
-        let mut centerline: Vec<[f64; 2]> = (0..=25).map(|i| [-50.0 + 4.0 * i as f64, 0.0]).collect();
+        let mut centerline: Vec<crate::simulation::Position> = (0..=25)
+            .map(|i| crate::simulation::Position::new(-50.0 + 4.0 * i as f64, 0.0))
+            .collect();
         centerline.extend((1..=32).map(|i| {
             let a = std::f64::consts::FRAC_PI_2 * i as f64 / 32.0;
-            [50.0 + radius * a.sin(), radius * (1.0 - a.cos())]
+            crate::simulation::Position::new(50.0 + radius * a.sin(), radius * (1.0 - a.cos()))
         }));
-        centerline.extend((1..=30).map(|i| [50.0 + radius, radius + 4.0 * i as f64]));
+        centerline.extend((1..=30).map(|i| crate::simulation::Position::new(50.0 + radius, radius + 4.0 * i as f64)));
         let road = Road::new(centerline, 60.0, 7.0, 0.1);
         let trace = test_run_on(
             &mut LatticePlanner,
@@ -612,7 +608,7 @@ mod tests {
         for (point, trajectory) in data.points.iter().zip(&data.trajectories) {
             assert_eq!(trajectory.last(), Some(point));
             assert!(
-                trajectory.first() == Some(&[0.0, 0.0])
+                trajectory.first() == Some(&crate::simulation::Position::default())
                     || data.points.iter().any(|node| trajectory.first() == Some(node)),
                 "edge start {:?} is not a lattice node",
                 trajectory.first()
@@ -639,10 +635,10 @@ mod tests {
 
     #[test]
     fn still_avoids_a_stopped_actor() {
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = test_run(
             &mut LatticePlanner,
             State {
@@ -654,7 +650,7 @@ mod tests {
         );
         let min_gap = trace
             .iter()
-            .map(|state| (state.x - obstacle.x).hypot(state.y - obstacle.y))
+            .map(|state| (state.position().x - obstacle.position().x).hypot(state.position().y - obstacle.position().y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "minimum actor gap {min_gap}");
     }

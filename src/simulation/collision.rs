@@ -1,4 +1,4 @@
-use super::State;
+use super::{Position, State};
 use crate::geometry::{Footprint, overlap_mtv};
 
 /// Restitution shared by every dynamic vehicle collision.
@@ -46,10 +46,10 @@ fn collide_pair(a: &mut DynamicBody, b: &mut DynamicBody) -> bool {
     // Both bodies have the same finite inertia, so neither gets privileged as
     // an immovable obstacle.
     let correction = 0.5 * (hit.depth + SEPARATION_EPSILON_M);
-    a.state.x += hit.normal[0] * correction;
-    a.state.y += hit.normal[1] * correction;
-    b.state.x -= hit.normal[0] * correction;
-    b.state.y -= hit.normal[1] * correction;
+    a.state.pose.position.x += hit.normal[0] * correction;
+    a.state.pose.position.y += hit.normal[1] * correction;
+    b.state.pose.position.x -= hit.normal[0] * correction;
+    b.state.pose.position.y -= hit.normal[1] * correction;
 
     let mut va = velocity(a.state);
     let mut vb = velocity(b.state);
@@ -68,7 +68,8 @@ fn collide_pair(a: &mut DynamicBody, b: &mut DynamicBody) -> bool {
 }
 
 fn velocity(state: State) -> [f64; 2] {
-    [state.speed * state.yaw.cos(), state.speed * state.yaw.sin()]
+    let direction = Position::from_angle(state.pose.yaw);
+    [state.speed * direction.x, state.speed * direction.y]
 }
 
 fn with_velocity(mut state: State, velocity: [f64; 2], footprint: Footprint) -> State {
@@ -78,9 +79,10 @@ fn with_velocity(mut state: State, velocity: [f64; 2], footprint: Footprint) -> 
         // direction, so keep the physical center fixed while aligning the
         // body with its post-impact velocity.
         let center = footprint.center(state.pose());
-        state.yaw = velocity[1].atan2(velocity[0]);
-        state.x = center.x - 0.5 * footprint.length * state.yaw.cos();
-        state.y = center.y - 0.5 * footprint.length * state.yaw.sin();
+        state.pose.yaw = velocity[1].atan2(velocity[0]);
+        let forward = Position::from_angle(state.pose.yaw);
+        state.pose.position.x = center.position.x - 0.5 * footprint.length * forward.x;
+        state.pose.position.y = center.position.y - 0.5 * footprint.length * forward.y;
     }
     state.speed = speed;
     state
@@ -96,27 +98,26 @@ mod tests {
     }
 
     fn vx(state: State) -> f64 {
-        state.speed * state.yaw.cos()
+        state.speed * Position::from_angle(state.pose.yaw).x
     }
 
     #[test]
     fn vehicle_collision_moves_and_bounces_both_bodies() {
         let mut bodies = [
-            body(State {
-                x: 0.0,
-                speed: 10.0,
-                ..Default::default()
-            }),
-            body(State {
-                x: 4.0,
-                ..Default::default()
-            }),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
+                10.0,
+            )),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(4.0, 0.0), 0.0),
+                0.0,
+            )),
         ];
 
         collide_dynamic_bodies(&mut bodies);
 
-        assert!(bodies[0].state.x < 0.0);
-        assert!(bodies[1].state.x > 4.0);
+        assert!(bodies[0].state.position().x < 0.0);
+        assert!(bodies[1].state.position().x > 4.0);
         assert!(vx(bodies[0].state) < 10.0);
         assert!(vx(bodies[1].state) > 0.0);
         assert!(!footprints_overlap(
@@ -130,17 +131,14 @@ mod tests {
     #[test]
     fn equal_vehicle_collision_conserves_linear_momentum() {
         let mut bodies = [
-            body(State {
-                x: 0.0,
-                speed: 8.0,
-                ..Default::default()
-            }),
-            body(State {
-                x: 7.6,
-                yaw: std::f64::consts::PI,
-                speed: 2.0,
-                ..Default::default()
-            }),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
+                8.0,
+            )),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(7.6, 0.0), std::f64::consts::PI),
+                2.0,
+            )),
         ];
         let momentum_before = vx(bodies[0].state) + vx(bodies[1].state);
 
@@ -158,19 +156,18 @@ mod tests {
     #[test]
     fn three_vehicle_contact_propagates_to_every_actor() {
         let mut bodies = [
-            body(State {
-                x: 0.0,
-                speed: 12.0,
-                ..Default::default()
-            }),
-            body(State {
-                x: 4.0,
-                ..Default::default()
-            }),
-            body(State {
-                x: 8.0,
-                ..Default::default()
-            }),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
+                12.0,
+            )),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(4.0, 0.0), 0.0),
+                0.0,
+            )),
+            body(State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(8.0, 0.0), 0.0),
+                0.0,
+            )),
         ];
 
         collide_dynamic_bodies(&mut bodies);

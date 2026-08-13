@@ -1,4 +1,4 @@
-use crate::common::interp::interpolate_state;
+use crate::common::interp::lerp_state;
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
@@ -88,17 +88,15 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
         smooth: false,
     };
 
-    let ego = State {
-        x: 3.0,
-        y: 4.0,
-        yaw: 0.7,
-        ..Default::default()
-    };
+    let ego = State::new(
+        crate::simulation::Pose::new(crate::simulation::Position::new(3.0, 4.0), 0.7),
+        0.0,
+    );
     camera.reset(ego);
 
     assert_eq!(camera.center, screen::px(&ego));
     assert_eq!(camera.zoom, DEFAULT_ZOOM);
-    assert_eq!(camera.rotation, ego.yaw as f32 - std::f32::consts::FRAC_PI_2);
+    assert_eq!(camera.rotation, ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
     assert!(camera.follow);
     assert!(camera.align_heading);
     assert!(camera.smooth);
@@ -141,16 +139,14 @@ fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
             rotation: 0.7,
             ..Default::default()
         };
-        let ego = State {
-            x: 3.0,
-            y: 4.0,
-            yaw: ego_yaw,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(3.0, 4.0), ego_yaw),
+            0.0,
+        );
         let center = followed_camera_center(camera, ego, viewport_height);
         let up = Rot2::radians(camera.rotation) * Vec2::Y;
         let ego_in_view = (screen::px(&ego) - center).dot(up);
-        let rear_extent = CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
+        let rear_extent = CAR_FOOTPRINT.support(ego.pose.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
         let rear_screen_y = (ego_in_view - rear_extent) * zoom;
 
         assert!((rear_screen_y + viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX).abs() < 1e-3);
@@ -159,25 +155,21 @@ fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
 
 #[test]
 fn render_interpolation_blends_pose_and_wraps_yaw() {
-    let previous = State {
-        x: 2.0,
-        yaw: std::f64::consts::PI - 0.2,
-        speed: 4.0,
-        ..Default::default()
-    };
-    let current = State {
-        x: 6.0,
-        y: 2.0,
-        yaw: -std::f64::consts::PI + 0.2,
-        speed: 8.0,
-    };
+    let previous = State::new(
+        crate::simulation::Pose::new(crate::simulation::Position::new(2.0, 0.0), std::f64::consts::PI - 0.2),
+        4.0,
+    );
+    let current = State::new(
+        crate::simulation::Pose::new(crate::simulation::Position::new(6.0, 2.0), -std::f64::consts::PI + 0.2),
+        8.0,
+    );
 
-    let rendered = interpolate_state(previous, current, 0.5);
+    let rendered = lerp_state(previous, current, 0.5);
 
-    assert_eq!(rendered.x, 4.0);
-    assert_eq!(rendered.y, 1.0);
+    assert_eq!(rendered.position().x, 4.0);
+    assert_eq!(rendered.position().y, 1.0);
     assert_eq!(rendered.speed, 6.0);
-    assert!((rendered.yaw - std::f64::consts::PI).abs() < 1e-9);
+    assert!((rendered.pose.yaw - std::f64::consts::PI).abs() < 1e-9);
 }
 
 #[test]
@@ -190,8 +182,8 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     live.regenerate_with_actor_count(2, PlannerKind::BezierToppra, 0, DEFAULT_ACTORS);
 
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
-    assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);
-    assert_eq!(live.previous.ego.yaw, track_yaw);
+    assert!((live.world.ego().pose.yaw - track_yaw).abs() < 1e-12);
+    assert_eq!(live.previous.ego.pose.yaw, track_yaw);
     assert_eq!(live.camera.rotation, track_yaw as f32 - std::f32::consts::FRAC_PI_2);
     assert_eq!(live.camera.center, screen::px(&live.world.ego()));
     assert_eq!(live.acc, 0.0);

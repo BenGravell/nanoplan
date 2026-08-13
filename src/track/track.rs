@@ -6,6 +6,7 @@ use super::catalog::loaded_catalog;
 use super::circuit::Circuit;
 use super::presets::{self, TRACK_PRESETS};
 use crate::geometry::RoadPolygon;
+use crate::simulation::Position;
 
 pub(crate) const GENERATED_TRACK_NAME: &str = "Generated Circuit";
 
@@ -56,11 +57,11 @@ impl Track {
         }
     }
 
-    pub(crate) fn point(&self, progress: f64) -> [f64; 2] {
+    pub(crate) fn point(&self, progress: f64) -> Position {
         self.pose(progress).0
     }
 
-    pub(crate) fn pose(&self, progress: f64) -> ([f64; 2], f64) {
+    pub(crate) fn pose(&self, progress: f64) -> (Position, f64) {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => circuit.pose(progress),
         }
@@ -78,7 +79,7 @@ impl Track {
     }
 
     #[cfg(test)]
-    pub(crate) fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<[f64; 2]> {
+    pub(crate) fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<Position> {
         let first = (from / step).floor() as i64;
         let last = (to / step).ceil() as i64;
         (first..=last).map(|i| self.point(i as f64 * step)).collect()
@@ -104,7 +105,7 @@ impl Track {
         }
     }
 
-    pub(crate) fn project_progress(&self, point: [f64; 2], hint: f64) -> f64 {
+    pub(crate) fn project_progress(&self, point: Position, hint: f64) -> f64 {
         match &self.geometry {
             TrackGeometry::Circuit(circuit) => circuit.project(point, hint),
         }

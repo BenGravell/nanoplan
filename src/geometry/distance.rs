@@ -14,7 +14,7 @@ mod tests {
         assert_eq!(
             dist(
                 crate::simulation::Pose::default(),
-                crate::simulation::Pose::new(3.0, 4.0, 1.0)
+                crate::simulation::Pose::new(Position::new(3.0, 4.0), 1.0)
             ),
             5.0
         );

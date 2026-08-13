@@ -28,7 +28,7 @@ impl CameraState {
         *self = Self {
             center: px(&ego),
             zoom: DEFAULT_ZOOM,
-            rotation: ego.yaw as f32 - std::f32::consts::FRAC_PI_2,
+            rotation: ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2,
             follow: true,
             align_heading: true,
             smooth: true,
@@ -149,7 +149,7 @@ pub(super) fn smooth_angle(current: f32, target: f32, blend: f32) -> f32 {
 
 pub(super) fn followed_camera_center(camera: CameraState, ego: State, viewport_height: f32) -> Vec2 {
     let up = Rot2::radians(camera.rotation) * Vec2::Y;
-    let rear_extent = CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
+    let rear_extent = CAR_FOOTPRINT.support(ego.pose.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
     let ego_y = -(viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX) / camera.zoom + rear_extent;
     camera.center + up * ((px(&ego) - camera.center).dot(up) - ego_y)
 }

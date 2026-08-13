@@ -36,7 +36,7 @@ use crate::planning::search_tree::{
 use crate::planning::steering::CubicSteer;
 use crate::planning::{Context, Planner};
 use crate::prediction::predict;
-use crate::simulation::{Control, State};
+use crate::simulation::{Control, Position, State};
 use crate::track::Path;
 use crate::vehicle::MAX_ABS_CURVATURE;
 
@@ -162,7 +162,7 @@ fn max_yaw_change(step_len: f64) -> f64 {
 }
 
 struct Node {
-    pos: [f64; 2],
+    pos: Position,
     yaw: f64,
     /// Frenet station of `pos`, cached at creation. Used to keep every
     /// edge a step *forward* along the lane — see the module note on
@@ -184,7 +184,7 @@ struct Node {
     /// Sampled polyline of the edge from `parent` to this node (empty for
     /// the root); kept for both the diagnostic overlay and final path
     /// extraction.
-    segment: Vec<[f64; 2]>,
+    segment: Vec<Position>,
     /// Whether this node's *position* came from replaying last tick's
     /// winning path (see `plan`'s warm-start block), rather than from a
     /// sample drawn this tick. Used to prefer continuing an
@@ -217,7 +217,7 @@ struct Node {
 /// windowed projection.
 fn steer_cost(
     curve: &CubicSteer,
-    segment: &[[f64; 2]],
+    segment: &[Position],
     path: &Path,
     s0: f64,
     v: f64,
@@ -252,12 +252,12 @@ fn steer_cost(
         let t = (s - s0) / v;
         for a in ctx.actors {
             let predicted = predict(a, path, t);
-            if dist(p, [predicted.x, predicted.y]) < COLLISION_MARGIN_M {
+            if p.distance(predicted.into()) < COLLISION_MARGIN_M {
                 return None;
             }
         }
         let sample = Sample {
-            xy: p,
+            position: p,
             lateral: d,
             speed: v,
             t,
@@ -288,14 +288,14 @@ fn try_extend(
     s0: f64,
     v: f64,
     ctx: &Context,
-    target: [f64; 2],
+    target: Position,
 ) -> bool {
     let target_s = path.project(target).0;
     // nearest existing node strictly behind the target's station: walk the
     // spatial index outward from the target (nearest first) and take the
     // first behind it — exact, and typically only a couple of steps.
     let Some(nearest_idx) = tree
-        .nearest_neighbor_iter(&target)
+        .nearest_neighbor_iter(&target.xy())
         .map(|n| n.data)
         .find(|&i| nodes[i].station < target_s)
     else {
@@ -305,12 +305,12 @@ fn try_extend(
     let parent = &nodes[nearest_idx];
     let step_len = dist(parent.pos, target).min(STEP_MAX_M);
     let limit = max_yaw_change(step_len);
-    let raw_dir = (target[1] - parent.pos[1]).atan2(target[0] - parent.pos[0]);
+    let raw_dir = (target.y - parent.pos.y).atan2(target.x - parent.pos.x);
     let steer_dir = wrap_angle(parent.yaw + wrap_angle(raw_dir - parent.yaw).clamp(-limit, limit));
-    let new_pos = [
-        parent.pos[0] + step_len * steer_dir.cos(),
-        parent.pos[1] + step_len * steer_dir.sin(),
-    ];
+    let new_pos = Position::new(
+        parent.pos.x + step_len * steer_dir.cos(),
+        parent.pos.y + step_len * steer_dir.sin(),
+    );
     let new_yaw = steer_dir;
     let (new_s, new_d) = path.project(new_pos);
     if new_s <= nodes[nearest_idx].station {
@@ -324,7 +324,7 @@ fn try_extend(
     // straight steer-from edge is never dropped when the cap bites.
     let radius2 = NEIGHBOR_RADIUS_M * NEIGHBOR_RADIUS_M;
     let mut parent_candidates: Vec<usize> = tree
-        .nearest_neighbor_iter_with_distance_2(&new_pos)
+        .nearest_neighbor_iter_with_distance_2(&new_pos.xy())
         .take_while(|(_, d2)| *d2 <= radius2)
         .filter_map(|(n, _)| (nodes[n.data].station < new_s).then_some(n.data))
         .take(K_NEIGHBORS)
@@ -359,14 +359,14 @@ fn try_extend(
         segment,
         warm_started: false,
     });
-    tree.insert(SpatialNode::new(new_pos, new_idx));
+    tree.insert(SpatialNode::new(new_pos.xy(), new_idx));
 
     // rewire: reconnect the `K_NEIGHBORS` nearest vertices strictly ahead of
     // new_pos through it when cheaper (ahead in station, so the reconnection
     // stays a forward edge; the new node itself has station == new_s, so the
     // `> new_s` filter excludes it even though it's now in the index).
     let rewire_candidates: Vec<usize> = tree
-        .nearest_neighbor_iter_with_distance_2(&new_pos)
+        .nearest_neighbor_iter_with_distance_2(&new_pos.xy())
         .take_while(|(_, d2)| *d2 <= radius2)
         .filter_map(|(n, _)| (nodes[n.data].station > new_s).then_some(n.data))
         .take(K_NEIGHBORS)
@@ -397,7 +397,7 @@ fn try_extend(
 pub(crate) struct RrtStarPlanner {
     /// Last tick's winning polyline, in the same fixed world frame the ego
     /// is — reused to warm-start this tick's tree (see `plan`'s doc note).
-    prev_path: Vec<[f64; 2]>,
+    prev_path: Vec<Position>,
     /// The side of the lane the committed plan has swung out to (signed peak
     /// lateral offset of the winning path), smoothed across ticks. Goal
     /// selection is biased toward candidates that stay on this side, so the
@@ -417,8 +417,8 @@ impl Planner for RrtStarPlanner {
         } = ctx.time("route", || RoadFrame::new(ego, ctx));
 
         let mut nodes = vec![Node {
-            pos: [ego.x, ego.y],
-            yaw: ego.yaw,
+            pos: ego.position(),
+            yaw: ego.pose.yaw,
             station: s0,
             lateral: d0,
             peak_lateral: d0,
@@ -430,7 +430,7 @@ impl Planner for RrtStarPlanner {
         // Spatial index over node positions, grown alongside `nodes` (root
         // first). Every place a node is pushed also inserts it here.
         let mut tree: Spatial = Spatial::new();
-        tree.insert(SpatialNode::new([ego.x, ego.y], 0));
+        tree.insert(SpatialNode::new([ego.position().x, ego.position().y], 0));
 
         // Warm start: replay whatever part of last tick's winning path is
         // still ahead of the ego and still collision-free against this
@@ -455,12 +455,12 @@ impl Planner for RrtStarPlanner {
                     continue; // too short to re-fit a curve to reliably; see the constant's doc comment
                 }
                 let limit = max_yaw_change(step_len);
-                let chord_yaw = (p[1] - parent.pos[1]).atan2(p[0] - parent.pos[0]);
+                let chord_yaw = (p.y - parent.pos.y).atan2(p.x - parent.pos.x);
                 let dyaw = wrap_angle(chord_yaw - parent.yaw).clamp(-limit, limit);
                 let yaw = wrap_angle(parent.yaw + dyaw);
                 let curve = CubicSteer::from_poses(parent.pos, parent.yaw, p, yaw);
                 let segment = curve.sample(STEER_SAMPLES);
-                let Some(ec) = steer_cost(&curve, &segment, &path, s0, v, ctx, [parent.station, station]) else {
+                let Some(ec) = steer_cost(&curve, &segment, path, s0, v, ctx, [parent.station, station]) else {
                     break; // stale from here on; random sampling takes over
                 };
                 let cost = parent.cost + ec;
@@ -477,7 +477,7 @@ impl Planner for RrtStarPlanner {
                     segment,
                     warm_started: true,
                 });
-                tree.insert(SpatialNode::new(p, idx));
+                tree.insert(SpatialNode::new(p.xy(), idx));
                 parent_idx = idx;
             }
         });
@@ -517,8 +517,8 @@ impl Planner for RrtStarPlanner {
                     (10.0, 0.6 * bypass),
                     (20.0, 0.0),
                 ] {
-                    let target = path.frenet_to_xy(a_s + station_offset, lateral);
-                    try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, target);
+                    let target = path.frenet_to_position(a_s + station_offset, lateral);
+                    try_extend(&mut nodes, &mut tree, path, s0, v, ctx, target);
                 }
             }
         }
@@ -548,7 +548,7 @@ impl Planner for RrtStarPlanner {
                 GRID_LATERALS,
                 qmc_budget,
             ) {
-                try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, path.frenet_to_xy(s, d));
+                try_extend(&mut nodes, &mut tree, path, s0, v, ctx, path.frenet_to_position(s, d));
             }
         });
 
@@ -660,14 +660,13 @@ mod tests {
 
     #[test]
     fn stays_on_empty_centerline() {
-        let ego = State {
-            y: 1.5,
-            speed: 8.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 1.5), 0.0),
+            8.0,
+        );
         let trace = test_run(&mut RrtStarPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 1.03, "offset {}", end.y);
+        assert!(end.position().y.abs() < 1.03, "offset {}", end.position().y);
     }
 
     /// The sampling is a fixed grid plus a Halton sequence, both pure
@@ -681,10 +680,10 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
@@ -699,18 +698,22 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = test_run(&mut RrtStarPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
+            .map(|s| (s.position().x - 40.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
         let end = trace.last().unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        assert!(end.x > 60.0, "did not pass the obstacle, x {}", end.x);
+        assert!(
+            end.position().x > 60.0,
+            "did not pass the obstacle, x {}",
+            end.position().x
+        );
     }
 
     /// Parity with the shared sampler: lifting RRT*'s old inline grid +

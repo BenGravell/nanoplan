@@ -162,15 +162,17 @@ fn attainable_lateral_fraction(speed: f64) -> f32 {
 }
 
 fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
-    let v0 = [previous.speed * previous.yaw.cos(), previous.speed * previous.yaw.sin()];
-    let v1 = [current.speed * current.yaw.cos(), current.speed * current.yaw.sin()];
+    let forward = crate::simulation::Position::from_angle(previous.pose.yaw);
+    let current_forward = crate::simulation::Position::from_angle(current.pose.yaw);
+    let v0 = [previous.speed * forward.x, previous.speed * forward.y];
+    let v1 = [current.speed * current_forward.x, current.speed * current_forward.y];
     let dv = [
         forward_difference(v0[0], v1[0], dt),
         forward_difference(v0[1], v1[1], dt),
     ];
     [
-        previous.yaw.cos() * dv[0] + previous.yaw.sin() * dv[1],
-        -previous.yaw.sin() * dv[0] + previous.yaw.cos() * dv[1],
+        forward.x * dv[0] + forward.y * dv[1],
+        -forward.y * dv[0] + forward.x * dv[1],
     ]
 }
 
@@ -207,16 +209,17 @@ mod tests {
 
     #[test]
     fn acceleration_is_resolved_in_the_previous_ego_frame() {
-        let previous = State {
-            yaw: std::f64::consts::FRAC_PI_2,
-            speed: 10.0,
-            ..Default::default()
-        };
-        let current = State {
-            yaw: std::f64::consts::FRAC_PI_2 + 0.1,
-            speed: 10.2,
-            ..Default::default()
-        };
+        let previous = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), std::f64::consts::FRAC_PI_2),
+            10.0,
+        );
+        let current = State::new(
+            crate::simulation::Pose::new(
+                crate::simulation::Position::new(0.0, 0.0),
+                std::f64::consts::FRAC_PI_2 + 0.1,
+            ),
+            10.2,
+        );
 
         let [lon, lat] = ego_acceleration(previous, current, 0.1);
 

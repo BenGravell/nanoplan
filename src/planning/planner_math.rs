@@ -15,10 +15,10 @@ pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>
     (
         s,
         Sample {
-            xy: p.xy(),
+            position: p,
             lateral: d,
             road_bounds: None,
-            heading_err: wrap_angle(x.yaw - lane_yaw),
+            heading_err: wrap_angle(x.pose.yaw - lane_yaw),
             speed: x.speed,
             station_speed: None,
             lon_jerk: 0.0,

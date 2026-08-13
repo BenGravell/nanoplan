@@ -20,12 +20,16 @@ pub(crate) fn speed_after_max_accel(mut speed: f64, ticks: usize, dt: f64) -> f6
 pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
     let u = clamp_control(u, s.speed);
     let net_accel = net_longitudinal_accel(u.acceleration, s.speed);
-    State {
-        x: s.x + s.speed * s.yaw.cos() * dt,
-        y: s.y + s.speed * s.yaw.sin() * dt,
-        yaw: s.yaw + s.speed * u.curvature * dt,
-        speed: s.speed + net_accel * dt,
-    }
+    let forward = crate::simulation::Position::from_angle(s.pose.yaw);
+    (
+        crate::simulation::Position::new(
+            s.position().x + s.speed * forward.x * dt,
+            s.position().y + s.speed * forward.y * dt,
+        ),
+        s.pose.yaw + s.speed * u.curvature * dt,
+        s.speed + net_accel * dt,
+    )
+        .into()
 }
 
 /// Stores the statically limited control currently applied by the simulator.
@@ -70,7 +74,7 @@ mod tests {
             0.1,
         );
         assert!((ns.speed - (s.speed + (MAX_LON_ACCEL - longitudinal_resistance_accel(s.speed)) * 0.1)).abs() < 1e-9);
-        assert!((ns.yaw - s.speed * MAX_ABS_CURVATURE * 0.1).abs() < 1e-9);
+        assert!((ns.pose.yaw - s.speed * MAX_ABS_CURVATURE * 0.1).abs() < 1e-9);
     }
 
     #[test]
@@ -97,11 +101,10 @@ mod tests {
         let s1 = world_step(s0, Control::default(), 0.1);
         assert_eq!(
             s1,
-            State {
-                x: 0.1,
-                speed: 1.0 - longitudinal_resistance_accel(1.0) * 0.1,
-                ..Default::default()
-            }
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.1, 0.0), 0.0,),
+                1.0 - longitudinal_resistance_accel(1.0) * 0.1,
+            )
         );
     }
 
@@ -116,7 +119,7 @@ mod tests {
             curvature: 1.0,
         };
         let s1 = world_step(s0, u, 0.1);
-        assert!(s1.yaw > 0.0);
+        assert!(s1.pose.yaw > 0.0);
     }
 
     #[test]
@@ -220,7 +223,7 @@ mod tests {
             0.1,
         );
         let expected_yaw = -slow * MAX_ABS_CURVATURE * 0.1;
-        assert!((s.yaw - expected_yaw).abs() < 1e-9, "yaw {}", s.yaw);
+        assert!((s.pose.yaw - expected_yaw).abs() < 1e-9, "yaw {}", s.pose.yaw);
 
         let fast = 25.0;
         let kappa_lat = curvature_from_lateral_acceleration(fast, MAX_ABS_LAT_ACCEL);
@@ -235,7 +238,7 @@ mod tests {
             },
             0.1,
         );
-        let applied_curvature = s.yaw / (fast * 0.1);
+        let applied_curvature = s.pose.yaw / (fast * 0.1);
         assert!(
             (applied_curvature - kappa_lat).abs() < 1e-9,
             "curv {}",

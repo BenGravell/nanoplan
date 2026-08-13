@@ -3,6 +3,7 @@
 use std::f64::consts::TAU;
 
 use crate::common::rng::Rng;
+use crate::common::types::Position;
 use crate::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
 use serde::{Deserialize, Serialize};
 
@@ -22,13 +23,13 @@ const MODEL: &str = include_str!("trained_model.json");
 #[cfg(test)]
 pub(crate) struct TrainingTrack {
     pub(crate) length: f64,
-    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) points: Vec<Position>,
     pub(crate) right: Vec<f64>,
     pub(crate) left: Vec<f64>,
 }
 
 pub(crate) struct GeneratedTrack {
-    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) points: Vec<Position>,
     pub(crate) right: Vec<f64>,
     pub(crate) left: Vec<f64>,
 }
@@ -188,7 +189,7 @@ impl TrackModel {
     }
 }
 
-fn signed_curvature(points: &[[f64; 2]]) -> Vec<f64> {
+fn signed_curvature(points: &[Position]) -> Vec<f64> {
     (0..points.len())
         .map(|i| {
             let a = points[(i + points.len() - 1) % points.len()];
@@ -197,13 +198,13 @@ fn signed_curvature(points: &[[f64; 2]]) -> Vec<f64> {
             let ab = distance(a, b);
             let bc = distance(b, c);
             let ac = distance(a, c);
-            let cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            let cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
             2.0 * cross / (ab * bc * ac).max(1e-9)
         })
         .collect()
 }
 
-pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64], left: &mut [f64]) {
+pub(super) fn limit_widths_for_curvature(points: &[Position], right: &mut [f64], left: &mut [f64]) {
     for ((curvature, right), left) in signed_curvature(points)
         .into_iter()
         .zip(right.iter_mut())
@@ -220,7 +221,7 @@ pub(super) fn limit_widths_for_curvature(points: &[[f64; 2]], right: &mut [f64],
     limit_width_slope(points, left);
 }
 
-fn limit_width_slope(points: &[[f64; 2]], widths: &mut [f64]) {
+fn limit_width_slope(points: &[Position], widths: &mut [f64]) {
     let n = widths.len();
     let mut smooth = (0..3 * n).map(|i| widths[i % n]).collect::<Vec<_>>();
     for i in 1..smooth.len() {
@@ -309,7 +310,7 @@ fn maximum_circular_correlation(a: &[f64], b: &[f64]) -> f64 {
         .fold(0.0, f64::max)
 }
 
-fn close_curve(turning: &mut [f64], length: f64) -> Option<Vec<[f64; 2]>> {
+fn close_curve(turning: &mut [f64], length: f64) -> Option<Vec<Position>> {
     let winding = if turning.iter().sum::<f64>() < 0.0 { -TAU } else { TAU };
     let mean_correction = winding - turning.iter().sum::<f64>() / turning.len() as f64;
     for value in turning.iter_mut() {
@@ -354,33 +355,33 @@ fn apply_closure_harmonics(values: &mut [f64], base: &[f64], a: f64, b: f64) {
     }
 }
 
-fn integrate(turning: &[f64], length: f64) -> (Vec<[f64; 2]>, [f64; 2]) {
+fn integrate(turning: &[f64], length: f64) -> (Vec<Position>, [f64; 2]) {
     let step = length / turning.len() as f64;
-    let (mut point, mut heading) = ([0.0, 0.0], 0.0);
+    let (mut point, mut heading) = (Position::default(), 0.0);
     let mut points = Vec::with_capacity(turning.len());
     for &turn in turning {
         points.push(point);
         let midpoint = heading + 0.5 * turn / turning.len() as f64;
-        point[0] += step * midpoint.cos();
-        point[1] += step * midpoint.sin();
+        point.x += step * midpoint.cos();
+        point.y += step * midpoint.sin();
         heading += turn / turning.len() as f64;
     }
-    (points, point)
+    (points, point.into())
 }
 
-fn centered(mut points: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
-    let center = points
-        .iter()
-        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
-    let center = [center[0] / points.len() as f64, center[1] / points.len() as f64];
+fn centered(mut points: Vec<Position>) -> Vec<Position> {
+    let center = points.iter().fold(Position::default(), |sum, point| {
+        Position::new(sum.x + point.x, sum.y + point.y)
+    });
+    let center = Position::new(center.x / points.len() as f64, center.y / points.len() as f64);
     for point in &mut points {
-        point[0] -= center[0];
-        point[1] -= center[1];
+        point.x -= center.x;
+        point.y -= center.y;
     }
     points
 }
 
-pub(crate) fn is_simple(points: &[[f64; 2]]) -> bool {
+pub(crate) fn is_simple(points: &[Position]) -> bool {
     for i in 0..points.len() {
         let (a, b) = (points[i], points[(i + 1) % points.len()]);
         for j in i + 2..points.len() {
@@ -396,7 +397,7 @@ pub(crate) fn is_simple(points: &[[f64; 2]]) -> bool {
     true
 }
 
-pub(super) fn road_is_simple(points: &[[f64; 2]], right: &[f64], left: &[f64]) -> bool {
+pub(super) fn road_is_simple(points: &[Position], right: &[f64], left: &[f64]) -> bool {
     if !is_simple(points) || points.len() != right.len() || points.len() != left.len() {
         return false;
     }
@@ -411,8 +412,8 @@ pub(super) fn road_is_simple(points: &[[f64; 2]], right: &[f64], left: &[f64]) -
         })
 }
 
-fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (a[0] - b[0]).hypot(a[1] - b[1])
+fn distance(a: Position, b: Position) -> f64 {
+    a.distance(b)
 }
 
 #[cfg(test)]
@@ -517,7 +518,8 @@ mod tests {
         let points = (0..8)
             .map(|i| {
                 let angle = TAU * i as f64 / 8.0;
-                [10.0 * angle.cos(), 10.0 * angle.sin()]
+                let unit = Position::from_angle(angle);
+                Position::new(10.0 * unit.x, 10.0 * unit.y)
             })
             .collect::<Vec<_>>();
         let (mut right, mut left) = (vec![20.0; 8], vec![20.0; 8]);
@@ -533,7 +535,8 @@ mod tests {
         let points = (0..8)
             .map(|i| {
                 let angle = TAU * i as f64 / 8.0;
-                [10.0 * angle.cos(), 10.0 * angle.sin()]
+                let unit = Position::from_angle(angle);
+                Position::new(10.0 * unit.x, 10.0 * unit.y)
             })
             .collect::<Vec<_>>();
         let mut widths = vec![10.0; points.len()];
@@ -549,7 +552,14 @@ mod tests {
 
     #[test]
     fn full_road_geometry_rejects_nonlocal_overlap() {
-        let points = [[0.0, 0.0], [5.0, 0.0], [10.0, 0.0], [10.0, 1.0], [5.0, 1.0], [0.0, 1.0]];
+        let points = [
+            Position::new(0.0, 0.0),
+            Position::new(5.0, 0.0),
+            Position::new(10.0, 0.0),
+            Position::new(10.0, 1.0),
+            Position::new(5.0, 1.0),
+            Position::new(0.0, 1.0),
+        ];
 
         assert!(is_simple(&points));
         assert!(!road_is_simple(&points, &[0.75; 6], &[0.75; 6]));

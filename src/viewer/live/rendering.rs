@@ -9,7 +9,7 @@ use super::drawing::{
     RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
-use crate::common::interp::interpolate_state;
+use crate::common::interp::lerp_state;
 use crate::viewer::ui::controls::metrics::preview_metrics_for_trajectory;
 use crate::viewer::{DT, UiState};
 use web_time::Instant;
@@ -55,12 +55,12 @@ pub(crate) fn draw(
     } else {
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
-    let ego = interpolate_state(live.previous.ego, live.world.ego(), render_alpha);
+    let ego = lerp_state(live.previous.ego, live.world.ego(), render_alpha);
     let target_center = live.camera.follow.then_some(px(&ego));
     let target_rotation = live
         .camera
         .align_heading
-        .then_some(ego.yaw as f32 - std::f32::consts::FRAC_PI_2);
+        .then_some(ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = if live.camera.smooth {
         1.0 - (-time.delta_secs() / CAMERA_SMOOTH_DURATION_S).exp()
     } else {

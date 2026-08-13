@@ -1,15 +1,24 @@
 //! Interpolation helpers.
 
 use super::types::State;
-use std::ops::{Add, Mul, Sub};
+use crate::common::math::lerp_angle;
+use std::ops::{Add, Div, Mul, Sub};
 
 /// Linearly interpolate between a and b with ratio t.
 /// t=0 -> a, t=1 -> b
-pub(crate) fn lerp<T>(a: T, b: T, t: T) -> T
+pub(crate) fn lerp<T, U>(a: T, b: T, t: U) -> T
 where
-    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<U, Output = T>,
 {
     a + (b - a) * t
+}
+
+/// Return the interpolation ratio of `value` between `a` and `b`.
+pub(crate) fn inverse_lerp<T>(a: T, b: T, value: T) -> T
+where
+    T: Copy + Sub<Output = T> + Div<Output = T>,
+{
+    (value - a) / (b - a)
 }
 
 /// Linearly interpolate `fp` at `x` using monotonically increasing sample points `xp`.
@@ -31,24 +40,23 @@ pub(crate) fn interp1d(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
 
     let right = xp.partition_point(|&point| point < x);
     let left = right - 1;
-    let t = (x - xp[left]) / (xp[right] - xp[left]);
+    let t = inverse_lerp(xp[left], xp[right], x);
     lerp(fp[left], fp[right], t)
 }
 
-pub(crate) fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
-    let yaw_delta =
-        (current.yaw - previous.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-    State {
-        x: previous.x + (current.x - previous.x) * alpha,
-        y: previous.y + (current.y - previous.y) * alpha,
-        yaw: previous.yaw + yaw_delta * alpha,
-        speed: previous.speed + (current.speed - previous.speed) * alpha,
-    }
+pub(crate) fn lerp_state(previous: State, current: State, alpha: f64) -> State {
+    (
+        lerp(previous.position(), current.position(), alpha),
+        lerp_angle(previous.pose.yaw, current.pose.yaw, alpha),
+        lerp(previous.speed, current.speed, alpha),
+    )
+        .into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::types::Position;
 
     #[test]
     fn interpolates_between_samples() {
@@ -58,6 +66,19 @@ mod tests {
     #[test]
     fn lerp_supports_f32() {
         assert_eq!(lerp(1.0_f32, 5.0, 0.25), 2.0);
+    }
+
+    #[test]
+    fn inverse_lerp_returns_ratio() {
+        assert_eq!(inverse_lerp(1.0_f32, 5.0, 2.0), 0.25);
+    }
+
+    #[test]
+    fn lerp_supports_position() {
+        assert_eq!(
+            lerp(Position::new(1.0, 2.0), Position::new(5.0, 10.0), 0.25),
+            Position::new(2.0, 4.0)
+        );
     }
 
     #[test]

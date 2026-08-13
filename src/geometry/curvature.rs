@@ -20,7 +20,7 @@ mod tests {
     #[test]
     fn pose_curvature_comes_from_heading_change_over_distance() {
         let previous = Pose::default();
-        let current = Pose::new(2.0, 0.0, 0.2);
+        let current = Pose::new(crate::simulation::Position::new(2.0, 0.0), 0.2);
 
         assert!((curvature_between(previous, current) - 0.1).abs() < 1e-12);
     }

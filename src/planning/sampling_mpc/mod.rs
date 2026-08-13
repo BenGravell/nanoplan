@@ -67,7 +67,7 @@ use crate::common::math::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
-use crate::planning::{Context, PLANNING_TICKS, Planner, warm_start_matches};
+use crate::planning::{Context, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
@@ -286,10 +286,10 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
-            xy: [x.x, x.y],
+            position: x.position(),
             lateral: d,
             road_bounds: None,
-            heading_err: wrap_angle(x.yaw - lane_yaw),
+            heading_err: wrap_angle(x.pose.yaw - lane_yaw),
             speed: x.speed,
             station_speed: None,
             lon_jerk: jerk.0,
@@ -347,16 +347,18 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         // budgets fewer refinement rounds degrade more gracefully.
         let iterations = cfg.iterations.min(total_rollouts / 6).max(1);
         let num_rollouts = (total_rollouts / iterations).max(6);
-        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
+        let path = ctx.time("route", || ctx.path());
 
         // Warm start: reuse last tick's nominal knot-deviations when the ego
         // followed the plan (they still describe a good maneuver to refine),
         // otherwise start from zero deviation — the bare base policy, which
         // already tracks the lane and holds speed. Custom seam like
         // PI²-DDP's, mirroring its warm-start-or-reinit split.
-        let mut nominal = ctx.time("warm_start", || match self.nominal.take() {
-            Some(n) if n.len() == num_nodes && warm_start_matches(self.expected_next, ego) => n,
-            _ => vec![[0.0; NU]; num_nodes],
+        let mut nominal = ctx.time("warm_start", || {
+            match take_warm(&mut self.nominal, self.expected_next, ego) {
+                Some(n) if n.len() == num_nodes => n,
+                _ => vec![[0.0; NU]; num_nodes],
+            }
         });
 
         // judo's optimize loop: sample knot-sets, roll each out and score
@@ -371,7 +373,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
                 let mut rewards = Vec::with_capacity(sampled.len());
                 let mut states = Vec::with_capacity(sampled.len());
                 for knots in &sampled {
-                    let (xs, reward) = self.rollout(knots, &path, ego, ctx);
+                    let (xs, reward) = self.rollout(knots, path, ego, ctx);
                     rewards.push(reward);
                     states.push(xs);
                 }
@@ -386,7 +388,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         // point cloud and as trajectories — mirroring PI²-DDP.
         if let Some(diag) = ctx.diagnostics {
             for xs in &last_rollouts {
-                let pts: Vec<[f64; 2]> = xs.iter().map(|s| [s.x, s.y]).collect();
+                let pts: Vec<crate::simulation::Position> = xs.iter().map(Into::into).collect();
                 for &p in &pts {
                     diag.record_point(p);
                 }
@@ -403,7 +405,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
             let mut x = ego;
             (0..ctx.horizon)
                 .map(|t| {
-                    let u = Self::command(&path, &x, control_at(&nominal, t, HORIZON), ctx);
+                    let u = Self::command(path, &x, control_at(&nominal, t, HORIZON), ctx);
                     x = world_step(x, u, ctx.road.dt);
                     u
                 })
@@ -444,11 +446,10 @@ mod tests {
         // from y = +2 (left of the lane), the base policy steers right
         // (negative curvature). The nominal throttle keeps weighted-average
         // optimizers stable; progress, not a speed-tracking cost, pays for it.
-        let x = State {
-            y: 2.0,
-            speed: 8.0,
-            ..Default::default()
-        };
+        let x = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            8.0,
+        );
         let base = SamplingPlanner::<PredictiveSampling>::base_policy(&path, &x, &ctx);
         assert!(base[1] < 0.0, "curvature {}", base[1]);
         assert!(base[0] > 0.0, "accel {}", base[0]);
@@ -463,14 +464,13 @@ mod tests {
     /// From an initial lateral offset, stay on-road and accelerate without
     /// exceeding the vehicle's physical terminal envelope.
     fn stays_on_road_and_accelerates<O: Optimizer>() {
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let trace = run_planner::<O>(ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 5.5, "{} offset {}", O::NAME, end.y);
+        assert!(end.position().y.abs() < 5.5, "{} offset {}", O::NAME, end.position().y);
         assert!(end.speed > ego.speed, "{} speed {}", O::NAME, end.speed);
         assert!(
             end.speed <= *crate::simulation::MAX_TERMINAL_SPEED_MPS + 1e-9,
@@ -488,21 +488,21 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = run_planner::<O>(ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
+            .map(|s| (s.position().x - 40.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "{} min gap {min_gap}", O::NAME);
         assert!(
-            trace.last().unwrap().x > 50.0,
+            trace.last().unwrap().position().x > 50.0,
             "{} did not pass, x {}",
             O::NAME,
-            trace.last().unwrap().x
+            trace.last().unwrap().position().x
         );
     }
 
@@ -515,10 +515,10 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);

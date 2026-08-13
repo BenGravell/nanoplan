@@ -3,6 +3,7 @@
 use std::f64::consts::PI;
 
 use super::model::GeneratedTrack;
+use crate::simulation::Position;
 use crate::vehicle::{AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_LON_ACCEL, ROLLING_RESISTANCE_ACCEL};
 
 const STRAIGHT_HALF_WIDTH_M: f64 = 10.0;
@@ -62,7 +63,7 @@ fn generate_large() -> GeneratedTrack {
 
     // The top straight is deliberately unobstructed: it is the acceleration run.
     sample(&mut points, straight_length, |u| {
-        [-half_length + straight_length * u, LARGE_HALF_SEPARATION_M]
+        Position::new(-half_length + straight_length * u, LARGE_HALF_SEPARATION_M)
     });
     let acceleration_straight_samples = points.len();
     sample(
@@ -87,10 +88,10 @@ fn generate_large() -> GeneratedTrack {
     let amplitude = chirp_amplitude(straight_length);
     sample(&mut points, straight_length, |u| {
         let along = straight_length * u;
-        [
+        Position::new(
             half_length - along,
             -LARGE_HALF_SEPARATION_M + chirp_offset(along, straight_length, amplitude),
-        ]
+        )
     });
     let return_straight_end = points.len();
     sample(
@@ -142,7 +143,7 @@ fn generate_small() -> GeneratedTrack {
     let mut points = Vec::new();
 
     sample(&mut points, straight_length, |u| {
-        [-half_length + straight_length * u, SMALL_HALF_SEPARATION_M]
+        Position::new(-half_length + straight_length * u, SMALL_HALF_SEPARATION_M)
     });
     sample(&mut points, cap_length, |u| {
         superellipse_cap(
@@ -155,7 +156,7 @@ fn generate_small() -> GeneratedTrack {
         )
     });
     sample(&mut points, straight_length, |u| {
-        [half_length - straight_length * u, -SMALL_HALF_SEPARATION_M]
+        Position::new(half_length - straight_length * u, -SMALL_HALF_SEPARATION_M)
     });
     sample(&mut points, cap_length, |u| {
         superellipse_cap(
@@ -182,10 +183,10 @@ fn cap_length_estimate(reach: f64, half_separation: f64) -> f64 {
 
 fn transition_widths(
     widths: &mut [f64],
-    points: &[[f64; 2]],
+    points: &[Position],
     start: usize,
     end: usize,
-    end_point: [f64; 2],
+    end_point: Position,
     from: f64,
     to: f64,
 ) {
@@ -205,8 +206,8 @@ fn transition_widths(
     }
 }
 
-fn point_distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    (b[0] - a[0]).hypot(b[1] - a[1])
+fn point_distance(a: Position, b: Position) -> f64 {
+    a.distance(b)
 }
 
 fn chirp_offset(along: f64, length: f64, amplitude: f64) -> f64 {
@@ -247,7 +248,7 @@ fn sampled_chirp_peak(length: f64, amplitude: f64) -> f64 {
     (0..=count)
         .map(|i| {
             let along = length * i as f64 / count as f64;
-            [along, chirp_offset(along, length, amplitude)]
+            Position::new(along, chirp_offset(along, length, amplitude))
         })
         .collect::<Vec<_>>()
         .windows(3)
@@ -255,24 +256,24 @@ fn sampled_chirp_peak(length: f64, amplitude: f64) -> f64 {
         .fold(0.0, f64::max)
 }
 
-fn polyline_curvature(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+fn polyline_curvature(a: Position, b: Position, c: Position) -> f64 {
     let ab = point_distance(a, b);
     let bc = point_distance(b, c);
     let ac = point_distance(a, c);
-    let cross = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+    let cross = ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs();
     2.0 * cross / (ab * bc * ac).max(1e-9)
 }
 
-fn sample(points: &mut Vec<[f64; 2]>, approximate_length: f64, point: impl Fn(f64) -> [f64; 2]) {
+fn sample(points: &mut Vec<Position>, approximate_length: f64, point: impl Fn(f64) -> Position) {
     let count = (approximate_length / SAMPLE_STEP_M).ceil() as usize;
     points.extend((0..count).map(|i| point(i as f64 / count as f64)));
 }
 
-fn superellipse_cap(center_x: f64, angle: f64, side: f64, reach: f64, half_separation: f64, exponent: f64) -> [f64; 2] {
-    [
+fn superellipse_cap(center_x: f64, angle: f64, side: f64, reach: f64, half_separation: f64, exponent: f64) -> Position {
+    Position::new(
         center_x + side * reach * angle.cos().abs().powf(exponent),
         half_separation * angle.sin().signum() * angle.sin().abs().powf(exponent),
-    ]
+    )
 }
 
 #[cfg(test)]
@@ -297,8 +298,8 @@ mod tests {
         let top = generated
             .points
             .iter()
-            .filter(|point| (point[1] - LARGE_HALF_SEPARATION_M).abs() < 1e-12)
-            .map(|point| point[0]);
+            .filter(|point| (point.y - LARGE_HALF_SEPARATION_M).abs() < 1e-12)
+            .map(|point| point.x);
         let (min_x, max_x) = top.fold((f64::INFINITY, f64::NEG_INFINITY), |bounds, x| {
             (bounds.0.min(x), bounds.1.max(x))
         });
@@ -364,7 +365,7 @@ mod tests {
         let chirp = (0..=count)
             .map(|i| {
                 let along = length * i as f64 / count as f64;
-                [along, chirp_offset(along, length, amplitude)]
+                Position::new(along, chirp_offset(along, length, amplitude))
             })
             .collect::<Vec<_>>();
         let active_period_peaks = (0..CHIRP_CYCLES as usize)
@@ -420,13 +421,13 @@ mod tests {
         assert!(
             generated.points[..straight_samples]
                 .iter()
-                .all(|point| point[1] == SMALL_HALF_SEPARATION_M)
+                .all(|point| point.y == SMALL_HALF_SEPARATION_M)
         );
         let lower_start = straight_samples + cap_samples;
         assert!(
             generated.points[lower_start..lower_start + straight_samples]
                 .iter()
-                .all(|point| point[1] == -SMALL_HALF_SEPARATION_M)
+                .all(|point| point.y == -SMALL_HALF_SEPARATION_M)
         );
 
         let lap_length = generated

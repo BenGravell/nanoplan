@@ -48,7 +48,7 @@
 //! **Diagnostics**: every tree node as a point and every edge's rollout
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
-use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, state_distance, take_warm, zero_action_point};
+use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, state_distance, zero_action_point};
 use crate::common::differencing::forward_difference;
 use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
@@ -57,8 +57,9 @@ use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained};
 use crate::planning::steering::{CubicSteer, steer_controls};
+use crate::planning::take_warm;
 use crate::planning::{Context, Planner};
-use crate::simulation::{Control, State, world_step};
+use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
 
 /// Lateral half-width cold samples span. Wide enough to let the optimizer
@@ -221,25 +222,26 @@ impl Tree {
                 } else if selector < GOAL_PROBA + WARM_PROBA && warm_traj.is_some() {
                     let (wxs, _) = warm_traj.as_ref().unwrap();
                     let w = wxs[layer * STEER_TICKS];
-                    let target = State {
-                        x: w.x + (c[0] - 0.5) * 2.0 * WARM_D_POS,
-                        y: w.y + (c[1] - 0.5) * 2.0 * WARM_D_POS,
-                        yaw: w.yaw + (c[2] - 0.5) * 2.0 * WARM_D_YAW,
-                        speed: (w.speed + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0),
-                    };
+                    let target = State::from((
+                        Position::new(
+                            w.position().x + (c[0] - 0.5) * 2.0 * WARM_D_POS,
+                            w.position().y + (c[1] - 0.5) * 2.0 * WARM_D_POS,
+                        ),
+                        w.pose.yaw + (c[2] - 0.5) * 2.0 * WARM_D_YAW,
+                        (w.speed + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0),
+                    ));
                     (target, Reason::Sample)
                 } else {
                     // Cold: the shared road-frame grid+QMC box (see the
                     // module doc).
                     let (s, d) = cold_samples[(sample_id - 1) % cold_samples.len()];
-                    let xy = path.frenet_to_xy(s, d);
+                    let xy = path.frenet_to_position(s, d);
                     let (_, lane_yaw) = path.pose_at(s);
-                    let target = State {
-                        x: xy[0],
-                        y: xy[1],
-                        yaw: lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
-                        speed: c[3] * SAMPLE_SPEED_FACTOR * ctx.road.target_speed,
-                    };
+                    let target = State::from((
+                        xy,
+                        lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
+                        c[3] * SAMPLE_SPEED_FACTOR * ctx.road.target_speed,
+                    ));
                     (target, Reason::Sample)
                 };
 
@@ -387,12 +389,10 @@ impl Tree {
     pub(crate) fn record_diagnostics(&self, diag: &crate::planning::Diagnostics) {
         record_diagnostics(
             diag,
-            self.nodes.iter().skip(1).map(|node| {
-                (
-                    [node.state.x, node.state.y],
-                    node.states.iter().map(|s| [s.x, s.y]).collect(),
-                )
-            }),
+            self.nodes
+                .iter()
+                .skip(1)
+                .map(|node| (node.state.position(), node.states.iter().map(Into::into).collect())),
         );
     }
 }
@@ -403,9 +403,9 @@ enum Reason {
 }
 
 fn zap_dist2(zap: State, target: &State) -> f64 {
-    (zap.x - target.x).powi(2)
-        + (zap.y - target.y).powi(2)
-        + wrap_angle(zap.yaw - target.yaw).powi(2)
+    (zap.position().x - target.position().x).powi(2)
+        + (zap.position().y - target.position().y).powi(2)
+        + wrap_angle(zap.pose.yaw - target.pose.yaw).powi(2)
         + (zap.speed - target.speed).powi(2)
 }
 
@@ -482,7 +482,7 @@ impl Grower<'_, '_> {
 /// Returns [`STEER_TICKS`] bounded actions.
 fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
     let steer = CubicSteer::from_states(start, goal, duration);
-    let dir = steer.forward_sign(start.yaw, dt);
+    let dir = steer.forward_sign(start.pose.yaw, dt);
     steer_controls(*start, &steer, dt, STEER_TICKS, dir).0
 }
 
@@ -504,14 +504,16 @@ const SAMPLES: usize = 150;
 
 impl Planner for RrtPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
-        let goal = goal_state(&path, ego, ctx);
-        let warm = ctx.time("warm_start", || take_warm(&mut self.prev, self.expected_next, ego));
+        let path = ctx.time("route", || ctx.path());
+        let goal = goal_state(path, ego, ctx);
+        let warm = ctx.time("warm_start", || {
+            take_warm(&mut self.prev, self.expected_next, ego).map(shift_actions)
+        });
 
         // Offline calibration: 150 tree samples is about 100 ms.
         let samples = ctx.compute_budget.scale(SAMPLES, 20);
         let tree = ctx.time("optimize", || {
-            Tree::grow(ego, goal, warm.as_deref(), samples, &path, ctx)
+            Tree::grow(ego, goal, warm.as_deref(), samples, path, ctx)
         });
 
         if let Some(diag) = ctx.diagnostics {
@@ -553,8 +555,13 @@ mod tests {
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
-        assert!((end.x - target.x).abs() < 0.1, "x {} vs {}", end.x, target.x);
-        assert!(end.y.abs() < 0.01);
+        assert!(
+            (end.position().x - target.position().x).abs() < 0.1,
+            "x {} vs {}",
+            end.position().x,
+            target.position().x
+        );
+        assert!(end.position().y.abs() < 0.01);
         assert!(end.speed <= target.speed);
         assert!(
             (end.speed - target.speed).abs() < 0.2,
@@ -577,18 +584,16 @@ mod tests {
         };
         let dt = 0.1;
         let dur = STEER_TICKS as f64 * dt;
-        let target = State {
-            x: 10.0,
-            y: 0.8,
-            yaw: 0.0,
-            speed: 10.0,
-        };
+        let target = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(10.0, 0.8), 0.0),
+            10.0,
+        );
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
         // the constrained rollout won't hit it exactly, but must get close
-        assert!((end.x - 10.0).abs() < 1.0, "x {}", end.x);
-        assert!((end.y - 0.8).abs() < 0.3, "y {}", end.y);
+        assert!((end.position().x - 10.0).abs() < 1.0, "x {}", end.position().x);
+        assert!((end.position().y - 0.8).abs() < 0.3, "y {}", end.position().y);
     }
 
     #[test]
@@ -596,10 +601,14 @@ mod tests {
         // boxed in by actors, the zap fallback still yields a full path
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let actors: Vec<State> = (0..5)
-            .map(|i| State {
-                x: 10.0 + 5.0 * i as f64,
-                y: -2.0 + i as f64,
-                ..Default::default()
+            .map(|i| {
+                State::new(
+                    crate::simulation::Pose::new(
+                        crate::simulation::Position::new(10.0 + 5.0 * i as f64, -2.0 + i as f64),
+                        0.0,
+                    ),
+                    0.0,
+                )
             })
             .collect();
         let ctx = crate::planning::test_ctx(&road, &actors);
@@ -620,14 +629,13 @@ mod tests {
 
     #[test]
     fn stays_on_road_and_near_speed() {
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < SAMPLE_LATERAL_M, "offset {}", end.y);
+        assert!(end.position().y.abs() < SAMPLE_LATERAL_M, "offset {}", end.position().y);
         assert!((end.speed - 10.0).abs() < 2.5, "speed {}", end.speed);
     }
 
@@ -637,20 +645,20 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
+            .map(|s| (s.position().x - 40.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
         assert!(
-            trace.last().unwrap().x > 50.0,
+            trace.last().unwrap().position().x > 50.0,
             "did not pass, x {}",
-            trace.last().unwrap().x
+            trace.last().unwrap().position().x
         );
     }
 
@@ -660,10 +668,10 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);

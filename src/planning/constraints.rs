@@ -2,7 +2,7 @@
 
 use crate::metrics::{COLLISION_CLEARANCE_M, METRICS, aggregation, comfort, progress};
 use crate::prediction::predict;
-use crate::simulation::State;
+use crate::simulation::{Position, State};
 use crate::track::Path;
 
 /// Center-to-center clearance below which point-sample planners treat two
@@ -21,7 +21,7 @@ pub(crate) const HARD_VIOLATION_PENALTY: f64 = 1e4;
 #[derive(Default)]
 pub(crate) struct Sample {
     /// World-frame position, for actor collision checks.
-    pub(crate) xy: [f64; 2],
+    pub(crate) position: Position,
     /// Signed Frenet offset from the centerline.
     pub(crate) lateral: f64,
     /// Local signed road bounds when the planner retains varying widths.
@@ -81,7 +81,7 @@ impl CollisionFree<'_> {
     fn is_violated_at(&self, sample: &Sample, actor_time: f64) -> bool {
         self.actors.iter().any(|a| {
             let predicted = predict(a, self.track, actor_time);
-            (sample.xy[0] - predicted.x).hypot(sample.xy[1] - predicted.y) < COLLISION_DIAMETER_M
+            sample.position.distance(predicted.into()) < COLLISION_DIAMETER_M
         })
     }
 
@@ -90,7 +90,7 @@ impl CollisionFree<'_> {
             .iter()
             .map(|a| {
                 let p = predict(a, self.track, actor_time);
-                let gap = (sample.xy[0] - p.x).hypot(sample.xy[1] - p.y);
+                let gap = sample.position.distance(p.into());
                 (COLLISION_DIAMETER_M - gap).max(0.0)
             })
             .sum()
@@ -183,7 +183,7 @@ mod tests {
     const INITIAL_SPEED: f64 = 10.0;
 
     fn point_cost(sample: &Sample, actors: &[State]) -> f64 {
-        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
         HardConstraints::new(HALF_WIDTH_M, actors, &track, INITIAL_SPEED, DT).point_cost(sample)
     }
 
@@ -209,10 +209,10 @@ mod tests {
 
     #[test]
     fn safety_gate_rejects_collision_and_off_road() {
-        let actor = State {
-            x: 1.0,
-            ..Default::default()
-        };
+        let actor = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(1.0, 0.0), 0.0),
+            0.0,
+        );
         assert!(point_cost(&Sample::default(), &[actor]).is_infinite());
         assert!(
             point_cost(
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn soft_violation_cost_has_an_escape_slope() {
-        let track = Path::new(&[[0.0, 0.0], [100.0, 0.0]]);
+        let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
         let constraints = HardConstraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, DT);
         let near = Sample {
             lateral: HALF_WIDTH_M + 0.5,

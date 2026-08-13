@@ -10,14 +10,16 @@
 //! lattice records its sampled (station, lateral) grid and the DP's
 //! candidate edges; PI²-DDP records its sampled rollouts.
 
+use crate::simulation::Position;
+
 /// Recorded introspection geometry from one `plan()` call.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DiagnosticsData {
     /// Standalone sample points, e.g. lattice grid nodes or PI²-DDP rollout
     /// states.
-    pub(crate) points: Vec<[f64; 2]>,
+    pub(crate) points: Vec<Position>,
     /// Polylines, e.g. lattice DP edges or PI²-DDP sampled rollouts.
-    pub(crate) trajectories: Vec<Vec<[f64; 2]>>,
+    pub(crate) trajectories: Vec<Vec<Position>>,
 }
 
 /// Per-call recorder. Interior mutability so it can sit behind the shared
@@ -28,11 +30,11 @@ pub(crate) struct Diagnostics {
 }
 
 impl Diagnostics {
-    pub(crate) fn record_point(&self, p: [f64; 2]) {
+    pub(crate) fn record_point(&self, p: Position) {
         self.data.borrow_mut().points.push(p);
     }
 
-    pub(crate) fn record_trajectory(&self, traj: Vec<[f64; 2]>) {
+    pub(crate) fn record_trajectory(&self, traj: Vec<Position>) {
         self.data.borrow_mut().trajectories.push(traj);
     }
 
@@ -49,11 +51,14 @@ mod tests {
     #[test]
     fn recorder_collects_and_drains() {
         let diag = Diagnostics::default();
-        diag.record_point([1.0, 2.0]);
-        diag.record_trajectory(vec![[0.0, 0.0], [1.0, 1.0]]);
+        diag.record_point(Position::new(1.0, 2.0));
+        diag.record_trajectory(vec![Position::new(0.0, 0.0), Position::new(1.0, 1.0)]);
         let data = diag.take();
-        assert_eq!(data.points, vec![[1.0, 2.0]]);
-        assert_eq!(data.trajectories, vec![vec![[0.0, 0.0], [1.0, 1.0]]]);
+        assert_eq!(data.points, vec![Position::new(1.0, 2.0)]);
+        assert_eq!(
+            data.trajectories,
+            vec![vec![Position::new(0.0, 0.0), Position::new(1.0, 1.0)]]
+        );
         assert!(diag.take().points.is_empty());
         assert!(diag.take().trajectories.is_empty());
     }

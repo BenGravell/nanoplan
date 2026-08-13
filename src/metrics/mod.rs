@@ -26,9 +26,9 @@ pub(crate) mod aggregation;
 
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::geometry::CAR_FOOTPRINT;
-#[cfg(test)]
-use crate::simulation::Control;
 use crate::simulation::State;
+#[cfg(test)]
+use crate::simulation::{Control, Position};
 use crate::track::{Path, Road};
 
 pub(crate) use aggregation as agg;
@@ -158,7 +158,10 @@ mod tests {
     use crate::simulation::{Control, world_step};
     use crate::vehicle::MAX_LON_ACCEL;
 
-    const CENTERLINE: [[f64; 2]; 2] = [[-20.0, 0.0], [400.0, 0.0]];
+    const CENTERLINE: [crate::simulation::Position; 2] = [
+        crate::simulation::Position::new(-20.0, 0.0),
+        crate::simulation::Position::new(400.0, 0.0),
+    ];
     const DT: f64 = 0.1;
     const TEST_HALF_WIDTH_M: f64 = 5.5;
 
@@ -168,11 +171,7 @@ mod tests {
 
     fn cruise(speed: f64, ticks: usize) -> Vec<State> {
         (0..=ticks)
-            .map(|i| State {
-                x: speed * DT * i as f64,
-                speed,
-                ..Default::default()
-            })
+            .map(|i| State::from((Position::new(speed * DT * i as f64, 0.0), 0.0, speed)))
             .collect()
     }
 
@@ -225,10 +224,10 @@ mod tests {
     fn collision_zeroes_the_rollout_by_min_aggregation() {
         let ego = cruise(10.0, 200);
         let parked = vec![
-            State {
-                x: 100.0,
-                ..Default::default()
-            };
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(100.0, 0.0), 0.0,),
+                0.0,
+            );
             201
         ];
         let m = evaluate_coasting(&ego, &[parked], &road());
@@ -286,7 +285,7 @@ mod tests {
     #[test]
     fn leaving_the_road_once_zeroes_ttc() {
         let mut ego = cruise(10.0, 200);
-        ego[50].y = 7.0;
+        ego[50].pose.position.y = 7.0;
         let m = evaluate_coasting(&ego, &[], &road());
         assert_eq!(m.per_tick[50][0], 0.0);
         assert_eq!(m.per_tick[51][0], 1.0);
@@ -300,7 +299,7 @@ mod tests {
         // one: the barrier geometry follows the road's own half-width, not a
         // fixed constant
         let mut ego = cruise(10.0, 200);
-        ego[50].y = 4.0;
+        ego[50].pose.position.y = 4.0;
         let wide = Road::new(CENTERLINE.to_vec(), 10.0, 5.5, DT);
         let narrow = Road::new(CENTERLINE.to_vec(), 10.0, 3.5, DT);
         assert_eq!(evaluate_coasting(&ego, &[], &wide).aggregate[0], 1.0);

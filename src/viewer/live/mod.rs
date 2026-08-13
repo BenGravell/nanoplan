@@ -156,7 +156,7 @@ impl Live {
         let progress = self
             .world
             .track
-            .project_progress([self.world.ego().x, self.world.ego().y], self.world.track_progress);
+            .project_progress(self.world.ego().position(), self.world.track_progress);
         self.lap_stats
             .tick(self.world.dt(), progress, self.world.track.lap_length());
     }

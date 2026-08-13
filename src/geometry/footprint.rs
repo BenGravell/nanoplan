@@ -1,5 +1,5 @@
 use crate::common::measure::dot;
-use crate::simulation::Pose;
+use crate::simulation::{Pose, Position};
 
 /// Rectangular footprint dimensions in meters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,24 +15,28 @@ impl Footprint {
 
     /// Geometric center for a pose whose position is the rear of the vehicle.
     pub(crate) fn center(self, pose: Pose) -> Pose {
+        let forward = Position::from_angle(pose.yaw);
         Pose::new(
-            pose.x + 0.5 * self.length * pose.yaw.cos(),
-            pose.y + 0.5 * self.length * pose.yaw.sin(),
+            Position::new(
+                pose.position.x + 0.5 * self.length * forward.x,
+                pose.position.y + 0.5 * self.length * forward.y,
+            ),
             pose.yaw,
         )
     }
 
     /// World-space corners for a pose whose position is the rear of the vehicle.
-    pub(crate) fn corners(self, pose: Pose) -> [[f64; 2]; 4] {
-        let forward = [pose.yaw.cos(), pose.yaw.sin()];
-        let left = [-forward[1], forward[0]];
-        let front = [pose.x + self.length * forward[0], pose.y + self.length * forward[1]];
+    pub(crate) fn corners(self, pose: Pose) -> [Position; 4] {
+        let rear = Position::from(pose);
+        let forward = Position::from_angle(pose.yaw);
+        let left = Position::new(-forward.y, forward.x);
+        let front = Position::new(rear.x + self.length * forward.x, rear.y + self.length * forward.y);
         let half_width = self.width / 2.0;
         [
-            [pose.x + half_width * left[0], pose.y + half_width * left[1]],
-            [pose.x - half_width * left[0], pose.y - half_width * left[1]],
-            [front[0] + half_width * left[0], front[1] + half_width * left[1]],
-            [front[0] - half_width * left[0], front[1] - half_width * left[1]],
+            Position::new(rear.x + half_width * left.x, rear.y + half_width * left.y),
+            Position::new(rear.x - half_width * left.x, rear.y - half_width * left.y),
+            Position::new(front.x + half_width * left.x, front.y + half_width * left.y),
+            Position::new(front.x - half_width * left.x, front.y - half_width * left.y),
         ]
     }
 
@@ -40,7 +44,8 @@ impl Footprint {
     pub(crate) fn support(self, yaw: f64, axis: [f64; 2]) -> f64 {
         let n = axis[0].hypot(axis[1]).max(1e-9);
         let axis = [axis[0] / n, axis[1] / n];
-        let center = 0.5 * self.length * (axis[0] * yaw.cos() + axis[1] * yaw.sin());
+        let forward = Position::from_angle(yaw);
+        let center = 0.5 * self.length * (axis[0] * forward.x + axis[1] * forward.y);
         center + self.support_radius(yaw, axis)
     }
 
@@ -48,8 +53,8 @@ impl Footprint {
     pub(crate) fn support_radius(self, yaw: f64, axis: [f64; 2]) -> f64 {
         let n = axis[0].hypot(axis[1]).max(1e-9);
         let axis = [axis[0] / n, axis[1] / n];
-        let forward = [yaw.cos(), yaw.sin()];
-        let left = [-forward[1], forward[0]];
-        0.5 * self.length * dot(axis, forward).abs() + 0.5 * self.width * dot(axis, left).abs()
+        let forward = Position::from_angle(yaw);
+        let left = Position::new(-forward.y, forward.x);
+        0.5 * self.length * dot(axis, forward.xy()).abs() + 0.5 * self.width * dot(axis, left.xy()).abs()
     }
 }

@@ -62,7 +62,7 @@ pub(crate) use ilqr::IlqrPlanner;
 pub(crate) use rrt::RrtPlanner;
 
 use crate::planning::search_tree::repeat_last_controls;
-use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, warm_start_matches};
+use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
@@ -107,13 +107,8 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
     let horizon_s = TICKS as f64 * ctx.road.dt;
     let preview = 0.5 * (ego.speed + ctx.road.target_speed) * horizon_s;
     let s_goal = (s0 + preview).min(path.length());
-    let ([gx, gy], gyaw) = path.pose_at(s_goal);
-    State {
-        x: gx,
-        y: gy,
-        yaw: gyaw,
-        speed: ctx.road.target_speed,
-    }
+    let (goal, gyaw) = path.pose_at(s_goal);
+    (goal, gyaw, ctx.road.target_speed).into()
 }
 
 /// treetop's heuristic `stateDistance`: planar distance plus absolute yaw
@@ -121,7 +116,9 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
 /// own comment concedes this is "a decent choice empirically (even if it
 /// is not very principled)".
 pub(crate) fn state_distance(a: &State, b: &State) -> f64 {
-    (a.x - b.x).hypot(a.y - b.y) + crate::common::math::wrap_angle(a.yaw - b.yaw).abs() + (a.speed - b.speed).abs()
+    a.position().distance(b.position())
+        + crate::common::math::wrap_angle(a.pose.yaw - b.pose.yaw).abs()
+        + (a.speed - b.speed).abs()
 }
 
 /// A trajectory endpoint within this [`state_distance`] of the goal counts
@@ -188,21 +185,13 @@ pub(crate) fn shift_actions(mut actions: Vec<Control>) -> Vec<Control> {
     actions
 }
 
-/// Take a warm start only if the ego ended up where the previous plan
-/// predicted (within 1 m, the same gate PI²-DDP and the judo planners
-/// use); a diverged warm start describes a maneuver from somewhere else.
-pub(crate) fn take_warm(prev: &mut Option<Vec<Control>>, expected_next: State, ego: State) -> Option<Vec<Control>> {
-    match prev.take() {
-        Some(a) if warm_start_matches(expected_next, ego) => Some(shift_actions(a)),
-        _ => None,
-    }
-}
-
 impl Planner for TreetopPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
-        let goal = goal_state(&path, ego, ctx);
-        let warm = ctx.time("warm_start", || take_warm(&mut self.prev, self.expected_next, ego));
+        let path = ctx.time("route", || ctx.path());
+        let goal = goal_state(path, ego, ctx);
+        let warm = ctx.time("warm_start", || {
+            take_warm(&mut self.prev, self.expected_next, ego).map(shift_actions)
+        });
         // Offline calibration: 450 tree samples plus the fixed refinement
         // pass is about 100 ms.
         let tree_samples = ctx.compute_budget.scale(TREE_SAMPLES, 45);
@@ -210,7 +199,7 @@ impl Planner for TreetopPlanner {
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = rrt::Tree::grow(ego, goal, warm.as_deref(), tree_samples, &path, ctx);
+                let tree = rrt::Tree::grow(ego, goal, warm.as_deref(), tree_samples, path, ctx);
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });
@@ -221,11 +210,7 @@ impl Planner for TreetopPlanner {
             // goal, else the one ending nearest it (a candidate that
             // merely optimized to a low cost by giving up on progress
             // must not beat one that gets there).
-            let ocp = ilqr::Ocp {
-                path: &path,
-                start: ego,
-                ctx,
-            };
+            let ocp = ilqr::Ocp { path, start: ego, ctx };
             let best = ctx.time("traj_opt", || {
                 let mut best_hit: Option<(f64, usize, ilqr::Solution)> = None;
                 let mut best_any: Option<(f64, usize, ilqr::Solution)> = None;
@@ -249,13 +234,13 @@ impl Planner for TreetopPlanner {
         if let Some(diag) = ctx.diagnostics {
             tree.record_diagnostics(diag);
             // the winning candidate before optimization…
-            let pre: Vec<[f64; 2]> = candidates[cand_ix]
+            let pre: Vec<crate::simulation::Position> = candidates[cand_ix]
                 .iter()
-                .flat_map(|&n| tree.nodes[n].states.iter().map(|s| [s.x, s.y]))
+                .flat_map(|&n| tree.nodes[n].states.iter().map(Into::into))
                 .collect();
             diag.record_trajectory(pre);
             // …and after
-            diag.record_trajectory(sol.states.iter().map(|s| [s.x, s.y]).collect());
+            diag.record_trajectory(sol.states.iter().map(Into::into).collect());
         }
 
         let controls = ctx.time("extract", || repeat_last_controls(&sol.controls, ctx.horizon));
@@ -280,9 +265,9 @@ mod tests {
         };
         let g = goal_state(&path, ego, &ctx);
         // 10 m/s for 10 s ahead of x = 0, on the lane, facing along it
-        assert!((g.x - 100.0).abs() < 1e-6, "goal x {}", g.x);
-        assert_eq!(g.y, 0.0);
-        assert_eq!(g.yaw, 0.0);
+        assert!((g.position().x - 100.0).abs() < 1e-6, "goal x {}", g.position().x);
+        assert_eq!(g.position().y, 0.0);
+        assert_eq!(g.pose.yaw, 0.0);
         assert_eq!(g.speed, 10.0);
     }
 
@@ -303,28 +288,25 @@ mod tests {
 
     #[test]
     fn zero_action_point_coasts_straight_and_slows() {
-        let x = State {
-            x: 1.0,
-            y: 2.0,
-            yaw: 0.0,
-            speed: 5.0,
-        };
+        let x = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(1.0, 2.0), 0.0),
+            5.0,
+        );
         let z = zero_action_point(x, 2.0);
-        assert!(z.x > x.x && z.x < x.x + x.speed * 2.0);
+        assert!(z.position().x > x.position().x && z.position().x < x.position().x + x.speed * 2.0);
         assert!(z.speed < x.speed);
-        assert_eq!((z.y, z.yaw), (x.y, x.yaw));
+        assert_eq!((z.position().y, z.pose.yaw), (x.position().y, x.pose.yaw));
     }
 
     #[test]
     fn stays_on_road_and_accelerates() {
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let trace = crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.position().y.abs() < 5.5, "offset {}", end.position().y);
         assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
@@ -334,20 +316,20 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
+            .map(|s| (s.position().x - 40.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
         assert!(
-            trace.last().unwrap().x > 50.0,
+            trace.last().unwrap().position().x > 50.0,
             "did not pass, x {}",
-            trace.last().unwrap().x
+            trace.last().unwrap().position().x
         );
     }
 
@@ -357,10 +339,10 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);

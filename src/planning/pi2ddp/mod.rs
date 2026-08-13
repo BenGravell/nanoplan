@@ -17,10 +17,11 @@
 use crate::common::kinematics::clamp_control;
 use crate::common::rng::Rng;
 use crate::common::types::matrix::{M2, M4, M6, M24};
+use crate::common::types::state;
 use crate::common::types::vector::V2;
 use crate::planning::search_tree::centerline_follow_controls;
-use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, warm_start_matches};
-use crate::simulation::{Control, State, world_step};
+use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, take_warm};
+use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
 
 const HORIZON: usize = PLANNING_TICKS;
@@ -138,7 +139,7 @@ impl Pi2DdpPlanner {
 
 impl Planner for Pi2DdpPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
+        let path = ctx.time("route", || ctx.path());
         // Offline calibration: 4 × 32 rollouts is about 100 ms.
         let total_rollouts = ctx.compute_budget.scale(GENERATIONS * ROLLOUTS, 8);
         // PI²-DDP needs more samples than its six-dimensional state/action
@@ -158,7 +159,7 @@ impl Planner for Pi2DdpPlanner {
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
-        let trajectory_cost = TrajectoryCost::new(&path, ctx, ego.speed);
+        let trajectory_cost = TrajectoryCost::new(path, ctx, ego.speed);
         let state_cost = |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
@@ -181,8 +182,9 @@ impl Planner for Pi2DdpPlanner {
 
         // warm start: shift the previous policy one step if the sim followed it
         // (custom seam: includes the road-informed re-init when the shift misses)
-        let mut pol = ctx.time("warm_start", || match self.policy.take() {
-            Some(mut p) if warm_start_matches(p.expected_next, ego) => {
+        let expected_next = self.policy.as_ref().map_or(ego, |p| p.expected_next);
+        let mut pol = ctx.time("warm_start", || match take_warm(&mut self.policy, expected_next, ego) {
+            Some(mut p) => {
                 p.u.rotate_left(1);
                 p.gains.rotate_left(1);
                 p.sigma_u.rotate_left(1);
@@ -191,7 +193,7 @@ impl Planner for Pi2DdpPlanner {
                 p.prev_cost = f64::INFINITY;
                 p
             }
-            _ => Self::init_policy(&path, ego, ctx, sigma_init),
+            _ => Self::init_policy(path, ego, ctx, sigma_init),
         });
 
         for generation in 0..generations {
@@ -206,12 +208,7 @@ impl Planner for Pi2DdpPlanner {
                 for k in 0..rollouts {
                     let mut x = ego;
                     for j in 0..HORIZON {
-                        let dx = [
-                            x.x - x_nom[j].x,
-                            x.y - x_nom[j].y,
-                            x.yaw - x_nom[j].yaw,
-                            x.speed - x_nom[j].speed,
-                        ];
+                        let dx: [f64; 4] = std::array::from_fn(|i| state(&x)[i] - state(&x_nom[j])[i]);
                         let eps = sample2(&mut self.rng, &pol.sigma_u[j]);
                         let kx: V2 = [
                             pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
@@ -239,7 +236,7 @@ impl Planner for Pi2DdpPlanner {
                 && let Some(diag) = ctx.diagnostics
             {
                 for traj in &xs {
-                    let pts: Vec<[f64; 2]> = traj.iter().map(|s| [s.x, s.y]).collect();
+                    let pts: Vec<crate::simulation::Position> = traj.iter().map(Into::into).collect();
                     for &p in &pts {
                         diag.record_point(p);
                     }
@@ -269,9 +266,9 @@ impl Planner for Pi2DdpPlanner {
                         let xn = &x_nom[j];
                         let xk = &xs[k][j];
                         let dtau = [
-                            xk.x - xn.x,
-                            xk.y - xn.y,
-                            xk.yaw - xn.yaw,
+                            xk.position().x - xn.position().x,
+                            xk.position().y - xn.position().y,
+                            xk.pose.yaw - xn.pose.yaw,
                             xk.speed - xn.speed,
                             us[k][j][0] - pol.u[j][0],
                             us[k][j][1] - pol.u[j][1],
@@ -316,12 +313,7 @@ impl Planner for Pi2DdpPlanner {
                     }
                     let mut k_ff = [0.0; 2];
                     for k in 0..rollouts {
-                        let dx = [
-                            xs[k][j].x - x_nom[j].x,
-                            xs[k][j].y - x_nom[j].y,
-                            xs[k][j].yaw - x_nom[j].yaw,
-                            xs[k][j].speed - x_nom[j].speed,
-                        ];
+                        let dx: [f64; 4] = std::array::from_fn(|i| state(&xs[k][j])[i] - state(&x_nom[j])[i]);
                         let w = p[k] / psum;
                         for a in 0..2 {
                             let kdx: f64 = gain[a].iter().zip(&dx).map(|(g, d)| g * d).sum();
@@ -352,12 +344,11 @@ impl Planner for Pi2DdpPlanner {
                         pol.u[j][a] = us.iter().map(|u| u[j][a]).sum::<f64>() / rollouts as f64 + k_ff[a];
                     }
                     let mean = |f: fn(&State) -> f64| xs.iter().map(|x| f(&x[j])).sum::<f64>() / rollouts as f64;
-                    new_x_nom[j] = State {
-                        x: mean(|s| s.x),
-                        y: mean(|s| s.y),
-                        yaw: mean(|s| s.yaw),
-                        speed: mean(|s| s.speed),
-                    };
+                    new_x_nom[j] = State::from((
+                        Position::new(mean(|s| s.position().x), mean(|s| s.position().y)),
+                        mean(|s| s.pose.yaw),
+                        mean(|s| s.speed),
+                    ));
                 }
             });
 
@@ -365,7 +356,7 @@ impl Planner for Pi2DdpPlanner {
             let mut x = ego;
             let mut u_exec = Vec::with_capacity(HORIZON);
             for (j, nom) in new_x_nom.iter().enumerate() {
-                let dx = [x.x - nom.x, x.y - nom.y, x.yaw - nom.yaw, x.speed - nom.speed];
+                let dx: [f64; 4] = std::array::from_fn(|i| state(&x)[i] - state(nom)[i]);
                 let u = clamp_control(
                     Control::from([
                         pol.u[j][0] + pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum::<f64>(),
@@ -394,7 +385,7 @@ impl Planner for Pi2DdpPlanner {
 
         // Keep the road-model base policy when optimization makes the
         // noise-free rollout worse.
-        let base = Self::init_policy(&path, ego, ctx, sigma_init);
+        let base = Self::init_policy(path, ego, ctx, sigma_init);
         let (_, base_cost) = noise_free(&base.u);
         let (_, opt_cost) = noise_free(&pol.u);
         if !opt_cost.is_finite() || opt_cost > base_cost {
@@ -419,14 +410,13 @@ mod tests {
 
     #[test]
     fn stays_on_road_and_accelerates() {
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let trace = run(ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.position().y.abs() < 5.5, "offset {}", end.position().y);
         assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
@@ -436,18 +426,22 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = run(ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 40.0).hypot(s.y))
+            .map(|s| (s.position().x - 40.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        assert!(trace.iter().all(|s| s.x.is_finite() && s.y.is_finite()));
-        assert!(trace.last().unwrap().x > 20.0, "gave up too early");
+        assert!(
+            trace
+                .iter()
+                .all(|s| s.position().x.is_finite() && s.position().y.is_finite())
+        );
+        assert!(trace.last().unwrap().position().x > 20.0, "gave up too early");
     }
 
     /// Regression: near-stationary rollouts once produced a singular Σxx,
@@ -458,18 +452,22 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 60.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(60.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = run(ego, &[obstacle], 200);
         let min_gap = trace
             .iter()
-            .map(|s| (s.x - 60.0).hypot(s.y))
+            .map(|s| (s.position().x - 60.0).hypot(s.position().y))
             .fold(f64::INFINITY, f64::min);
-        assert!(trace.iter().all(|s| s.x.is_finite() && s.y.is_finite()));
+        assert!(
+            trace
+                .iter()
+                .all(|s| s.position().x.is_finite() && s.position().y.is_finite())
+        );
         assert!(min_gap > 2.0, "min gap {min_gap}");
-        let max_offset = trace.iter().map(|s| s.y.abs()).fold(0.0, f64::max);
+        let max_offset = trace.iter().map(|s| s.position().y.abs()).fold(0.0, f64::max);
         assert!(max_offset < 5.5, "left the road, max offset {max_offset}");
     }
 

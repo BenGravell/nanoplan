@@ -60,13 +60,14 @@
 //! as polylines (what the optimizer bought), the optimized states as
 //! points.
 
-use super::{TICKS, take_warm};
+use super::{TICKS, shift_actions};
 use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
 use crate::common::measure::dot;
 use crate::common::types::matrix::{M4, M22, M24, M42};
 use crate::common::types::state;
 use crate::common::types::vector::{V2, V4};
 use crate::planning::search_tree::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
+use crate::planning::take_warm;
 use crate::planning::{Context, Planner, TrajectoryCost};
 use crate::prediction::predict;
 use crate::simulation::{Control, State, world_step};
@@ -175,7 +176,14 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
             &predicted_actors,
         )
     };
-    let z = [x.x, x.y, x.yaw, x.speed, u.acceleration, u.curvature];
+    let z = [
+        x.position().x,
+        x.position().y,
+        x.pose.yaw,
+        x.speed,
+        u.acceleration,
+        u.curvature,
+    ];
     let (grad, hess) = fd_grad_hess(&eval, z);
     StageDerivs {
         lx: [grad[0], grad[1], grad[2], grad[3]],
@@ -399,7 +407,7 @@ fn forward(
         };
         cost_total += ocp.stage_cost(&x, &u, t, None);
         x = world_step(x, u, ocp.ctx.road.dt);
-        if !(x.x.is_finite() && x.y.is_finite() && x.yaw.is_finite() && x.speed.is_finite()) {
+        if !(x.position().is_finite() && x.pose.yaw.is_finite() && x.speed.is_finite()) {
             return None;
         }
         nxs.push(x);
@@ -501,26 +509,23 @@ const SOLO_ITERS: usize = 12;
 
 impl Planner for IlqrPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || Path::new(ctx.road.centerline()));
+        let path = ctx.time("route", || ctx.path());
         let init = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego)
-                .unwrap_or_else(|| centerline_follow_controls(ego, &path, ctx, TICKS))
+                .map(shift_actions)
+                .unwrap_or_else(|| centerline_follow_controls(ego, path, ctx, TICKS))
         });
 
-        let ocp = Ocp {
-            path: &path,
-            start: ego,
-            ctx,
-        };
+        let ocp = Ocp { path, start: ego, ctx };
         // Offline calibration: twelve finite-difference passes is about 100 ms.
         let iterations = ctx.compute_budget.scale(SOLO_ITERS, 1);
         let sol = ctx.time("optimize", || solve(&ocp, &init, iterations));
 
         if let Some(diag) = ctx.diagnostics {
             for s in &sol.states {
-                diag.record_point([s.x, s.y]);
+                diag.record_point(s.into());
             }
-            diag.record_trajectory(sol.states.iter().map(|s| [s.x, s.y]).collect());
+            diag.record_trajectory(sol.states.iter().map(Into::into).collect());
         }
 
         let controls = ctx.time("extract", || repeat_last_controls(&sol.controls, ctx.horizon));
@@ -550,12 +555,10 @@ mod tests {
     fn fd_dynamics_jacobian_matches_the_analytic_one() {
         // the vehicle model's Jacobian is known in closed form (treetop
         // `Dynamics::jacobian`); the FD version must reproduce it
-        let x = State {
-            x: 1.0,
-            y: 2.0,
-            yaw: 0.3,
-            speed: 8.0,
-        };
+        let x = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(1.0, 2.0), 0.3),
+            8.0,
+        );
         let u = Control {
             acceleration: 0.5,
             curvature: 0.03,
@@ -564,9 +567,10 @@ mod tests {
         let (a, b) = dynamics_jacobian(&x, &u, dt);
         let drag_slope =
             crate::vehicle::AIR_DENSITY_KG_M3 * crate::vehicle::DRAG_AREA_M2 / crate::vehicle::EGO_MASS_KG * x.speed;
+        let forward = crate::simulation::Position::from_angle(x.pose.yaw);
         let expect_a = [
-            [1.0, 0.0, -x.speed * dt * x.yaw.sin(), dt * x.yaw.cos()],
-            [0.0, 1.0, x.speed * dt * x.yaw.cos(), dt * x.yaw.sin()],
+            [1.0, 0.0, -x.speed * dt * forward.y, dt * forward.x],
+            [0.0, 1.0, x.speed * dt * forward.x, dt * forward.y],
             [0.0, 0.0, 1.0, dt * u.curvature],
             [0.0, 0.0, 0.0, 1.0 - drag_slope * dt],
         ];
@@ -586,11 +590,10 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(road.centerline());
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let ocp = Ocp {
             path: &path,
             start: ego,
@@ -632,21 +635,19 @@ mod tests {
 
     #[test]
     fn predicted_actor_stage_cost_matches_regular_stage_cost() {
-        let actor = State {
-            x: 40.0,
-            speed: 8.0,
-            ..Default::default()
-        };
+        let actor = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            8.0,
+        );
         let actors = [actor];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
         let path = Path::new(road.centerline());
         let tc = TrajectoryCost::new(&path, &ctx, 8.0);
-        let x = State {
-            x: 5.0,
-            speed: 8.0,
-            ..Default::default()
-        };
+        let x = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(5.0, 0.0), 0.0),
+            8.0,
+        );
         let u = Control {
             acceleration: 0.3,
             curvature: 0.02,
@@ -661,14 +662,13 @@ mod tests {
 
     #[test]
     fn stays_on_road_and_accelerates() {
-        let ego = State {
-            y: 2.0,
-            speed: 6.0,
-            ..Default::default()
-        };
+        let ego = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+            6.0,
+        );
         let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.y.abs() < 5.5, "offset {}", end.y);
+        assert!(end.position().y.abs() < 5.5, "offset {}", end.position().y);
         assert!(end.speed > ego.speed, "speed {}", end.speed);
     }
 
@@ -678,14 +678,14 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let obstacle = State {
-            x: 40.0,
-            ..Default::default()
-        };
+        let obstacle = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
+            0.0,
+        );
         let trace = crate::planning::test_run(&mut IlqrPlanner::default(), ego, &[obstacle], 150);
         let (min_gap, _) = trace
             .iter()
-            .map(|s| ((s.x - 40.0).hypot(s.y), *s))
+            .map(|s| ((s.position().x - 40.0).hypot(s.position().y), *s))
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .unwrap();
         assert!(min_gap > 2.0, "min gap {min_gap}");

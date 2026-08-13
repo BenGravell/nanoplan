@@ -44,7 +44,7 @@ impl Barrier {
         } else {
             [-self.normal[0], -self.normal[1]]
         };
-        let support = footprint.support_radius(state.yaw, normal);
+        let support = footprint.support_radius(state.pose.yaw, normal);
         let boundary = if dd > 0.0 { -support } else { support };
         if (dd > 0.0 && (d0 > boundary || d1 <= boundary)) || (dd < 0.0 && (d0 < boundary || d1 >= boundary)) {
             return None;
@@ -55,7 +55,7 @@ impl Barrier {
             return None;
         }
         let center = Position::new(p0.x + (p1.x - p0.x) * t, p0.y + (p1.y - p0.y) * t);
-        self.footprint_overlaps_segment(center, state.yaw, footprint)
+        self.footprint_overlaps_segment(center, state.pose.yaw, footprint)
             .then_some((t, center, normal))
     }
 
@@ -70,14 +70,14 @@ impl Barrier {
         } else {
             [-self.normal[0], -self.normal[1]]
         };
-        let support = footprint.support_radius(state.yaw, side);
+        let support = footprint.support_radius(state.pose.yaw, side);
         let side_distance = (p.x - self.a.x) * side[0] + (p.y - self.a.y) * side[1];
         let depth = support - side_distance;
         if depth <= 0.0 {
             return None;
         }
         let corrected = Position::new(p.x + side[0] * depth, p.y + side[1] * depth);
-        if !self.footprint_overlaps_segment(corrected, state.yaw, footprint) {
+        if !self.footprint_overlaps_segment(corrected, state.pose.yaw, footprint) {
             return None;
         }
         Some((depth, corrected, [-side[0], -side[1]]))
@@ -97,26 +97,22 @@ impl Barrier {
     }
 
     fn collide_at(&self, state: State, mut p: Position, normal: [f64; 2], footprint: Footprint) -> State {
-        let mut v = [state.speed * state.yaw.cos(), state.speed * state.yaw.sin()];
+        let direction = Position::from_angle(state.pose.yaw);
+        let mut v = [state.speed * direction.x, state.speed * direction.y];
         let vn = v[0] * normal[0] + v[1] * normal[1];
         if vn > 0.0 {
             v[0] -= (1.0 + self.restitution) * vn * normal[0];
             v[1] -= (1.0 + self.restitution) * vn * normal[1];
         }
         let speed = v[0].hypot(v[1]);
-        let yaw = if speed > 1e-6 { v[1].atan2(v[0]) } else { state.yaw };
+        let yaw = if speed > 1e-6 { v[1].atan2(v[0]) } else { state.pose.yaw };
         let support = footprint.support_radius(yaw, normal);
         let depth = (p.x - self.a.x) * normal[0] + (p.y - self.a.y) * normal[1] + support;
         if depth > 1e-12 {
             p.x -= normal[0] * depth;
             p.y -= normal[1] * depth;
         }
-        State {
-            x: p.x,
-            y: p.y,
-            yaw,
-            speed,
-        }
+        (p, yaw, speed).into()
     }
 
     fn collide_penetration(&self, state: State, p: Position, normal: [f64; 2], footprint: Footprint) -> State {
@@ -130,8 +126,8 @@ pub(crate) fn road_side_barriers(road: &RoadPolygon) -> Vec<Barrier> {
             let next = (i + 1) % road.centerline().len();
             let (left_a, left_b) = (road.left_boundary()[i], road.left_boundary()[next]);
             let (right_a, right_b) = (road.right_boundary()[i], road.right_boundary()[next]);
-            let left_tangent = [left_b[0] - left_a[0], left_b[1] - left_a[1]];
-            let right_tangent = [right_b[0] - right_a[0], right_b[1] - right_a[1]];
+            let left_tangent = [left_b.x - left_a.x, left_b.y - left_a.y];
+            let right_tangent = [right_b.x - right_a.x, right_b.y - right_a.y];
             [
                 Barrier::new(left_a, left_b, [-left_tangent[1], left_tangent[0]]),
                 Barrier::new(right_a, right_b, [right_tangent[1], -right_tangent[0]]),
@@ -168,7 +164,10 @@ fn collide_centers_with_barriers(
         .filter_map(|&b| b.crossing(prev, state, footprint).map(|(t, p, n)| (b, t, p, n)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
     {
-        let remaining = [(state.x - prev.x) * (1.0 - t), (state.y - prev.y) * (1.0 - t)];
+        let remaining = [
+            (state.position().x - prev.position().x) * (1.0 - t),
+            (state.position().y - prev.position().y) * (1.0 - t),
+        ];
         let into_wall = (remaining[0] * n[0] + remaining[1] * n[1]).max(0.0);
         let p = Position::new(
             p.x + remaining[0] - n[0] * into_wall,
@@ -219,14 +218,14 @@ pub(crate) fn collide_with_road_barriers(prev: State, state: State, footprint: F
 
 fn center_state(mut state: State, footprint: Footprint) -> State {
     let center = footprint.center(state.pose());
-    state.x = center.x;
-    state.y = center.y;
+    state.pose.position = center.position;
     state
 }
 
 fn rear_state(mut state: State, footprint: Footprint) -> State {
-    state.x -= 0.5 * footprint.length * state.yaw.cos();
-    state.y -= 0.5 * footprint.length * state.yaw.sin();
+    let forward = Position::from_angle(state.pose.yaw);
+    state.pose.position.x -= 0.5 * footprint.length * forward.x;
+    state.pose.position.y -= 0.5 * footprint.length * forward.y;
     state
 }
 
@@ -234,19 +233,19 @@ pub(crate) fn collides_with_road_barrier(state: State, road: &Road) -> bool {
     collide_with_road_barriers(state, state, super::EGO_FOOTPRINT, road) != state
 }
 
-fn closest_centerline_segment(centerline: &[[f64; 2]], closed: bool, p: Position) -> Option<(usize, f64)> {
+fn closest_centerline_segment(centerline: &[Position], closed: bool, p: Position) -> Option<(usize, f64)> {
     let segment_count = centerline.len().saturating_sub(usize::from(!closed));
     (0..segment_count)
         .min_by(|&a, &b| {
             let a_next = (a + 1) % centerline.len();
             let b_next = (b + 1) % centerline.len();
-            segment_projection(centerline[a].into(), centerline[a_next].into(), p)
+            segment_projection(centerline[a], centerline[a_next], p)
                 .0
-                .total_cmp(&segment_projection(centerline[b].into(), centerline[b_next].into(), p).0)
+                .total_cmp(&segment_projection(centerline[b], centerline[b_next], p).0)
         })
         .map(|i| {
             let next = (i + 1) % centerline.len();
-            let (_, u) = segment_projection(centerline[i].into(), centerline[next].into(), p);
+            let (_, u) = segment_projection(centerline[i], centerline[next], p);
             (i, u)
         })
 }
@@ -270,27 +269,23 @@ mod tests {
     #[test]
     fn road_barriers_clamp_and_reflect_outward_motion() {
         let road = Road::new(vec![[0.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
-        let prev = State {
-            x: 12.0,
-            y: 0.0,
-            yaw: std::f64::consts::FRAC_PI_2,
-            speed: 10.0,
-        };
+        let prev = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(12.0, 0.0), std::f64::consts::FRAC_PI_2),
+            10.0,
+        );
         let hit = collide_with_road_barriers(
             prev,
-            State {
-                x: 12.0,
-                y: 4.5,
-                yaw: std::f64::consts::FRAC_PI_2,
-                speed: 10.0,
-            },
+            State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(12.0, 4.5), std::f64::consts::FRAC_PI_2),
+                10.0,
+            ),
             EGO_FOOTPRINT,
             &road,
         );
 
-        assert!((hit.y + EGO_FOOTPRINT.support(hit.yaw, [0.0, 1.0]) - road.half_width).abs() < 1e-12);
+        assert!((hit.position().y + EGO_FOOTPRINT.support(hit.pose.yaw, [0.0, 1.0]) - road.half_width).abs() < 1e-12);
         assert!((hit.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
-        assert!((hit.yaw + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        assert!((hit.pose.yaw + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
     }
 
     #[test]
@@ -301,12 +296,10 @@ mod tests {
             3.5,
             0.1,
         );
-        let on_first_segment = State {
-            x: 50.0,
-            y: 0.0,
-            yaw: 0.0,
-            speed: 8.0,
-        };
+        let on_first_segment = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
+            8.0,
+        );
 
         assert_eq!(
             collide_with_road_barriers(on_first_segment, on_first_segment, EGO_FOOTPRINT, &road,),
@@ -317,23 +310,30 @@ mod tests {
     #[test]
     fn road_side_barriers_do_not_cap_an_open_window() {
         let road = Road::new(vec![[0.0, 0.0], [10.0, 0.0]], 10.0, 3.5, 0.1);
-        let previous = State {
-            x: 10.5,
-            y: 0.0,
-            yaw: std::f64::consts::FRAC_PI_2,
-            speed: 10.0,
+        let previous = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(10.5, 0.0), std::f64::consts::FRAC_PI_2),
+            10.0,
+        );
+        let beyond_window = {
+            let mut state = previous;
+            state.pose.position.y = 4.5;
+            state
         };
-        let beyond_window = State { y: 4.5, ..previous };
 
         assert_eq!(
             collide_with_road_barriers(previous, beyond_window, EGO_FOOTPRINT, &road),
             beyond_window
         );
 
-        let before_window = State { x: -0.5, ..previous };
-        let beyond_start = State {
-            y: 4.5,
-            ..before_window
+        let before_window = {
+            let mut state = previous;
+            state.pose.position.x = -0.5;
+            state
+        };
+        let beyond_start = {
+            let mut state = before_window;
+            state.pose.position.y = 4.5;
+            state
         };
         assert_eq!(
             collide_with_road_barriers(before_window, beyond_start, EGO_FOOTPRINT, &road),
@@ -344,19 +344,22 @@ mod tests {
     #[test]
     fn closed_road_collision_ignores_distant_barrier_segments() {
         let polygon = RoadPolygon::new(
-            vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+            vec![
+                Position::new(0.0, 0.0),
+                Position::new(100.0, 0.0),
+                Position::new(100.0, 100.0),
+                Position::new(0.0, 100.0),
+            ],
             vec![10.0; 4],
             vec![10.0; 4],
             true,
         )
         .unwrap();
         let road = Road::from_polygon(polygon, 10.0, 0.1);
-        let state = State {
-            x: 50.0,
-            y: 0.0,
-            speed: 10.0,
-            ..Default::default()
-        };
+        let state = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
+            10.0,
+        );
 
         assert_eq!(collide_with_road_barriers(state, state, EGO_FOOTPRINT, &road), state);
     }
@@ -364,35 +367,47 @@ mod tests {
     #[test]
     fn barrier_entity_is_two_sided_physics() {
         let wall = Barrier::new([0.0, 0.0], [100.0, 0.0], [0.0, 1.0]);
-        let inside = State {
-            x: 12.0,
-            y: -6.0,
-            yaw: std::f64::consts::FRAC_PI_2,
-            speed: 10.0,
-        };
+        let inside = State::new(
+            crate::simulation::Pose::new(
+                crate::simulation::Position::new(12.0, -6.0),
+                std::f64::consts::FRAC_PI_2,
+            ),
+            10.0,
+        );
         assert_eq!(collide_with_barriers(inside, inside, EGO_FOOTPRINT, [wall]), inside);
 
-        let hit = collide_with_barriers(inside, State { y: 1.0, ..inside }, EGO_FOOTPRINT, [wall]);
-        assert_eq!((hit.x, hit.y), (12.0, 0.0));
-        assert!((hit.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
-
-        let reverse = collide_with_barriers(
-            State {
-                y: 6.0,
-                yaw: -std::f64::consts::FRAC_PI_2,
-                ..inside
-            },
-            State {
-                y: -1.0,
-                yaw: -std::f64::consts::FRAC_PI_2,
-                ..inside
+        let hit = collide_with_barriers(
+            inside,
+            {
+                let mut state = inside;
+                state.pose.position.y = 1.0;
+                state
             },
             EGO_FOOTPRINT,
             [wall],
         );
-        assert_eq!((reverse.x, reverse.y), (12.0, 0.0));
+        assert_eq!((hit.position().x, hit.position().y), (12.0, 0.0));
+        assert!((hit.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
+
+        let reverse = collide_with_barriers(
+            {
+                let mut state = inside;
+                state.pose.position.y = 6.0;
+                state.pose.yaw = -std::f64::consts::FRAC_PI_2;
+                state
+            },
+            {
+                let mut state = inside;
+                state.pose.position.y = -1.0;
+                state.pose.yaw = -std::f64::consts::FRAC_PI_2;
+                state
+            },
+            EGO_FOOTPRINT,
+            [wall],
+        );
+        assert_eq!((reverse.position().x, reverse.position().y), (12.0, 0.0));
         assert!((reverse.speed - BARRIER_RESTITUTION * 10.0).abs() < 1e-9);
-        assert!((reverse.yaw - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        assert!((reverse.pose.yaw - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
     }
 
     #[test]
@@ -407,7 +422,11 @@ mod tests {
     #[test]
     fn barriers_are_the_polygon_boundary_segments() {
         let road = RoadPolygon::new(
-            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            vec![
+                Position::new(0.0, 0.0),
+                Position::new(10.0, 0.0),
+                Position::new(10.0, 10.0),
+            ],
             vec![1.0, 2.0, 3.0],
             vec![4.0, 5.0, 6.0],
             false,
@@ -416,22 +435,23 @@ mod tests {
         let barriers = road_side_barriers(&road);
 
         for i in 0..road.segment_count() {
-            assert_eq!(barriers[2 * i].a, road.left_boundary()[i].into());
-            assert_eq!(barriers[2 * i].b, road.left_boundary()[i + 1].into());
-            assert_eq!(barriers[2 * i + 1].a, road.right_boundary()[i].into());
-            assert_eq!(barriers[2 * i + 1].b, road.right_boundary()[i + 1].into());
+            assert_eq!(barriers[2 * i].a, road.left_boundary()[i]);
+            assert_eq!(barriers[2 * i].b, road.left_boundary()[i + 1]);
+            assert_eq!(barriers[2 * i + 1].a, road.right_boundary()[i]);
+            assert_eq!(barriers[2 * i + 1].b, road.right_boundary()[i + 1]);
         }
     }
 
     #[test]
     fn rectangle_cannot_clip_past_a_barrier_endpoint() {
         let wall = Barrier::new([0.0, 0.0], [10.0, 0.0], [0.0, 1.0]);
-        let overlapping = State {
-            x: 10.0,
-            y: -0.5,
-            yaw: std::f64::consts::FRAC_PI_4,
-            speed: 5.0,
-        };
+        let overlapping = State::new(
+            crate::simulation::Pose::new(
+                crate::simulation::Position::new(10.0, -0.5),
+                std::f64::consts::FRAC_PI_4,
+            ),
+            5.0,
+        );
 
         let hit = collide_with_barriers(overlapping, overlapping, EGO_FOOTPRINT, [wall]);
 
