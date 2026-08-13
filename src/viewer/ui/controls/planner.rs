@@ -26,13 +26,6 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
             .font(caps_font(11.0))
             .color(DIM_TEXT),
     );
-    breakpoint_slider::show(
-        ui,
-        &mut state.compute_budget_percent,
-        &COMPUTE_BUDGET_BREAKPOINTS,
-        " %",
-    )
-    .on_hover_text(
-        "100% is a calibrated 100 ms allowance; lower values trade search quality for speed.",
-    );
+    breakpoint_slider::show(ui, &mut state.compute_budget_percent, &COMPUTE_BUDGET_BREAKPOINTS, " %")
+        .on_hover_text("100% is a calibrated 100 ms allowance; lower values trade search quality for speed.");
 }

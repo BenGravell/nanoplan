@@ -125,10 +125,7 @@ impl LatencyStats {
         // Sum repeated seams within this sample, preserving first-seen order.
         let mut per_call: Vec<Span> = Vec::new();
         for span in spans {
-            match per_call
-                .iter_mut()
-                .find(|candidate| candidate.name == span.name)
-            {
+            match per_call.iter_mut().find(|candidate| candidate.name == span.name) {
                 Some(sum) => {
                     sum.milliseconds += span.milliseconds;
                     sum.clocks += span.clocks;

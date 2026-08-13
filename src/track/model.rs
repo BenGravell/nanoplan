@@ -79,9 +79,9 @@ impl TrackModel {
                         .into_iter()
                         .any(|coefficients| {
                             coefficients.len() != COEFFICIENT_COUNT
-                                || coefficients.iter().any(|coefficient| {
-                                    !coefficient.re.is_finite() || !coefficient.im.is_finite()
-                                })
+                                || coefficients
+                                    .iter()
+                                    .any(|coefficient| !coefficient.re.is_finite() || !coefficient.im.is_finite())
                         })
             })
         {
@@ -109,11 +109,7 @@ impl TrackModel {
                     .into_iter()
                     .map(|curvature| curvature * track.length)
                     .collect::<Vec<_>>();
-                let winding = if turning.iter().sum::<f64>() < 0.0 {
-                    -TAU
-                } else {
-                    TAU
-                };
+                let winding = if turning.iter().sum::<f64>() < 0.0 { -TAU } else { TAU };
                 let correction = winding - turning.iter().sum::<f64>() / SAMPLE_COUNT as f64;
                 for value in &mut turning {
                     *value += correction;
@@ -175,9 +171,7 @@ impl TrackModel {
     }
 
     fn mixed_profile(&self, rng: &mut Rng) -> Profile {
-        let length = self.profiles
-            [(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()]
-        .length;
+        let length = self.profiles[(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()].length;
         let mut mixed = Profile {
             length,
             turning: Vec::with_capacity(COEFFICIENT_COUNT),
@@ -185,8 +179,7 @@ impl TrackModel {
             left: Vec::with_capacity(COEFFICIENT_COUNT),
         };
         for k in 0..COEFFICIENT_COUNT {
-            let donor = &self.profiles
-                [(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()];
+            let donor = &self.profiles[(rng.uniform() * self.profiles.len() as f64) as usize % self.profiles.len()];
             mixed.turning.push(donor.turning[k]);
             mixed.right.push(donor.right[k]);
             mixed.left.push(donor.left[k]);
@@ -245,13 +238,10 @@ fn limit_width_slope(points: &[[f64; 2]], widths: &mut [f64]) {
 fn spectrum(values: &[f64]) -> Vec<Coeff> {
     (0..=values.len() / 2)
         .map(|k| {
-            let (re, im) = values
-                .iter()
-                .enumerate()
-                .fold((0.0, 0.0), |(re, im), (i, value)| {
-                    let angle = TAU * k as f64 * i as f64 / values.len() as f64;
-                    (re + value * angle.cos(), im - value * angle.sin())
-                });
+            let (re, im) = values.iter().enumerate().fold((0.0, 0.0), |(re, im), (i, value)| {
+                let angle = TAU * k as f64 * i as f64 / values.len() as f64;
+                (re + value * angle.cos(), im - value * angle.sin())
+            });
             Coeff {
                 re: re / values.len() as f64,
                 im: im / values.len() as f64,
@@ -263,13 +253,7 @@ fn spectrum(values: &[f64]) -> Vec<Coeff> {
 fn phases(rng: &mut Rng) -> Vec<f64> {
     let half = SAMPLE_COUNT / 2;
     (0..=half)
-        .map(|k| {
-            if k == 0 || k == half {
-                0.0
-            } else {
-                TAU * rng.uniform()
-            }
-        })
+        .map(|k| if k == 0 || k == half { 0.0 } else { TAU * rng.uniform() })
         .collect()
 }
 
@@ -283,11 +267,7 @@ fn reconstruct(coefficients: &[Coeff], phases: &[f64]) -> Vec<f64> {
                 .map(|(k, coefficient)| {
                     let phase = TAU * k as f64 * i as f64 / n as f64 + phases[k];
                     let value = coefficient.re * phase.cos() - coefficient.im * phase.sin();
-                    if k == 0 || k == n / 2 {
-                        value
-                    } else {
-                        2.0 * value
-                    }
+                    if k == 0 || k == n / 2 { value } else { 2.0 * value }
                 })
                 .sum()
         })
@@ -330,11 +310,7 @@ fn maximum_circular_correlation(a: &[f64], b: &[f64]) -> f64 {
 }
 
 fn close_curve(turning: &mut [f64], length: f64) -> Option<Vec<[f64; 2]>> {
-    let winding = if turning.iter().sum::<f64>() < 0.0 {
-        -TAU
-    } else {
-        TAU
-    };
+    let winding = if turning.iter().sum::<f64>() < 0.0 { -TAU } else { TAU };
     let mean_correction = winding - turning.iter().sum::<f64>() / turning.len() as f64;
     for value in turning.iter_mut() {
         *value += mean_correction;
@@ -393,13 +369,10 @@ fn integrate(turning: &[f64], length: f64) -> (Vec<[f64; 2]>, [f64; 2]) {
 }
 
 fn centered(mut points: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
-    let center = points.iter().fold([0.0, 0.0], |sum, point| {
-        [sum[0] + point[0], sum[1] + point[1]]
-    });
-    let center = [
-        center[0] / points.len() as f64,
-        center[1] / points.len() as f64,
-    ];
+    let center = points
+        .iter()
+        .fold([0.0, 0.0], |sum, point| [sum[0] + point[0], sum[1] + point[1]]);
+    let center = [center[0] / points.len() as f64, center[1] / points.len() as f64];
     for point in &mut points {
         point[0] -= center[0];
         point[1] -= center[1];
@@ -434,9 +407,7 @@ pub(super) fn road_is_simple(points: &[[f64; 2]], right: &[f64], left: &[f64]) -
     let quads = road.quads().collect::<Vec<_>>();
     quads.iter().all(|quad| is_simple(quad))
         && (0..n).all(|i| {
-            (i + 1..n).all(|j| {
-                j == i + 1 || (i == 0 && j == n - 1) || !polygons_overlap(&quads[i], &quads[j])
-            })
+            (i + 1..n).all(|j| j == i + 1 || (i == 0 && j == n - 1) || !polygons_overlap(&quads[i], &quads[j]))
         })
 }
 
@@ -498,9 +469,7 @@ mod tests {
 
         let old_near_copy_phases = (0..COEFFICIENT_COUNT)
             .map(|k| {
-                k as f64 * 0.7
-                    + 0.22 * (TAU * k as f64 / (SAMPLE_COUNT / 2) as f64).sin()
-                    + 0.035 * (k as f64).cos()
+                k as f64 * 0.7 + 0.22 * (TAU * k as f64 / (SAMPLE_COUNT / 2) as f64).sin() + 0.035 * (k as f64).cos()
             })
             .collect::<Vec<_>>();
         let old_near_copy = reconstruct(&model.profiles[2].turning, &old_near_copy_phases);
@@ -574,21 +543,13 @@ mod tests {
 
         assert!((0..points.len()).all(|i| {
             let next = (i + 1) % points.len();
-            (widths[next] - widths[i]).abs()
-                <= MAX_WIDTH_SLOPE * distance(points[i], points[next]) + 1e-12
+            (widths[next] - widths[i]).abs() <= MAX_WIDTH_SLOPE * distance(points[i], points[next]) + 1e-12
         }));
     }
 
     #[test]
     fn full_road_geometry_rejects_nonlocal_overlap() {
-        let points = [
-            [0.0, 0.0],
-            [5.0, 0.0],
-            [10.0, 0.0],
-            [10.0, 1.0],
-            [5.0, 1.0],
-            [0.0, 1.0],
-        ];
+        let points = [[0.0, 0.0], [5.0, 0.0], [10.0, 0.0], [10.0, 1.0], [5.0, 1.0], [0.0, 1.0]];
 
         assert!(is_simple(&points));
         assert!(!road_is_simple(&points, &[0.75; 6], &[0.75; 6]));

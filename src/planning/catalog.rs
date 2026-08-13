@@ -1,7 +1,6 @@
 use super::{
-    BasicPlanner, BezierToppraPlanner, Cem, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner,
-    Planner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner,
-    TreetopPlanner,
+    BasicPlanner, BezierToppraPlanner, Cem, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
+    PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.

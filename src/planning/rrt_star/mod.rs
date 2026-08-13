@@ -338,16 +338,8 @@ fn try_extend(
         .filter_map(|&j| {
             let curve = CubicSteer::from_poses(nodes[j].pos, nodes[j].yaw, new_pos, new_yaw);
             let segment = curve.sample(STEER_SAMPLES);
-            steer_cost(
-                &curve,
-                &segment,
-                path,
-                s0,
-                v,
-                ctx,
-                [nodes[j].station, new_s],
-            )
-            .map(|ec| (j, nodes[j].cost + ec, segment))
+            steer_cost(&curve, &segment, path, s0, v, ctx, [nodes[j].station, new_s])
+                .map(|ec| (j, nodes[j].cost + ec, segment))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let Some((parent_idx, cost, segment)) = best else {
@@ -382,15 +374,7 @@ fn try_extend(
     for j in rewire_candidates {
         let curve = CubicSteer::from_poses(new_pos, new_yaw, nodes[j].pos, nodes[j].yaw);
         let segment = curve.sample(STEER_SAMPLES);
-        let Some(ec) = steer_cost(
-            &curve,
-            &segment,
-            path,
-            s0,
-            v,
-            ctx,
-            [new_s, nodes[j].station],
-        ) else {
+        let Some(ec) = steer_cost(&curve, &segment, path, s0, v, ctx, [new_s, nodes[j].station]) else {
             continue;
         };
         let rewired_cost = cost + ec;
@@ -476,15 +460,7 @@ impl Planner for RrtStarPlanner {
                 let yaw = wrap_angle(parent.yaw + dyaw);
                 let curve = CubicSteer::from_poses(parent.pos, parent.yaw, p, yaw);
                 let segment = curve.sample(STEER_SAMPLES);
-                let Some(ec) = steer_cost(
-                    &curve,
-                    &segment,
-                    &path,
-                    s0,
-                    v,
-                    ctx,
-                    [parent.station, station],
-                ) else {
+                let Some(ec) = steer_cost(&curve, &segment, &path, s0, v, ctx, [parent.station, station]) else {
                     break; // stale from here on; random sampling takes over
                 };
                 let cost = parent.cost + ec;
@@ -572,26 +548,12 @@ impl Planner for RrtStarPlanner {
                 GRID_LATERALS,
                 qmc_budget,
             ) {
-                try_extend(
-                    &mut nodes,
-                    &mut tree,
-                    &path,
-                    s0,
-                    v,
-                    ctx,
-                    path.frenet_to_xy(s, d),
-                );
+                try_extend(&mut nodes, &mut tree, &path, s0, v, ctx, path.frenet_to_xy(s, d));
             }
         });
 
         if let Some(diag) = ctx.diagnostics {
-            record_diagnostics(
-                diag,
-                nodes
-                    .iter()
-                    .skip(1)
-                    .map(|node| (node.pos, node.segment.clone())),
-            );
+            record_diagnostics(diag, nodes.iter().skip(1).map(|node| (node.pos, node.segment.clone())));
         }
 
         // Goal selection. The simulator executes only the *first* segment of
@@ -648,9 +610,7 @@ impl Planner for RrtStarPlanner {
             .filter(|&i| nodes[i].warm_started)
             .max_by(|&a, &b| nodes[a].station.total_cmp(&nodes[b].station));
         let best_leaf = match (warm_best, overall_best) {
-            (Some(w), Some(o)) if nodes[w].station >= nodes[o].station - WARM_VIABLE_BAND_M => {
-                Some(w)
-            }
+            (Some(w), Some(o)) if nodes[w].station >= nodes[o].station - WARM_VIABLE_BAND_M => Some(w),
             _ => overall_best,
         };
 
@@ -668,19 +628,15 @@ impl Planner for RrtStarPlanner {
             // this module's own (single-obstacle) closed-loop tests.
             self.prev_path.clear();
             self.committed_bias = 0.0; // no plan to be committed to
-            return brake_controls(
-                ego,
-                ctx,
-                forward_difference(ego.speed, 0.0, ctx.road.dt).max(-4.0),
-            );
+            return brake_controls(ego, ctx, forward_difference(ego.speed, 0.0, ctx.road.dt).max(-4.0));
         };
 
         // Smooth `committed_bias` toward the chosen path's side. As the ego
         // clears a detour and its path returns to the lane, `peak_lateral`
         // (measured from the advancing root) shrinks, so the bias decays back
         // to zero on its own.
-        self.committed_bias = (1.0 - COMMIT_SMOOTHING) * self.committed_bias
-            + COMMIT_SMOOTHING * nodes[idx].peak_lateral;
+        self.committed_bias =
+            (1.0 - COMMIT_SMOOTHING) * self.committed_bias + COMMIT_SMOOTHING * nodes[idx].peak_lateral;
 
         let chain = parent_chain(idx, 0, |i| nodes[i].parent);
         let mut winning_path = vec![nodes[0].pos];
@@ -778,8 +734,7 @@ mod tests {
         for gi in 0..GRID_STATIONS {
             let s = s0 + s_max * (gi + 1) as f64 / GRID_STATIONS as f64;
             for gj in 0..GRID_LATERALS {
-                let d = -LATERAL_BOUND_M
-                    + 2.0 * LATERAL_BOUND_M * gj as f64 / (GRID_LATERALS - 1) as f64;
+                let d = -LATERAL_BOUND_M + 2.0 * LATERAL_BOUND_M * gj as f64 / (GRID_LATERALS - 1) as f64;
                 expected.push((s, d));
             }
         }

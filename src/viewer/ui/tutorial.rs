@@ -48,21 +48,14 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
                 .spacing(egui::vec2(40.0, if compact { 2.0 } else { 14.0 }))
                 .show(ui, |ui| {
                     for (input, action) in CAMERA_CONTROLS {
-                        ui.label(
-                            egui::RichText::new(input)
-                                .font(caps_font(14.0))
-                                .color(DIM_TEXT),
-                        );
+                        ui.label(egui::RichText::new(input).font(caps_font(14.0)).color(DIM_TEXT));
                         ui.monospace(action);
                         ui.end_row();
                     }
                 });
 
             ui.add_space(if compact { 4.0 } else { 24.0 });
-            if ui
-                .button(egui::RichText::new("BACK").font(caps_font(13.0)))
-                .clicked()
-            {
+            if ui.button(egui::RichText::new("BACK").font(caps_font(13.0))).clicked() {
                 *open = false;
             }
         });

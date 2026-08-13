@@ -5,11 +5,7 @@ use crate::viewer::live::Live;
 
 pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     section_heading(ui, "PLANNING");
-    metric(
-        ui,
-        "LATEST PLAN",
-        format!("{:.2} ms", live.world.last_plan_ms),
-    );
+    metric(ui, "LATEST PLAN", format!("{:.2} ms", live.world.last_plan_ms));
 
     section_heading(ui, "FRAME");
     metric(

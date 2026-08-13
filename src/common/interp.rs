@@ -17,10 +17,7 @@ where
 pub(crate) fn interp1d(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
     assert!(!xp.is_empty(), "interp1d requires at least one sample");
     assert_eq!(xp.len(), fp.len(), "xp and fp must have equal lengths");
-    assert!(
-        xp.windows(2).all(|w| w[0] < w[1]),
-        "xp must be strictly increasing"
-    );
+    assert!(xp.windows(2).all(|w| w[0] < w[1]), "xp must be strictly increasing");
     if x.is_nan() {
         return f64::NAN;
     }
@@ -39,9 +36,8 @@ pub(crate) fn interp1d(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
 }
 
 pub(crate) fn interpolate_state(previous: State, current: State, alpha: f64) -> State {
-    let yaw_delta = (current.yaw - previous.yaw + std::f64::consts::PI)
-        .rem_euclid(std::f64::consts::TAU)
-        - std::f64::consts::PI;
+    let yaw_delta =
+        (current.yaw - previous.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
     State {
         x: previous.x + (current.x - previous.x) * alpha,
         y: previous.y + (current.y - previous.y) * alpha,

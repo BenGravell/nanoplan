@@ -105,11 +105,7 @@ pub(crate) struct Metrics {
 }
 
 /// Evaluate all metrics from a canonical, precomputed trajectory.
-pub(crate) fn evaluate(
-    trajectory_kinematics: &TrajectoryKinematics,
-    actors: &[Vec<State>],
-    road: &Road,
-) -> Metrics {
+pub(crate) fn evaluate(trajectory_kinematics: &TrajectoryKinematics, actors: &[Vec<State>], road: &Road) -> Metrics {
     let n = trajectory_kinematics.len();
     if n == 0 {
         return Metrics::default();
@@ -120,9 +116,7 @@ pub(crate) fn evaluate(
         .iter()
         .map(|s| path.project(s.position()).0)
         .collect();
-    let actors_at: Vec<Vec<State>> = (0..n)
-        .map(|i| actors.iter().map(|a| a[i]).collect())
-        .collect();
+    let actors_at: Vec<Vec<State>> = (0..n).map(|i| actors.iter().map(|a| a[i]).collect()).collect();
     let ctx = TickCtx {
         trajectory_kinematics,
         actors_at: &actors_at,
@@ -152,14 +146,8 @@ pub(crate) fn evaluate(
 }
 
 #[cfg(test)]
-pub(crate) fn evaluate_trace(
-    states: &[State],
-    controls: &[Control],
-    actors: &[Vec<State>],
-    road: &Road,
-) -> Metrics {
-    let trajectory_kinematics =
-        TrajectoryKinematics::new(states.to_vec(), controls.to_vec(), road.dt);
+pub(crate) fn evaluate_trace(states: &[State], controls: &[Control], actors: &[Vec<State>], road: &Road) -> Metrics {
+    let trajectory_kinematics = TrajectoryKinematics::new(states.to_vec(), controls.to_vec(), road.dt);
     evaluate(&trajectory_kinematics, actors, road)
 }
 
@@ -196,11 +184,7 @@ mod tests {
     fn perfect_cruise_scores_one_every_tick() {
         let ego = cruise(*MAX_TERMINAL_SPEED_MPS, 20);
         let m = evaluate_coasting(&ego, &[], &road());
-        assert!(
-            m.per_tick
-                .iter()
-                .all(|t| t.iter().all(|s| (s - 1.0).abs() < 1e-9))
-        );
+        assert!(m.per_tick.iter().all(|t| t.iter().all(|s| (s - 1.0).abs() < 1e-9)));
         assert!(m.aggregate.iter().all(|a| (a - 1.0).abs() < 1e-9));
         assert!((m.score - 1.0).abs() < 1e-9);
     }
@@ -278,8 +262,7 @@ mod tests {
         let comfortable_mid_progress = aggregation::composite(&METRICS, &[1.0, 0.5, 1.0]);
 
         let uncomfortable_tiny_improve_safety = aggregation::composite(&METRICS, &[0.51, 1.0, 0.0]);
-        let uncomfortable_tiny_improve_progress =
-            aggregation::composite(&METRICS, &[1.0, 0.51, 0.0]);
+        let uncomfortable_tiny_improve_progress = aggregation::composite(&METRICS, &[1.0, 0.51, 0.0]);
 
         // Tiny safety improvement must dominate perfect comfort improvement.
         assert!(uncomfortable_tiny_improve_safety > comfortable_mid_safety);

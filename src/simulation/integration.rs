@@ -53,9 +53,7 @@ mod tests {
     use crate::common::kinematics::{
         curvature_from_lateral_acceleration, lateral_acceleration, longitudinal_resistance_accel,
     };
-    use crate::vehicle::{
-        MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MAX_TERMINAL_SPEED_MPS, MIN_LON_ACCEL,
-    };
+    use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MAX_TERMINAL_SPEED_MPS, MIN_LON_ACCEL};
 
     #[test]
     fn world_step_applies_static_limits() {
@@ -71,11 +69,7 @@ mod tests {
             },
             0.1,
         );
-        assert!(
-            (ns.speed - (s.speed + (MAX_LON_ACCEL - longitudinal_resistance_accel(s.speed)) * 0.1))
-                .abs()
-                < 1e-9
-        );
+        assert!((ns.speed - (s.speed + (MAX_LON_ACCEL - longitudinal_resistance_accel(s.speed)) * 0.1)).abs() < 1e-9);
         assert!((ns.yaw - s.speed * MAX_ABS_CURVATURE * 0.1).abs() < 1e-9);
     }
 
@@ -139,8 +133,7 @@ mod tests {
             0.1,
         );
         assert!(
-            (s.speed - (5.0 + (MAX_LON_ACCEL - longitudinal_resistance_accel(5.0)) * 0.1)).abs()
-                < 1e-9,
+            (s.speed - (5.0 + (MAX_LON_ACCEL - longitudinal_resistance_accel(5.0)) * 0.1)).abs() < 1e-9,
             "speed {}",
             s.speed
         );
@@ -155,11 +148,7 @@ mod tests {
             },
             0.1,
         );
-        assert!(
-            (brake.speed - (5.0 + (MIN_LON_ACCEL - longitudinal_resistance_accel(5.0)) * 0.1))
-                .abs()
-                < 1e-9
-        );
+        assert!((brake.speed - (5.0 + (MIN_LON_ACCEL - longitudinal_resistance_accel(5.0)) * 0.1)).abs() < 1e-9);
     }
 
     #[test]
@@ -274,10 +263,7 @@ mod tests {
         assert_eq!(limiter.applied.acceleration, MAX_LON_ACCEL);
         assert_eq!(limiter.applied.curvature, MAX_ABS_CURVATURE);
         assert!(
-            (s1.speed
-                - (1.0 + (limiter.applied.acceleration - longitudinal_resistance_accel(1.0)) * dt))
-                .abs()
-                < 1e-9
+            (s1.speed - (1.0 + (limiter.applied.acceleration - longitudinal_resistance_accel(1.0)) * dt)).abs() < 1e-9
         );
     }
 }

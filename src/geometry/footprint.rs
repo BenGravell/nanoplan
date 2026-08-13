@@ -26,22 +26,13 @@ impl Footprint {
     pub(crate) fn corners(self, pose: Pose) -> [[f64; 2]; 4] {
         let forward = [pose.yaw.cos(), pose.yaw.sin()];
         let left = [-forward[1], forward[0]];
-        let front = [
-            pose.x + self.length * forward[0],
-            pose.y + self.length * forward[1],
-        ];
+        let front = [pose.x + self.length * forward[0], pose.y + self.length * forward[1]];
         let half_width = self.width / 2.0;
         [
             [pose.x + half_width * left[0], pose.y + half_width * left[1]],
             [pose.x - half_width * left[0], pose.y - half_width * left[1]],
-            [
-                front[0] + half_width * left[0],
-                front[1] + half_width * left[1],
-            ],
-            [
-                front[0] - half_width * left[0],
-                front[1] - half_width * left[1],
-            ],
+            [front[0] + half_width * left[0], front[1] + half_width * left[1]],
+            [front[0] - half_width * left[0], front[1] - half_width * left[1]],
         ]
     }
 

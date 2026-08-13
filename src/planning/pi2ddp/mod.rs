@@ -150,10 +150,7 @@ impl Planner for Pi2DdpPlanner {
         // cover the lane width at the preview distance (d ≈ ½ κ L²)
         let preview = ego.speed.max(2.0) * ctx.road.dt * HORIZON as f64;
         let sigma_kappa = (8.0 * LANE_HALF_M / (preview * preview)).clamp(0.005, 0.05);
-        let sigma_init: M2 = [
-            [SIGMA_ACCEL * SIGMA_ACCEL, 0.0],
-            [0.0, sigma_kappa * sigma_kappa],
-        ];
+        let sigma_init: M2 = [[SIGMA_ACCEL * SIGMA_ACCEL, 0.0], [0.0, sigma_kappa * sigma_kappa]];
         // Composite-metric cost of being at `x` at tick `j`. A hard violation
         // (collision, or off the drivable area) becomes a large but
         // finite `constraints::HARD_VIOLATION_PENALTY · (1 + depth)` via
@@ -162,8 +159,7 @@ impl Planner for Pi2DdpPlanner {
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
         let trajectory_cost = TrajectoryCost::new(&path, ctx, ego.speed);
-        let state_cost =
-            |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
+        let state_cost = |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
             let mut xs = vec![ego];
@@ -222,10 +218,7 @@ impl Planner for Pi2DdpPlanner {
                             pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum(),
                         ];
                         let u = clamp_control(
-                            Control::from([
-                                pol.u[j][0] + kx[0] + eps[0],
-                                pol.u[j][1] + kx[1] + eps[1],
-                            ]),
+                            Control::from([pol.u[j][0] + kx[0] + eps[0], pol.u[j][1] + kx[1] + eps[1]]),
                             x.speed,
                         );
                         us[k][j] = [u.acceleration, u.curvature];
@@ -263,9 +256,7 @@ impl Planner for Pi2DdpPlanner {
                     let (lo, hi) = ctg
                         .iter()
                         .map(|c| c[j])
-                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
-                            (l.min(c), h.max(c))
-                        });
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| (l.min(c), h.max(c)));
                     let p: Vec<f64> = ctg
                         .iter()
                         .map(|c| (-BETA * (c[j] - lo) / (hi - lo).max(1e-12)).exp())
@@ -340,27 +331,16 @@ impl Planner for Pi2DdpPlanner {
                     for a in 0..2 {
                         for b in 0..2 {
                             let uxxxu: f64 = (0..4)
-                                .map(|c| {
-                                    (0..4)
-                                        .map(|d| s_ux[a][c] * xx_inv[c][d] * s_ux[b][d])
-                                        .sum::<f64>()
-                                })
+                                .map(|c| (0..4).map(|d| s_ux[a][c] * xx_inv[c][d] * s_ux[b][d]).sum::<f64>())
                                 .sum();
-                            pol.sigma_u[j][a][b] = s_uu[a][b] - uxxxu
-                                + if a == b {
-                                    pol.lambda_exp * sigma_init[a][a]
-                                } else {
-                                    0.0
-                                };
+                            pol.sigma_u[j][a][b] =
+                                s_uu[a][b] - uxxxu + if a == b { pol.lambda_exp * sigma_init[a][a] } else { 0.0 };
                         }
                     }
                     // PSD guard: the Schur complement of a noisy Σ_τ estimate can
                     // lose definiteness; fall back to the road-informed prior
                     let su = &pol.sigma_u[j];
-                    if su[0][0] <= 0.0
-                        || su[1][1] <= 0.0
-                        || su[0][0] * su[1][1] <= su[0][1] * su[1][0]
-                    {
+                    if su[0][0] <= 0.0 || su[1][1] <= 0.0 || su[0][0] * su[1][1] <= su[0][1] * su[1][0] {
                         pol.sigma_u[j] = [
                             [pol.lambda_exp.max(0.05) * sigma_init[0][0], 0.0],
                             [0.0, pol.lambda_exp.max(0.05) * sigma_init[1][1]],
@@ -369,12 +349,9 @@ impl Planner for Pi2DdpPlanner {
                     pol.gains[j] = gain;
                     // nominal for the next generation: rollout mean plus feedforward
                     for a in 0..2 {
-                        pol.u[j][a] =
-                            us.iter().map(|u| u[j][a]).sum::<f64>() / rollouts as f64 + k_ff[a];
+                        pol.u[j][a] = us.iter().map(|u| u[j][a]).sum::<f64>() / rollouts as f64 + k_ff[a];
                     }
-                    let mean = |f: fn(&State) -> f64| {
-                        xs.iter().map(|x| f(&x[j])).sum::<f64>() / rollouts as f64
-                    };
+                    let mean = |f: fn(&State) -> f64| xs.iter().map(|x| f(&x[j])).sum::<f64>() / rollouts as f64;
                     new_x_nom[j] = State {
                         x: mean(|s| s.x),
                         y: mean(|s| s.y),
@@ -388,26 +365,11 @@ impl Planner for Pi2DdpPlanner {
             let mut x = ego;
             let mut u_exec = Vec::with_capacity(HORIZON);
             for (j, nom) in new_x_nom.iter().enumerate() {
-                let dx = [
-                    x.x - nom.x,
-                    x.y - nom.y,
-                    x.yaw - nom.yaw,
-                    x.speed - nom.speed,
-                ];
+                let dx = [x.x - nom.x, x.y - nom.y, x.yaw - nom.yaw, x.speed - nom.speed];
                 let u = clamp_control(
                     Control::from([
-                        pol.u[j][0]
-                            + pol.gains[j][0]
-                                .iter()
-                                .zip(&dx)
-                                .map(|(a, b)| a * b)
-                                .sum::<f64>(),
-                        pol.u[j][1]
-                            + pol.gains[j][1]
-                                .iter()
-                                .zip(&dx)
-                                .map(|(a, b)| a * b)
-                                .sum::<f64>(),
+                        pol.u[j][0] + pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum::<f64>(),
+                        pol.u[j][1] + pol.gains[j][1].iter().zip(&dx).map(|(a, b)| a * b).sum::<f64>(),
                     ]),
                     x.speed,
                 );

@@ -47,9 +47,8 @@ pub(crate) fn overlap_mtv(
 
     for axis in axes(a.yaw).into_iter().chain(axes(b.yaw)) {
         let separation = dot(delta, axis);
-        let depth = a_footprint.support_radius(a.yaw, axis)
-            + b_footprint.support_radius(b.yaw, axis)
-            - separation.abs();
+        let depth =
+            a_footprint.support_radius(a.yaw, axis) + b_footprint.support_radius(b.yaw, axis) - separation.abs();
         if depth <= 0.0 {
             return None;
         }
@@ -64,12 +63,7 @@ pub(crate) fn overlap_mtv(
     Some(best)
 }
 
-pub(crate) fn footprints_overlap(
-    a: Pose,
-    a_footprint: Footprint,
-    b: Pose,
-    b_footprint: Footprint,
-) -> bool {
+pub(crate) fn footprints_overlap(a: Pose, a_footprint: Footprint, b: Pose, b_footprint: Footprint) -> bool {
     overlap_mtv(a, a_footprint, b, b_footprint).is_some()
 }
 

@@ -7,9 +7,7 @@ use bevy::camera::CameraOutputMode;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::error_handler::{RenderError, RenderErrorHandler, RenderErrorPolicy};
-use bevy::render::{
-    Extract, ExtractSchedule, RenderApp, camera::extract_cameras, view::window::ExtractedWindows,
-};
+use bevy::render::{Extract, ExtractSchedule, RenderApp, camera::extract_cameras, view::window::ExtractedWindows};
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 
@@ -28,8 +26,7 @@ const RESIZE_DEBOUNCE_SECONDS: f32 = 0.2;
 pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 520.0;
 pub(crate) const MIN_VIEWPORT_ASPECT_WIDTH: u8 = 4;
 pub(crate) const MIN_VIEWPORT_ASPECT_HEIGHT: u8 = 3;
-pub(crate) const MIN_VIEWPORT_ASPECT_RATIO: f32 =
-    MIN_VIEWPORT_ASPECT_WIDTH as f32 / MIN_VIEWPORT_ASPECT_HEIGHT as f32;
+pub(crate) const MIN_VIEWPORT_ASPECT_RATIO: f32 = MIN_VIEWPORT_ASPECT_WIDTH as f32 / MIN_VIEWPORT_ASPECT_HEIGHT as f32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ViewportConstraints {
@@ -64,10 +61,7 @@ pub(crate) enum CarpetVisualization {
 
 impl CarpetVisualization {
     pub(crate) fn is_metric(self) -> bool {
-        matches!(
-            self,
-            Self::Safety | Self::Progress | Self::Comfort | Self::Overall
-        )
+        matches!(self, Self::Safety | Self::Progress | Self::Comfort | Self::Overall)
     }
 }
 
@@ -173,10 +167,8 @@ impl Plugin for ResizeDebouncePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ResizeDebounce>()
             .add_systems(Update, debounce_resize);
-        app.sub_app_mut(RenderApp).add_systems(
-            ExtractSchedule,
-            hold_surface_size_during_resize.after(extract_cameras),
-        );
+        app.sub_app_mut(RenderApp)
+            .add_systems(ExtractSchedule, hold_surface_size_during_resize.after(extract_cameras));
     }
 }
 
@@ -251,14 +243,9 @@ fn hold_surface_size_during_resize(
     }
 }
 
-fn recover_failed_resize(
-    error: &RenderError,
-    main_world: &mut World,
-    _render_world: &mut World,
-) -> RenderErrorPolicy {
+fn recover_failed_resize(error: &RenderError, main_world: &mut World, _render_world: &mut World) -> RenderErrorPolicy {
     let fallback = main_world.resource_mut::<ResizeDebounce>().rollback();
-    let disabled_msaa =
-        error.ty == bevy::render::error_handler::ErrorType::OutOfMemory && disable_msaa(main_world);
+    let disabled_msaa = error.ty == bevy::render::error_handler::ErrorType::OutOfMemory && disable_msaa(main_world);
     if fallback.is_none() && !disabled_msaa {
         error!(
             "Rendering stopped after unrecoverable {:?} error; the app will remain open",
@@ -270,9 +257,7 @@ fn recover_failed_resize(
     if let Some(fallback) = fallback {
         let mut windows = main_world.query_filtered::<&mut Window, With<PrimaryWindow>>();
         if let Ok(mut window) = windows.single_mut(main_world) {
-            window
-                .resolution
-                .set_physical_resolution(fallback.x, fallback.y);
+            window.resolution.set_physical_resolution(fallback.x, fallback.y);
         }
     }
     let mut cameras = main_world.query::<&mut Camera>();
@@ -285,11 +270,7 @@ fn recover_failed_resize(
             error.ty,
             fallback.x,
             fallback.y,
-            if disabled_msaa {
-                " without multisampling"
-            } else {
-                ""
-            }
+            if disabled_msaa { " without multisampling" } else { "" }
         ),
         None => warn!("GPU memory is too limited for MSAA; disabling multisampling"),
     }

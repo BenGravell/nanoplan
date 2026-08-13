@@ -66,9 +66,7 @@ use crate::common::measure::dot;
 use crate::common::types::matrix::{M4, M22, M24, M42};
 use crate::common::types::state;
 use crate::common::types::vector::{V2, V4};
-use crate::planning::search_tree::{
-    centerline_follow_controls, repeat_last_controls, rollout_constrained,
-};
+use crate::planning::search_tree::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
 use crate::planning::{Context, Planner, TrajectoryCost};
 use crate::prediction::predict;
 use crate::simulation::{Control, State, world_step};
@@ -124,12 +122,7 @@ impl Ocp<'_, '_> {
     }
 
     fn terminal_cost(&self, x: &State) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(
-            x,
-            Control::default(),
-            TICKS,
-            None,
-        )
+        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(x, Control::default(), TICKS, None)
     }
 
     /// Total cost of a rolled-out trajectory (treetop `Loss::totalValue`).
@@ -169,12 +162,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     // Frenet lookup (the probes move by ±H_COST, far less than the window)
     let s_hint = ocp.path.project(x.position()).0;
     let t_s = t as f64 * ocp.ctx.road.dt;
-    let predicted_actors: Vec<State> = ocp
-        .ctx
-        .actors
-        .iter()
-        .map(|a| predict(a, ocp.path, t_s))
-        .collect();
+    let predicted_actors: Vec<State> = ocp.ctx.actors.iter().map(|a| predict(a, ocp.path, t_s)).collect();
     let eval = |z: [f64; 6]| {
         ocp.stage_cost_with_predicted_actors(
             &State::from([z[0], z[1], z[2], z[3]]),
@@ -205,10 +193,7 @@ fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M4) {
 /// Central-difference gradient and Hessian of a black-box scalar. The
 /// Hessian is symmetric by construction (each cross term is computed once
 /// from the four corner probes and mirrored).
-fn fd_grad_hess<const N: usize>(
-    f: &impl Fn([f64; N]) -> f64,
-    z: [f64; N],
-) -> ([f64; N], [[f64; N]; N]) {
+fn fd_grad_hess<const N: usize>(f: &impl Fn([f64; N]) -> f64, z: [f64; N]) -> ([f64; N], [[f64; N]; N]) {
     let f0 = f(z);
     let mut fp = [0.0; N];
     let mut fm = [0.0; N];
@@ -337,18 +322,13 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         };
         n
     ];
-    let mut ecc = Ecc {
-        term1: 0.0,
-        term2: 0.0,
-    };
+    let mut ecc = Ecc { term1: 0.0, term2: 0.0 };
 
     for t in (0..n).rev() {
-        let sd = ocp
+        let sd = ocp.ctx.time("fd_cost", || stage_derivs(ocp, &xs[t], &us[t], t));
+        let (a, b) = ocp
             .ctx
-            .time("fd_cost", || stage_derivs(ocp, &xs[t], &us[t], t));
-        let (a, b) = ocp.ctx.time("fd_dynamics", || {
-            dynamics_jacobian(&xs[t], &us[t], ocp.ctx.road.dt)
-        });
+            .time("fd_dynamics", || dynamics_jacobian(&xs[t], &us[t], ocp.ctx.road.dt));
         let at = transpose(&a);
         let bt = transpose(&b);
         let atv: M4 = mat_mul(&at, &vxx);
@@ -368,10 +348,7 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         if !(m[0][0] > 0.0 && det > 0.0 && det.is_finite()) {
             return None;
         }
-        let inv: M22 = [
-            [m[1][1] / det, -m[0][1] / det],
-            [-m[1][0] / det, m[0][0] / det],
-        ];
+        let inv: M22 = [[m[1][1] / det, -m[0][1] / det], [-m[1][0] / det, m[0][0] / det]];
 
         let k: V2 = mat_vec(&inv, &qu).map(|v| -v);
         let kk: M24 = mat_mul(&inv, &transpose(&qxu)).map(|row| row.map(|v| -v));
@@ -381,12 +358,8 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
         let kt: M42 = transpose(&kk);
         let w: M42 = mat_add(mat_mul(&kt, &quu), qxu);
         vx = vec_add(qx, vec_add(mat_vec(&w, &k), mat_vec(&kt, &qu)));
-        let vxx_new: M4 = mat_add(
-            qxx,
-            mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))),
-        );
-        vxx =
-            std::array::from_fn(|i| std::array::from_fn(|j| 0.5 * (vxx_new[i][j] + vxx_new[j][i])));
+        let vxx_new: M4 = mat_add(qxx, mat_add(mat_mul(&w, &kk), mat_mul(&kt, &transpose(&qxu))));
+        vxx = std::array::from_fn(|i| std::array::from_fn(|j| 0.5 * (vxx_new[i][j] + vxx_new[j][i])));
 
         ecc.term1 += dot(k, qu);
         ecc.term2 += dot(k, mat_vec(&quu, &k));
@@ -467,10 +440,7 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
         let mut attempts = 0;
         for attempt in 1..=MAX_FFGS_ATTEMPTS {
             attempts = attempt;
-            if let Some((nxs, nus, ncost)) = ocp
-                .ctx
-                .time("rollout", || forward(ocp, &xs, &us, &gains, scale))
-            {
+            if let Some((nxs, nus, ncost)) = ocp.ctx.time("rollout", || forward(ocp, &xs, &us, &gains, scale)) {
                 let change = cost_now - ncost;
                 let acceptable = COST_CHANGE_RATIO_MIN * ecc.evaluate(scale) - COST_CHANGE_TOL;
                 if change > acceptable {
@@ -487,11 +457,7 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
                 xs = nxs;
                 us = nus;
                 cost_now = ncost;
-                let factor = if attempts <= 1 {
-                    REG_DECREASE
-                } else {
-                    REG_INCREASE
-                };
+                let factor = if attempts <= 1 { REG_DECREASE } else { REG_INCREASE };
                 reg = (reg * factor).clamp(REG_MIN, REG_MAX);
                 if improved < COST_CHANGE_TOL {
                     break; // converged (treetop `checkConvergence`)
@@ -557,9 +523,7 @@ impl Planner for IlqrPlanner {
             diag.record_trajectory(sol.states.iter().map(|s| [s.x, s.y]).collect());
         }
 
-        let controls = ctx.time("extract", || {
-            repeat_last_controls(&sol.controls, ctx.horizon)
-        });
+        let controls = ctx.time("extract", || repeat_last_controls(&sol.controls, ctx.horizon));
         self.expected_next = world_step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);
         controls
@@ -598,9 +562,8 @@ mod tests {
         };
         let dt = 0.1;
         let (a, b) = dynamics_jacobian(&x, &u, dt);
-        let drag_slope = crate::vehicle::AIR_DENSITY_KG_M3 * crate::vehicle::DRAG_AREA_M2
-            / crate::vehicle::EGO_MASS_KG
-            * x.speed;
+        let drag_slope =
+            crate::vehicle::AIR_DENSITY_KG_M3 * crate::vehicle::DRAG_AREA_M2 / crate::vehicle::EGO_MASS_KG * x.speed;
         let expect_a = [
             [1.0, 0.0, -x.speed * dt * x.yaw.sin(), dt * x.yaw.cos()],
             [0.0, 1.0, x.speed * dt * x.yaw.cos(), dt * x.yaw.sin()],

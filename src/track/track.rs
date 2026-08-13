@@ -41,9 +41,7 @@ impl Track {
         }
         if index <= TRACK_PRESETS.len() {
             return Self {
-                geometry: TrackGeometry::Circuit(Arc::new(Circuit::generated(presets::generate(
-                    index - 1,
-                )))),
+                geometry: TrackGeometry::Circuit(Arc::new(Circuit::generated(presets::generate(index - 1)))),
             };
         }
         Self {
@@ -83,23 +81,13 @@ impl Track {
     pub(crate) fn centerline(&self, from: f64, to: f64, step: f64) -> Vec<[f64; 2]> {
         let first = (from / step).floor() as i64;
         let last = (to / step).ceil() as i64;
-        (first..=last)
-            .map(|i| self.point(i as f64 * step))
-            .collect()
+        (first..=last).map(|i| self.point(i as f64 * step)).collect()
     }
 
-    pub(crate) fn road_polygon(
-        &self,
-        from: f64,
-        to: f64,
-        step: f64,
-        closed: bool,
-    ) -> Option<RoadPolygon> {
+    pub(crate) fn road_polygon(&self, from: f64, to: f64, step: f64, closed: bool) -> Option<RoadPolygon> {
         let progress = if closed {
             let count = ((to - from) / step).ceil().max(2.0) as usize;
-            (0..count)
-                .map(|i| from + i as f64 * step)
-                .collect::<Vec<_>>()
+            (0..count).map(|i| from + i as f64 * step).collect::<Vec<_>>()
         } else {
             let first = (from / step).floor() as i64;
             let last = (to / step).ceil() as i64;

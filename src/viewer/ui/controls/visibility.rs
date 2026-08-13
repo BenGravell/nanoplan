@@ -10,19 +10,11 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
     ui.checkbox(&mut state.show_grid, "Grid");
     ui.checkbox(
         &mut state.show_stations,
-        if compact {
-            "Stations"
-        } else {
-            "Track stations"
-        },
+        if compact { "Stations" } else { "Track stations" },
     );
     ui.checkbox(
         &mut state.show_centerline,
-        if compact {
-            "Centerline"
-        } else {
-            "Track centerline"
-        },
+        if compact { "Centerline" } else { "Track centerline" },
     );
 
     ui.add_space(6.0);
@@ -46,13 +38,8 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
             )
         })
         .inner;
-    preview.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Future preview")
-    });
-    ui.checkbox(
-        &mut state.show_carpet,
-        if compact { "Carpet" } else { "Ego carpet" },
-    );
+    preview.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Future preview"));
+    ui.checkbox(&mut state.show_carpet, if compact { "Carpet" } else { "Ego carpet" });
     let previous = state.carpet_visualization;
     ui.label("Ego carpet color");
     egui::ComboBox::from_id_salt("ego_carpet_color")
@@ -70,10 +57,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
     if state.carpet_visualization != previous {
         state.show_carpet = true;
     }
-    ui.checkbox(
-        &mut state.show_plan,
-        if compact { "Path" } else { "Planned path" },
-    );
+    ui.checkbox(&mut state.show_plan, if compact { "Path" } else { "Planned path" });
     if state.planner.has_diagnostics() {
         ui.checkbox(
             &mut state.show_diag_points,

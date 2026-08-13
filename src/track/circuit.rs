@@ -79,14 +79,8 @@ impl Circuit {
 
     fn from_samples(mut samples: Vec<Sample>) -> Self {
         samples = resample_spline(&samples, SAMPLE_SPACING_M);
-        let points = samples
-            .iter()
-            .map(|sample| sample.point)
-            .collect::<Vec<_>>();
-        let mut right = samples
-            .iter()
-            .map(|sample| sample.right)
-            .collect::<Vec<_>>();
+        let points = samples.iter().map(|sample| sample.point).collect::<Vec<_>>();
+        let mut right = samples.iter().map(|sample| sample.right).collect::<Vec<_>>();
         let mut left = samples.iter().map(|sample| sample.left).collect::<Vec<_>>();
         limit_widths_for_curvature(&points, &mut right, &mut left);
         for ((sample, right), left) in samples.iter_mut().zip(right).zip(left) {
@@ -97,8 +91,7 @@ impl Circuit {
         for pair in samples.windows(2) {
             distance.push(distance.last().unwrap() + dist(pair[0].point, pair[1].point));
         }
-        let length =
-            distance.last().unwrap() + dist(samples.last().unwrap().point, samples[0].point);
+        let length = distance.last().unwrap() + dist(samples.last().unwrap().point, samples[0].point);
         Self {
             samples,
             distance,
@@ -152,10 +145,7 @@ impl Circuit {
     pub(super) fn widths(&self, progress: f64) -> (f64, f64) {
         let (a, b, u) = self.segment(progress);
         let (a, b) = (self.samples[a], self.samples[b]);
-        (
-            a.right + (b.right - a.right) * u,
-            a.left + (b.left - a.left) * u,
-        )
+        (a.right + (b.right - a.right) * u, a.left + (b.left - a.left) * u)
     }
 
     pub(super) fn project(&self, point: [f64; 2], hint: f64) -> f64 {
@@ -165,8 +155,7 @@ impl Circuit {
             let (p, q) = (self.samples[a].point, self.samples[b].point);
             let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
             let length_squared = (dx * dx + dy * dy).max(1e-12);
-            let u = (((point[0] - p[0]) * dx + (point[1] - p[1]) * dy) / length_squared)
-                .clamp(0.0, 1.0);
+            let u = (((point[0] - p[0]) * dx + (point[1] - p[1]) * dy) / length_squared).clamp(0.0, 1.0);
             let candidate = [p[0] + dx * u, p[1] + dy * u];
             let error = dist(point, candidate);
             if error < best.1 {
@@ -178,21 +167,9 @@ impl Circuit {
 
     pub(super) fn is_simple(&self) -> bool {
         road_is_simple(
-            &self
-                .samples
-                .iter()
-                .map(|sample| sample.point)
-                .collect::<Vec<_>>(),
-            &self
-                .samples
-                .iter()
-                .map(|sample| sample.right)
-                .collect::<Vec<_>>(),
-            &self
-                .samples
-                .iter()
-                .map(|sample| sample.left)
-                .collect::<Vec<_>>(),
+            &self.samples.iter().map(|sample| sample.point).collect::<Vec<_>>(),
+            &self.samples.iter().map(|sample| sample.right).collect::<Vec<_>>(),
+            &self.samples.iter().map(|sample| sample.left).collect::<Vec<_>>(),
         )
     }
 }
@@ -208,11 +185,7 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
 
     let mut anchor_parameters = vec![0.0];
     for segment in 0..anchors.len() {
-        let chord = dist(
-            anchors[segment].point,
-            anchors[(segment + 1) % anchors.len()].point,
-        )
-        .max(1e-9);
+        let chord = dist(anchors[segment].point, anchors[(segment + 1) % anchors.len()].point).max(1e-9);
         anchor_parameters.push(anchor_parameters.last().unwrap() + chord);
     }
     let coordinates = anchors
@@ -280,10 +253,8 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             let next_anchor = (segment + 1) % anchors.len();
             Sample {
                 point,
-                right: anchors[segment].right
-                    + u * (anchors[next_anchor].right - anchors[segment].right),
-                left: anchors[segment].left
-                    + u * (anchors[next_anchor].left - anchors[segment].left),
+                right: anchors[segment].right + u * (anchors[next_anchor].right - anchors[segment].right),
+                left: anchors[segment].left + u * (anchors[next_anchor].left - anchors[segment].left),
             }
         })
         .collect()
@@ -328,9 +299,12 @@ mod tests {
         let samples = resample_spline(&anchors, SAMPLE_SPACING_M);
 
         assert!(samples.len() > 120);
-        assert!(samples.iter().enumerate().all(|(i, sample)| {
-            dist(sample.point, samples[(i + 1) % samples.len()].point) <= 1.01
-        }));
+        assert!(
+            samples
+                .iter()
+                .enumerate()
+                .all(|(i, sample)| { dist(sample.point, samples[(i + 1) % samples.len()].point) <= 1.01 })
+        );
         assert!(
             samples
                 .iter()

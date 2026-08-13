@@ -6,13 +6,13 @@ use egui_kittest::{Harness, kittest::Queryable};
 use super::controls::metrics::preview_metrics;
 use super::style::desktop_zoom;
 use super::{
-    ControlTab, UiState, center_rail_rect, compact_layout, configure, handle_keyboard_controls,
-    landing, portrait_prompt, side_panel_margin, side_rail_widths, tutorial, viewer_layout,
+    ControlTab, UiState, center_rail_rect, compact_layout, configure, handle_keyboard_controls, landing,
+    portrait_prompt, side_panel_margin, side_rail_widths, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
-    CANVAS_RGB, MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH, ResizeDebounce, live::Live,
-    viewport_constraints, viewport_supported,
+    CANVAS_RGB, MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH, ResizeDebounce, live::Live, viewport_constraints,
+    viewport_supported,
 };
 
 const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 6] = [
@@ -56,21 +56,19 @@ fn visualization_defaults_show_only_track_stations() {
 
 #[test]
 fn landing_starts_with_the_keyboard() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                let ctx = ui.ctx().clone();
-                if !state.configured {
-                    configure(&ctx);
-                    state.configured = true;
-                    ctx.request_repaint();
-                    return;
-                }
-                landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            let ctx = ui.ctx().clone();
+            if !state.configured {
+                configure(&ctx);
+                state.configured = true;
+                ctx.request_repaint();
+                return;
+            }
+            landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     assert!(harness.query_by_label("Start").is_some());
@@ -82,25 +80,23 @@ fn landing_starts_with_the_keyboard() {
 
 #[test]
 fn landing_tutorial_opens_the_camera_keymap_and_returns() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                let ctx = ui.ctx().clone();
-                if !state.configured {
-                    configure(&ctx);
-                    state.configured = true;
-                    ctx.request_repaint();
-                    return;
-                }
-                if state.ui.tutorial {
-                    tutorial::show(ui, &mut state.ui.tutorial);
-                } else {
-                    landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
-                }
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            let ctx = ui.ctx().clone();
+            if !state.configured {
+                configure(&ctx);
+                state.configured = true;
+                ctx.request_repaint();
+                return;
+            }
+            if state.ui.tutorial {
+                tutorial::show(ui, &mut state.ui.tutorial);
+            } else {
+                landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+            }
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     harness.get_by_label("Tutorial").click();
@@ -187,9 +183,7 @@ fn landing_title_uses_normalized_reference_coordinates() {
     let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
     let title = landing::title_rect(screen);
     let reference_width = screen.height() * 16.0 / 9.0;
-    assert!(
-        ((title.left() - screen.left()) / reference_width - 0.041_666_668).abs() < f32::EPSILON
-    );
+    assert!(((title.left() - screen.left()) / reference_width - 0.041_666_668).abs() < f32::EPSILON);
     assert!(((title.top() - screen.top()) / screen.height() - 0.148_148_15).abs() < f32::EPSILON);
     assert!((title.width() / reference_width - 0.395_833_34).abs() < f32::EPSILON);
 }
@@ -200,9 +194,7 @@ fn landing_menu_uses_normalized_reference_coordinates() {
     let reference_width = screen.height() * 16.0 / 9.0;
     let first = landing::menu_row_rect(screen, 0);
     let second = landing::menu_row_rect(screen, 1);
-    assert!(
-        ((first.left() - screen.left()) / reference_width - 0.057_291_668).abs() < f32::EPSILON
-    );
+    assert!(((first.left() - screen.left()) / reference_width - 0.057_291_668).abs() < f32::EPSILON);
     assert!(((first.top() - screen.top()) / screen.height() - 0.324_074_06).abs() < f32::EPSILON);
     assert!(((second.top() - first.top()) / screen.height() - 0.1).abs() < f32::EPSILON);
 }
@@ -247,21 +239,15 @@ fn render_bottom_corner(corner: landing::BottomCorner, size: egui::Vec2) -> imag
     harness.render().unwrap()
 }
 
-fn bottom_corners_collide(
-    left: &image::RgbaImage,
-    right: &image::RgbaImage,
-    screen_width: u32,
-) -> bool {
+fn bottom_corners_collide(left: &image::RgbaImage, right: &image::RgbaImage, screen_width: u32) -> bool {
     let background_width = left.width();
     let right_offset = i64::from(screen_width) - i64::from(background_width);
     (0..screen_width).any(|screen_x| {
         let right_x = i64::from(screen_x) - right_offset;
         right_x >= 0
             && right_x < i64::from(background_width)
-            && (0..left.height()).any(|y| {
-                left.get_pixel(screen_x, y).0[3] != 0
-                    && right.get_pixel(right_x as u32, y).0[3] != 0
-            })
+            && (0..left.height())
+                .any(|y| left.get_pixel(screen_x, y).0[3] != 0 && right.get_pixel(right_x as u32, y).0[3] != 0)
     })
 }
 
@@ -308,10 +294,7 @@ fn portrait_prompt_is_the_only_interactive_view() {
         harness.run();
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-        for label in [
-            "TURN YOUR DEVICE SIDEWAYS",
-            "Nanoplan requires landscape orientation.",
-        ] {
+        for label in ["TURN YOUR DEVICE SIDEWAYS", "Nanoplan requires landscape orientation."] {
             assert!(screen.contains_rect(harness.get_by_label(label).rect()));
         }
         assert!(harness.query_by_label("NANOPLAN").is_none());
@@ -412,20 +395,18 @@ fn resize_waits_for_a_quiet_period_then_accepts_native_4k() {
 
 #[test]
 fn ego_carpet_selector_lives_in_the_viz_menu() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
     harness.state_mut().tab = ControlTab::Visibility;
     harness.run();
@@ -436,20 +417,18 @@ fn ego_carpet_selector_lives_in_the_viz_menu() {
 
 #[test]
 fn future_controls_live_together_in_the_viz_menu() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     assert!(harness.query_by_label("Future preview").is_none());
@@ -473,20 +452,18 @@ fn future_controls_live_together_in_the_viz_menu() {
 
 #[test]
 fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
     harness.state_mut().live.camera.zoom = 2.0;
     let ego = harness.state().live.world.ego();
@@ -514,20 +491,18 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
 
 #[test]
 fn section_selector_opens_track_options() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     harness
@@ -547,21 +522,19 @@ fn section_selector_opens_track_options() {
 
 #[test]
 fn pause_rail_opens_navigation_modal() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    state.ui.started = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                state.ui.started = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     harness.get_by_label("PAUSE").click();
@@ -587,21 +560,19 @@ fn pause_rail_opens_navigation_modal() {
 
 #[test]
 fn keyboard_shortcuts_pause_and_toggle_frame_time() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1280.0, 720.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerHarnessState| {
-                if !state.configured {
-                    configure(ui.ctx());
-                    state.configured = true;
-                    ui.ctx().request_repaint();
-                    return;
-                }
-                handle_keyboard_controls(ui.ctx(), &mut state.ui, &mut state.live);
-                viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-            },
-            ViewerHarnessState::default(),
-        );
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            handle_keyboard_controls(ui.ctx(), &mut state.ui, &mut state.live);
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
     harness.run_steps(2);
 
     harness.key_press(egui::Key::P);
@@ -656,10 +627,7 @@ fn active_scroll_handles_use_the_orange_widget_fill() {
     let style = ctx.style_of(egui::Theme::Light);
 
     assert!(!style.spacing.scroll.foreground_color);
-    assert_eq!(
-        style.visuals.widgets.active.bg_fill,
-        crate::viewer::colors::ORANGE
-    );
+    assert_eq!(style.visuals.widgets.active.bg_fill, crate::viewer::colors::ORANGE);
     assert_ne!(
         style.visuals.widgets.hovered.bg_fill,
         style.visuals.widgets.active.bg_fill
@@ -672,18 +640,9 @@ fn orange_ui_states_always_use_white_foregrounds() {
     configure(&ctx);
     let style = ctx.style_of(egui::Theme::Light);
 
-    assert_eq!(
-        style.visuals.widgets.active.bg_fill,
-        crate::viewer::colors::ORANGE
-    );
-    assert_eq!(
-        style.visuals.widgets.active.fg_stroke.color,
-        egui::Color32::WHITE
-    );
-    assert_eq!(
-        style.visuals.selection.bg_fill,
-        crate::viewer::colors::ORANGE
-    );
+    assert_eq!(style.visuals.widgets.active.bg_fill, crate::viewer::colors::ORANGE);
+    assert_eq!(style.visuals.widgets.active.fg_stroke.color, egui::Color32::WHITE);
+    assert_eq!(style.visuals.selection.bg_fill, crate::viewer::colors::ORANGE);
     assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
     assert_eq!(style.visuals.override_text_color, None);
 }
@@ -751,10 +710,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
     let target_sizes = [
         (
             "minimum-supported",
-            egui::vec2(
-                MIN_VIEWPORT_WIDTH,
-                MIN_VIEWPORT_WIDTH / MIN_VIEWPORT_ASPECT_RATIO,
-            ),
+            egui::vec2(MIN_VIEWPORT_WIDTH, MIN_VIEWPORT_WIDTH / MIN_VIEWPORT_ASPECT_RATIO),
             1.0,
         ),
         ("desktop-1080p", egui::vec2(1920.0, 1080.0), 1.0),
@@ -805,16 +761,11 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 .get_all_by_label(label)
                 .filter(|node| node.rect().left() < control_width * pixels_per_point)
                 .collect();
-            assert!(
-                !nodes.is_empty(),
-                "{label:?} missing from the control rail at {name}"
-            );
+            assert!(!nodes.is_empty(), "{label:?} missing from the control rail at {name}");
             for node in nodes {
                 let rect = node.rect();
                 assert!(
-                    screen.contains_rect(rect)
-                        && rect.max.x <= control_width * pixels_per_point
-                        && rect.is_positive(),
+                    screen.contains_rect(rect) && rect.max.x <= control_width * pixels_per_point && rect.is_positive(),
                     "{label:?} is clipped at {name}: {rect:?} outside the control rail"
                 );
             }
@@ -845,8 +796,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "HUD sections have no gutters at {name}: {sections:?}"
         );
         assert!(
-            sections[0].center().y < sections[1].center().y
-                && sections[1].center().y < sections[2].center().y,
+            sections[0].center().y < sections[1].center().y && sections[1].center().y < sections[2].center().y,
             "HUD sections lost top/middle/bottom alignment at {name}: {sections:?}"
         );
 
@@ -913,16 +863,11 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         };
         for label in camera_labels {
             let nodes: Vec<_> = harness.get_all_by_label(label).collect();
-            assert!(
-                !nodes.is_empty(),
-                "camera control {label:?} missing at {name}"
-            );
+            assert!(!nodes.is_empty(), "camera control {label:?} missing at {name}");
             for node in nodes {
                 let rect = node.rect();
                 assert!(
-                    rect.left() >= control_rail.left()
-                        && rect.right() <= control_rail.right()
-                        && rect.is_positive(),
+                    rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.is_positive(),
                     "camera control {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
                 );
             }
@@ -953,16 +898,11 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         };
         for label in visibility_labels {
             let nodes: Vec<_> = harness.get_all_by_label(label).collect();
-            assert!(
-                !nodes.is_empty(),
-                "visibility control {label:?} missing at {name}"
-            );
+            assert!(!nodes.is_empty(), "visibility control {label:?} missing at {name}");
             for node in nodes {
                 let rect = node.rect();
                 assert!(
-                    rect.left() >= control_rail.left()
-                        && rect.right() <= control_rail.right()
-                        && rect.width() > 0.0,
+                    rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.width() > 0.0,
                     "visibility control {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
                 );
             }
@@ -970,18 +910,10 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
         harness.state_mut().tab = ControlTab::Metrics;
         harness.run();
-        for label in [
-            "PLANNER METRICS",
-            "SAFETY",
-            "PROGRESS",
-            "COMFORT",
-            "OVERALL",
-        ] {
+        for label in ["PLANNER METRICS", "SAFETY", "PROGRESS", "COMFORT", "OVERALL"] {
             let rect = harness.get_by_label(label).rect();
             assert!(
-                rect.left() >= control_rail.left()
-                    && rect.right() <= control_rail.right()
-                    && rect.width() > 0.0,
+                rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.width() > 0.0,
                 "metric text {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
             );
         }
@@ -1003,18 +935,10 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
         harness.state_mut().tab = ControlTab::Timing;
         harness.run();
-        for label in [
-            "PLANNING",
-            "LATEST PLAN",
-            "FRAME",
-            "WHOLE FRAME",
-            "LATENCY SEAMS",
-        ] {
+        for label in ["PLANNING", "LATEST PLAN", "FRAME", "WHOLE FRAME", "LATENCY SEAMS"] {
             let rect = harness.get_by_label(label).rect();
             assert!(
-                rect.left() >= control_rail.left()
-                    && rect.right() <= control_rail.right()
-                    && rect.width() > 0.0,
+                rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.width() > 0.0,
                 "metric text {label:?} spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
             );
         }
@@ -1026,9 +950,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         for node in metric_text {
             let rect = node.rect();
             assert!(
-                rect.left() >= control_rail.left()
-                    && rect.right() <= control_rail.right()
-                    && rect.width() > 0.0,
+                rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.width() > 0.0,
                 "metric text spills horizontally outside the control rail at {name}: {rect:?} outside {control_rail:?}"
             );
         }

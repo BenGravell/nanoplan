@@ -9,8 +9,7 @@ use std::cell::{Cell, RefCell};
 
 use crate::common::differencing::forward_difference;
 use crate::common::kinematics::{
-    LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, lateral_acceleration,
-    net_longitudinal_accel,
+    LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, lateral_acceleration, net_longitudinal_accel,
 };
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
@@ -75,10 +74,7 @@ fn neighborhood(i: usize, n: usize) -> std::ops::RangeInclusive<usize> {
 
 fn hermite(a: f64, b: f64, da: f64, db: f64, u: f64) -> f64 {
     let (u2, u3) = (u * u, u * u * u);
-    (2.0 * u3 - 3.0 * u2 + 1.0) * a
-        + (u3 - 2.0 * u2 + u) * da
-        + (-2.0 * u3 + 3.0 * u2) * b
-        + (u3 - u2) * db
+    (2.0 * u3 - 3.0 * u2 + 1.0) * a + (u3 - 2.0 * u2 + u) * da + (-2.0 * u3 + 3.0 * u2) * b + (u3 - u2) * db
 }
 
 fn path_curvature(path: &Path, s: f64) -> f64 {
@@ -120,11 +116,8 @@ fn edge_acceleration(start_speed: f64, target_speed: f64, dt: f64) -> f64 {
         })
     };
     let duration = TICKS_PER_EDGE as f64 * dt;
-    let estimate = commanded_accel_for_net(
-        forward_difference(start_speed, target_speed, duration),
-        start_speed,
-    )
-    .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+    let estimate = commanded_accel_for_net(forward_difference(start_speed, target_speed, duration), start_speed)
+        .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
     let (mut lo, mut hi) = if final_speed(estimate) < target_speed {
         (estimate, MAX_LON_ACCEL)
     } else {
@@ -217,15 +210,13 @@ fn segment(
             },
         );
         let curvature = if actual.speed > LOW_SPEED_LIMIT_MPS {
-            wrap_angle(target_yaw - actual.yaw)
-                / (actual.speed * STEERING_LOOKAHEAD_TICKS as f64 * dt)
+            wrap_angle(target_yaw - actual.yaw) / (actual.speed * STEERING_LOOKAHEAD_TICKS as f64 * dt)
         } else {
             0.0
         };
         if !acceleration.is_finite()
             || !curvature.is_finite()
-            || !(MIN_LON_ACCEL - CONTROL_FEASIBILITY_TOLERANCE
-                ..=MAX_LON_ACCEL + CONTROL_FEASIBILITY_TOLERANCE)
+            || !(MIN_LON_ACCEL - CONTROL_FEASIBILITY_TOLERANCE..=MAX_LON_ACCEL + CONTROL_FEASIBILITY_TOLERANCE)
                 .contains(&acceleration)
             || curvature.abs() > curvature_limit(actual.speed) + CONTROL_FEASIBILITY_TOLERANCE
         {
@@ -245,9 +236,8 @@ fn segment(
         let road_normal = [-body_lane_yaw.sin(), body_lane_yaw.cos()];
         let half_length = EGO_FOOTPRINT.length / 2.0;
         let curvature_margin = 0.5 * path_curvature(path, body_s).abs() * half_length.powi(2);
-        let lateral_margin = EGO_FOOTPRINT.support_radius(actual.yaw, road_normal)
-            + curvature_margin
-            + ROAD_CLEARANCE_M;
+        let lateral_margin =
+            EGO_FOOTPRINT.support_radius(actual.yaw, road_normal) + curvature_margin + ROAD_CLEARANCE_M;
         if body_d < right + lateral_margin || body_d > left - lateral_margin {
             return None;
         }
@@ -303,13 +293,7 @@ impl Planner for LatticePlanner {
         debug_assert!((ctx.road.dt - PLANNING_DT_S).abs() < 1e-9);
         let RoadFrame { path, s0, d0, .. } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let reach = reachable(ego.speed, ctx.road.dt);
-        let constraints = HardConstraints::new(
-            ctx.road.half_width,
-            ctx.actors,
-            &path,
-            ego.speed,
-            ctx.road.dt,
-        );
+        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, &path, ego.speed, ctx.road.dt);
         let max_evaluated_segments = ctx.compute_budget.scale(SEGMENTS_AT_100_MS, 100);
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);
@@ -362,18 +346,10 @@ impl Planner for LatticePlanner {
                 0,
                 |node| node != 0 && decode_node(node).0 == TIME_LAYERS - 1,
                 |node| {
-                    if node == 0 {
-                        0
-                    } else {
-                        decode_node(node).0 + 1
-                    }
+                    if node == 0 { 0 } else { decode_node(node).0 + 1 }
                 },
                 |node| {
-                    let depth = if node == 0 {
-                        0
-                    } else {
-                        decode_node(node).0 + 1
-                    };
+                    let depth = if node == 0 { 0 } else { decode_node(node).0 + 1 };
                     // A complete path has a fixed number of one-second edges,
                     // each costing at most its duration. Including that
                     // remaining budget in the queue priority prevents the
@@ -418,16 +394,12 @@ impl Planner for LatticePlanner {
                     for next_vi in v_indices {
                         let vb = level(next_vi, V_BREAKPOINTS, r.min_v, r.max_v);
                         let predicted_s = sa + 0.5 * (va + vb);
-                        let center_si =
-                            nearest_level(predicted_s - s0, S_BREAKPOINTS, r.min_s, r.max_s);
+                        let center_si = nearest_level(predicted_s - s0, S_BREAKPOINTS, r.min_s, r.max_s);
                         for next_si in std::iter::once(center_si) {
-                            let sb = (s0 + level(next_si, S_BREAKPOINTS, r.min_s, r.max_s))
-                                .min(path.length() - 1e-6);
+                            let sb = (s0 + level(next_si, S_BREAKPOINTS, r.min_s, r.max_s)).min(path.length() - 1e-6);
                             for &next_di in &d_indices {
                                 let db = lateral(sb, next_di, ctx);
-                                let Some((cost, segment)) =
-                                    edge(start, sa, da, va, sb, db, vb, next_layer)
-                                else {
+                                let Some((cost, segment)) = edge(start, sa, da, va, sb, db, vb, next_layer) else {
                                     continue;
                                 };
                                 let successor = node_id(next_layer, next_si, next_di, next_vi);
@@ -471,9 +443,7 @@ impl Planner for LatticePlanner {
             for node in chain {
                 let (_, _, _, _, sb, db, vb) = node_state(node);
                 let layer = controls.len() / TICKS_PER_EDGE;
-                let Some(segment) =
-                    segment(&path, ctx, start, sa, da, va, sb, db, vb, layer as f64)
-                else {
+                let Some(segment) = segment(&path, ctx, start, sa, da, va, sb, db, vb, layer as f64) else {
                     break;
                 };
                 start = segment.end;
@@ -516,19 +486,7 @@ mod tests {
             let (s0, d0) = path.project(ego.position());
             let r = reachable(ego.speed, road.dt)[0];
             assert!(
-                segment(
-                    &path,
-                    &ctx,
-                    ego,
-                    s0,
-                    d0,
-                    ego.speed,
-                    s0 + r.max_s,
-                    0.0,
-                    r.max_v,
-                    0.0,
-                )
-                .is_some(),
+                segment(&path, &ctx, ego, s0, d0, ego.speed, s0 + r.max_s, 0.0, r.max_v, 0.0,).is_some(),
                 "speed {speed}"
             );
         }
@@ -596,8 +554,7 @@ mod tests {
     #[test]
     fn uses_the_road_width_through_a_corner() {
         let radius = 25.0;
-        let mut centerline: Vec<[f64; 2]> =
-            (0..=25).map(|i| [-50.0 + 4.0 * i as f64, 0.0]).collect();
+        let mut centerline: Vec<[f64; 2]> = (0..=25).map(|i| [-50.0 + 4.0 * i as f64, 0.0]).collect();
         centerline.extend((1..=32).map(|i| {
             let a = std::f64::consts::FRAC_PI_2 * i as f64 / 32.0;
             [50.0 + radius * a.sin(), radius * (1.0 - a.cos())]
@@ -625,9 +582,7 @@ mod tests {
             trace.last().unwrap()
         );
         assert!(
-            trace
-                .iter()
-                .all(|state| !collides_with_road_barrier(*state, &road)),
+            trace.iter().all(|state| !collides_with_road_barrier(*state, &road)),
             "racing trajectory contacted the road boundary"
         );
     }
@@ -658,10 +613,7 @@ mod tests {
             assert_eq!(trajectory.last(), Some(point));
             assert!(
                 trajectory.first() == Some(&[0.0, 0.0])
-                    || data
-                        .points
-                        .iter()
-                        .any(|node| trajectory.first() == Some(node)),
+                    || data.points.iter().any(|node| trajectory.first() == Some(node)),
                 "edge start {:?} is not a lattice node",
                 trajectory.first()
             );

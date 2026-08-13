@@ -15,13 +15,7 @@ pub(super) fn visualization_rail(root: &mut egui::Ui, live: &Live, width: f32, c
         )
         .show(root, |ui| {
             hud::draw(ui, live, compact);
-            ui.interact(
-                ui.max_rect(),
-                ui.id().with("accessibility"),
-                egui::Sense::hover(),
-            )
-            .widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Visualization rail")
-            });
+            ui.interact(ui.max_rect(), ui.id().with("accessibility"), egui::Sense::hover())
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Visualization rail"));
         });
 }

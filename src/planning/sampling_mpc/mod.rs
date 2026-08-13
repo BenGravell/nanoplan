@@ -149,12 +149,7 @@ pub(crate) trait Optimizer: Default {
     /// low-discrepancy Gaussian noise (scaled by the optimizer's own
     /// sigma). `sample_base` is the [`sampling::qmc_normals`] index this
     /// iteration draws from, kept distinct across iterations by the caller.
-    fn sample_control_knots(
-        &mut self,
-        nominal: &[Knot],
-        sample_base: usize,
-        num_rollouts: usize,
-    ) -> Vec<Vec<Knot>>;
+    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>>;
 
     /// judo `update_nominal_knots`: fold the sampled knot-sets and their
     /// rewards (higher is better) into the next nominal. `&mut self` because
@@ -287,14 +282,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
 
     /// Cost of being at `x` at tick `t` having just applied `u` — the
     /// production composite metric with hard violations made finite.
-    fn state_cost(
-        path: &Path,
-        x: &State,
-        jerk: (f64, f64),
-        t: usize,
-        initial_speed: f64,
-        ctx: &Context,
-    ) -> f64 {
+    fn state_cost(path: &Path, x: &State, jerk: (f64, f64), t: usize, initial_speed: f64, ctx: &Context) -> f64 {
         let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
@@ -308,13 +296,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
             lat_jerk: jerk.1,
             t: t as f64 * ctx.road.dt,
         };
-        let constraints = HardConstraints::new(
-            ctx.road.half_width,
-            ctx.actors,
-            path,
-            initial_speed,
-            ctx.road.dt,
-        );
+        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, initial_speed, ctx.road.dt);
         // The metric objective with hard violations made finite by a depth-scaled
         // escape slope (`soft_point_cost`): a flat penalty plateau leaves
         // CEM's and MPPI's reward-weighted averages no gradient back onto the
@@ -360,9 +342,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         let cfg = self.opt.config();
         let num_nodes = cfg.num_nodes;
         // Offline calibration: the default 4 × 32 rollouts is about 100 ms.
-        let total_rollouts = ctx
-            .compute_budget
-            .scale(cfg.iterations * cfg.num_rollouts, 6);
+        let total_rollouts = ctx.compute_budget.scale(cfg.iterations * cfg.num_rollouts, 6);
         // Keep enough candidates for CEM's six-member elite set; at small
         // budgets fewer refinement rounds degrade more gracefully.
         let iterations = cfg.iterations.min(total_rollouts / 6).max(1);
@@ -387,9 +367,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
         ctx.time("optimize", || {
             for it in 0..iterations {
                 let sample_base = 1 + it * num_rollouts;
-                let sampled = self
-                    .opt
-                    .sample_control_knots(&nominal, sample_base, num_rollouts);
+                let sampled = self.opt.sample_control_knots(&nominal, sample_base, num_rollouts);
                 let mut rewards = Vec::with_capacity(sampled.len());
                 let mut states = Vec::with_capacity(sampled.len());
                 for knots in &sampled {

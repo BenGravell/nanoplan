@@ -23,9 +23,7 @@ pub fn run() {
 #[cfg(target_family = "wasm")]
 pub fn run() {
     wasm_bindgen_futures::spawn_local(async {
-        track::loader::load()
-            .await
-            .expect("failed to load track catalog");
+        track::loader::load().await.expect("failed to load track catalog");
         viewer::run();
     });
 }

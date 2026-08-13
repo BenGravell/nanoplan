@@ -6,8 +6,7 @@ use crate::common::kinematics::{TrajectoryKinematics, net_longitudinal_accel};
 use crate::common::rng::Rng;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::{
-    ComputeBudget, Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner,
-    PlannerKind,
+    ComputeBudget, Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
 };
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Control, DynamicBody, Simulator, State, collide_dynamic_bodies};
@@ -68,21 +67,8 @@ pub(crate) struct EgoStart {
 }
 
 impl LiveWorld {
-    pub(crate) fn with_track(
-        track_index: usize,
-        seed: u64,
-        planner: PlannerKind,
-        max_actors: usize,
-        dt: f64,
-    ) -> Self {
-        Self::with_track_at(
-            track_index,
-            seed,
-            planner,
-            max_actors,
-            dt,
-            EgoStart::default(),
-        )
+    pub(crate) fn with_track(track_index: usize, seed: u64, planner: PlannerKind, max_actors: usize, dt: f64) -> Self {
+        Self::with_track_at(track_index, seed, planner, max_actors, dt, EgoStart::default())
     }
 
     pub(crate) fn with_track_at(
@@ -101,20 +87,10 @@ impl LiveWorld {
             yaw: centerline_yaw + start.yaw_offset,
             speed: start.speed,
         };
-        let road = road_window(
-            &track,
-            start.progress,
-            ego.speed,
-            dt,
-            planner == PlannerKind::Lattice,
-        );
+        let road = road_window(&track, start.progress, ego.speed, dt, planner == PlannerKind::Lattice);
         let collision_road = full_circuit_road(&track, dt);
         let actor_count = max_actors.min(15);
-        let behind = if actor_count > 1 {
-            (actor_count / 3).max(1)
-        } else {
-            0
-        };
+        let behind = if actor_count > 1 { (actor_count / 3).max(1) } else { 0 };
         let mut rng = Rng(seed.max(1));
         let actors = (0..actor_count)
             .map(|i| {
@@ -222,8 +198,7 @@ impl LiveWorld {
                 sloppiness: rng.uniform(),
             };
             let mut actor_rng = Rng(rng.0.max(1));
-            let lateral =
-                lateral_target(personality, self.track.half_width(x), actor_rng.uniform());
+            let lateral = lateral_target(personality, self.track.half_width(x), actor_rng.uniform());
             let (p, yaw) = self.track.pose(x);
             self.actors.push(SmartActor {
                 id: next_id,
@@ -257,15 +232,11 @@ impl LiveWorld {
 
     /// Ego's race position and the total number of racers.
     pub(crate) fn grid_position(&self) -> (usize, usize) {
-        let ego_progress =
-            racer_progress(&self.track, self.ego(), EGO_FOOTPRINT, self.track_progress);
+        let ego_progress = racer_progress(&self.track, self.ego(), EGO_FOOTPRINT, self.track_progress);
         let ahead = self
             .actors
             .iter()
-            .filter(|actor| {
-                racer_progress(&self.track, actor.state, CAR_FOOTPRINT, actor.track_x)
-                    > ego_progress
-            })
+            .filter(|actor| racer_progress(&self.track, actor.state, CAR_FOOTPRINT, actor.track_x) > ego_progress)
             .count();
         (ahead + 1, self.actors.len() + 1)
     }
@@ -303,16 +274,15 @@ impl LiveWorld {
             self.step_traffic();
             work(latency, actor_count);
         });
-        let ego_reach = self.ego().speed.max(0.0) * PLANNING_HORIZON_S
-            + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2);
+        let ego_reach =
+            self.ego().speed.max(0.0) * PLANNING_HORIZON_S + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2);
         let actor_states: Vec<State> = timed(latency, "simulation.actor_culling", || {
             let states = self
                 .actors
                 .iter()
                 .filter(|a| {
                     a.track_x <= self.track_progress + ego_reach + ACTOR_MARGIN_M
-                        && a.track_x + a.state.speed * PLANNING_HORIZON_S
-                            >= self.track_progress - ACTOR_MARGIN_M
+                        && a.track_x + a.state.speed * PLANNING_HORIZON_S >= self.track_progress - ACTOR_MARGIN_M
                 })
                 .map(|a| a.state)
                 .collect();
@@ -350,17 +320,14 @@ impl LiveWorld {
         let plan_controls: Vec<_> = controls.into_iter().take(plan.len()).collect();
         let previous_ego = self.ego();
         timed(latency, "simulation.ego", || {
-            self.simulator
-                .step(plan_controls.first().copied().unwrap_or_default());
+            self.simulator.step(plan_controls.first().copied().unwrap_or_default());
             work(latency, 1);
         });
         timed(latency, "simulation.collisions", || {
             self.resolve_collisions(previous_ego, &previous_actors);
             work(latency, actor_count + 1);
         });
-        let states: Vec<_> = std::iter::once(self.ego())
-            .chain(plan.into_iter().skip(1))
-            .collect();
+        let states: Vec<_> = std::iter::once(self.ego()).chain(plan.into_iter().skip(1)).collect();
         let controls = if plan_controls.is_empty() {
             vec![self.actuation()]
         } else {
@@ -400,8 +367,7 @@ impl LiveWorld {
                 ((lead_speed * lead_speed - forward_speed * forward_speed) / (2.0 * gap.max(1.0)))
                     .clamp(crate::vehicle::MIN_LON_ACCEL, MAX_LON_ACCEL)
             });
-            forward_speed = (forward_speed + accel * dt)
-                .clamp(-*MAX_TERMINAL_SPEED_MPS, *MAX_TERMINAL_SPEED_MPS);
+            forward_speed = (forward_speed + accel * dt).clamp(-*MAX_TERMINAL_SPEED_MPS, *MAX_TERMINAL_SPEED_MPS);
             actor.track_x += forward_speed * dt;
             if actor.track_x >= actor.next_wander_x {
                 actor.lateral_target = lateral_target(
@@ -412,8 +378,8 @@ impl LiveWorld {
                 actor.next_wander_x = actor.track_x + 15.0 + 25.0 * actor.rng.uniform();
             }
             let desired_lateral_speed = (actor.lateral_target - actor.lateral).clamp(-0.35, 0.35);
-            lateral_speed += (desired_lateral_speed - lateral_speed)
-                .clamp(-MAX_ABS_LAT_ACCEL * dt, MAX_ABS_LAT_ACCEL * dt);
+            lateral_speed +=
+                (desired_lateral_speed - lateral_speed).clamp(-MAX_ABS_LAT_ACCEL * dt, MAX_ABS_LAT_ACCEL * dt);
             actor.lateral += lateral_speed * dt;
             let (p, lane_yaw) = self.track.pose(actor.track_x);
             let velocity = [
@@ -437,10 +403,7 @@ impl LiveWorld {
 
     fn resolve_collisions(&mut self, previous_ego: State, previous_actors: &[(usize, State)]) {
         let mut previous = Vec::with_capacity(self.actors.len() + 1);
-        previous.push(DynamicBody::new(
-            previous_ego,
-            crate::geometry::EGO_FOOTPRINT,
-        ));
+        previous.push(DynamicBody::new(previous_ego, crate::geometry::EGO_FOOTPRINT));
         previous.extend(self.actors.iter().map(|actor| {
             let state = previous_actors
                 .iter()
@@ -450,10 +413,7 @@ impl LiveWorld {
         }));
 
         let mut bodies = Vec::with_capacity(self.actors.len() + 1);
-        bodies.push(DynamicBody::new(
-            self.simulator.state,
-            crate::geometry::EGO_FOOTPRINT,
-        ));
+        bodies.push(DynamicBody::new(self.simulator.state, crate::geometry::EGO_FOOTPRINT));
         bodies.extend(
             self.actors
                 .iter()
@@ -606,13 +566,7 @@ mod tests {
         };
         world.track_progress = approach_progress;
         world.road_anchor_x = approach_progress;
-        world.road = road_window(
-            &world.track,
-            approach_progress,
-            world.ego().speed,
-            world.dt(),
-            true,
-        );
+        world.road = road_window(&world.track, approach_progress, world.ego().speed, world.dt(), true);
         world.tick_with_latency(None);
 
         assert!(
@@ -716,12 +670,7 @@ mod tests {
         world.set_actor_count(1, 4);
 
         assert_eq!(world.grid_position(), (ego_position, 5));
-        assert!(
-            world
-                .actors
-                .iter()
-                .all(|actor| actor.id != least_progress_id)
-        );
+        assert!(world.actors.iter().all(|actor| actor.id != least_progress_id));
         let retained_ids: Vec<_> = world.actors.iter().map(|actor| actor.id).collect();
 
         world.set_actor_count(1, 7);
@@ -749,11 +698,8 @@ mod tests {
             world.tick_with_latency(None);
 
             for actor in &world.actors {
-                let (_, before, before_track_x, before_lateral) = previous
-                    .iter()
-                    .find(|(id, _, _, _)| *id == actor.id)
-                    .copied()
-                    .unwrap();
+                let (_, before, before_track_x, before_lateral) =
+                    previous.iter().find(|(id, _, _, _)| *id == actor.id).copied().unwrap();
                 let displacement = before.position().distance(actor.state.position());
                 assert!(
                     displacement < 20.0,
@@ -815,18 +761,8 @@ mod tests {
     #[test]
     fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
         let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 12, 0.1);
-        assert!(
-            world
-                .actors
-                .iter()
-                .any(|a| a.track_x < world.track_progress)
-        );
-        assert!(
-            world
-                .actors
-                .iter()
-                .any(|a| a.track_x > world.track_progress)
-        );
+        assert!(world.actors.iter().any(|a| a.track_x < world.track_progress));
+        assert!(world.actors.iter().any(|a| a.track_x > world.track_progress));
 
         let timid = Personality {
             aggressiveness: 0.0,
@@ -873,9 +809,7 @@ mod tests {
 
         assert!(world.actors[0].track_x < 0.0);
         let (_, next_lane_yaw) = world.track.pose(world.actors[0].track_x);
-        assert!(
-            world.actors[0].state.speed * (world.actors[0].state.yaw - next_lane_yaw).cos() < 0.0
-        );
+        assert!(world.actors[0].state.speed * (world.actors[0].state.yaw - next_lane_yaw).cos() < 0.0);
     }
 
     #[test]
@@ -926,9 +860,7 @@ mod tests {
 
         let actor = world.actors[0].state;
         assert!(actor.yaw < 0.0, "actor did not rebound: {actor:?}");
-        assert!(
-            actor.y + CAR_FOOTPRINT.support(actor.yaw, [0.0, 1.0]) <= world.road.half_width + 1e-9
-        );
+        assert!(actor.y + CAR_FOOTPRINT.support(actor.yaw, [0.0, 1.0]) <= world.road.half_width + 1e-9);
     }
 
     #[test]

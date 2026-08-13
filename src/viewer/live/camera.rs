@@ -68,24 +68,19 @@ pub(crate) fn camera_input(
                 MouseScrollUnit::Line => scroll.delta.y,
                 MouseScrollUnit::Pixel => scroll.delta.y / 50.0,
             };
-            live.camera.zoom =
-                (live.camera.zoom * 1.1f32.powf(scroll_steps)).clamp(MIN_ZOOM, MAX_ZOOM);
+            live.camera.zoom = (live.camera.zoom * 1.1f32.powf(scroll_steps)).clamp(MIN_ZOOM, MAX_ZOOM);
         }
 
         let touches: Vec<_> = touches.iter().take(2).collect();
         if let [first, second] = touches.as_slice() {
-            let previous = first
-                .previous_position()
-                .distance(second.previous_position());
+            let previous = first.previous_position().distance(second.previous_position());
             let current = first.position().distance(second.position());
-            live.camera.zoom =
-                (live.camera.zoom * pinch_scale(previous, current)).clamp(MIN_ZOOM, MAX_ZOOM);
+            live.camera.zoom = (live.camera.zoom * pinch_scale(previous, current)).clamp(MIN_ZOOM, MAX_ZOOM);
         }
 
         if mouse.pressed(MouseButton::Middle) && motion.delta != Vec2::ZERO {
-            let drag = Rot2::radians(live.camera.rotation)
-                * Vec2::new(motion.delta.x, -motion.delta.y)
-                / live.camera.zoom;
+            let drag =
+                Rot2::radians(live.camera.rotation) * Vec2::new(motion.delta.x, -motion.delta.y) / live.camera.zoom;
             live.camera.center -= drag;
             live.camera.follow = false;
         }
@@ -123,8 +118,7 @@ pub(crate) fn camera_input(
     if pan != Vec2::ZERO {
         let camera = live.camera;
         live.camera.center +=
-            Rot2::radians(camera.rotation) * pan.normalize() * 500.0 * time.delta_secs()
-                / camera.zoom;
+            Rot2::radians(camera.rotation) * pan.normalize() * 500.0 * time.delta_secs() / camera.zoom;
         live.camera.follow = false;
     }
     let rotation_input = keys.pressed(KeyCode::KeyE) as i8 - keys.pressed(KeyCode::KeyQ) as i8;
@@ -149,19 +143,13 @@ pub(super) fn pinch_scale(previous_distance: f32, current_distance: f32) -> f32 
 }
 
 pub(super) fn smooth_angle(current: f32, target: f32, blend: f32) -> f32 {
-    let delta = (target - current + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
-        - std::f32::consts::PI;
+    let delta = (target - current + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
     current + delta * blend
 }
 
-pub(super) fn followed_camera_center(
-    camera: CameraState,
-    ego: State,
-    viewport_height: f32,
-) -> Vec2 {
+pub(super) fn followed_camera_center(camera: CameraState, ego: State, viewport_height: f32) -> Vec2 {
     let up = Rot2::radians(camera.rotation) * Vec2::Y;
-    let rear_extent =
-        CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
+    let rear_extent = CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
     let ego_y = -(viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX) / camera.zoom + rear_extent;
     camera.center + up * ((px(&ego) - camera.center).dot(up) - ego_y)
 }

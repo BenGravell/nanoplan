@@ -45,12 +45,7 @@ impl Optimizer for Cem {
         self.cfg
     }
 
-    fn sample_control_knots(
-        &mut self,
-        nominal: &[Knot],
-        sample_base: usize,
-        num_rollouts: usize,
-    ) -> Vec<Vec<Knot>> {
+    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
         // guard against a warm-started nominal whose node count no longer
         // matches this optimizer's adapted-sigma vector
         if self.sigma.len() != nominal.len() {
@@ -77,19 +72,14 @@ impl Optimizer for Cem {
         let mut nominal = vec![[0.0; NU]; num_nodes];
         for n in 0..num_nodes {
             for c in 0..NU {
-                let mean: f64 =
-                    elites.iter().map(|&e| sampled[e][n][c]).sum::<f64>() / elites.len() as f64;
-                let var: f64 = elites
-                    .iter()
-                    .map(|&e| (sampled[e][n][c] - mean).powi(2))
-                    .sum::<f64>()
-                    / elites.len() as f64;
+                let mean: f64 = elites.iter().map(|&e| sampled[e][n][c]).sum::<f64>() / elites.len() as f64;
+                let var: f64 =
+                    elites.iter().map(|&e| (sampled[e][n][c] - mean).powi(2)).sum::<f64>() / elites.len() as f64;
                 nominal[n][c] = mean;
                 // the elite std is in physical control units; store it back
                 // in the dimensionless units SIGMA_SCALE re-inflates at
                 // sampling time, then clip to the configured bounds
-                self.sigma[n][c] =
-                    (var.sqrt() / SIGMA_SCALE[c]).clamp(self.sigma_min, self.sigma_max);
+                self.sigma[n][c] = (var.sqrt() / SIGMA_SCALE[c]).clamp(self.sigma_min, self.sigma_max);
             }
         }
         nominal

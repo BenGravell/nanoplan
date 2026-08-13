@@ -25,10 +25,7 @@ mod tests {
             yaw,
             speed: 3.0,
         };
-        let road = test_road(&[
-            [1.0, 2.0],
-            [1.0 + 100.0 * yaw.cos(), 2.0 + 100.0 * yaw.sin()],
-        ]);
+        let road = test_road(&[[1.0, 2.0], [1.0 + 100.0 * yaw.cos(), 2.0 + 100.0 * yaw.sin()]]);
         let trace = test_run_on(&mut StraightPlanner, &road, ego, &[], 100);
         let s = *trace.last().unwrap();
         assert_eq!(s.yaw, yaw);

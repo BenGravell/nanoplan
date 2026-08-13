@@ -44,11 +44,7 @@ pub(super) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportCo
     let compact = root.max_rect().width() < COMPACT_BREAKPOINT;
     let mobile_portrait = is_mobile && root.max_rect().height() > root.max_rect().width();
     let (title, reason) = prompt_copy(constraints, mobile_portrait);
-    let margin = if compact {
-        COMPACT_CARD_MARGIN
-    } else {
-        CARD_MARGIN
-    };
+    let margin = if compact { COMPACT_CARD_MARGIN } else { CARD_MARGIN };
 
     egui::Area::new("portrait_prompt".into())
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -59,15 +55,10 @@ pub(super) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportCo
                 .corner_radius(CARD_CORNER_RADIUS)
                 .inner_margin(egui::Margin::same(margin))
                 .show(ui, |ui| {
-                    ui.set_width(
-                        (root.max_rect().width() - 2.0 * f32::from(margin)).min(CARD_MAX_WIDTH),
-                    );
+                    ui.set_width((root.max_rect().width() - 2.0 * f32::from(margin)).min(CARD_MAX_WIDTH));
                     ui.vertical_centered(|ui| {
                         let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(
-                                ui.available_width(),
-                                ui.available_width().min(ARROW_MAX_SIZE),
-                            ),
+                            egui::vec2(ui.available_width(), ui.available_width().min(ARROW_MAX_SIZE)),
                             egui::Sense::hover(),
                         );
                         if mobile_portrait {
@@ -99,10 +90,7 @@ pub(super) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportCo
         });
 }
 
-pub(super) fn prompt_copy(
-    constraints: ViewportConstraints,
-    mobile_portrait: bool,
-) -> (&'static str, String) {
+pub(super) fn prompt_copy(constraints: ViewportConstraints, mobile_portrait: bool) -> (&'static str, String) {
     if mobile_portrait {
         (
             "TURN YOUR DEVICE SIDEWAYS",
@@ -190,8 +178,7 @@ fn width_arrow(ui: &egui::Ui, rect: egui::Rect) {
     let elapsed = time % LOOP_DURATION_S;
     let progress = (elapsed / EXPANSION_DURATION_S).min(1.0);
     let smooth_progress = smoothstep(f64::from(progress)) as f32;
-    let half_width =
-        ARROW_MIN_HALF_WIDTH + (ARROW_MAX_HALF_WIDTH - ARROW_MIN_HALF_WIDTH) * smooth_progress;
+    let half_width = ARROW_MIN_HALF_WIDTH + (ARROW_MAX_HALF_WIDTH - ARROW_MIN_HALF_WIDTH) * smooth_progress;
     let fade_start = EXPANSION_DURATION_S + EXPANSION_END_PAUSE_S;
     let alpha = arrow_alpha(elapsed, fade_start);
     let color = egui::Color32::from_rgba_unmultiplied(ORANGE.r(), ORANGE.g(), ORANGE.b(), alpha);
@@ -230,8 +217,7 @@ fn arrow_alpha(elapsed: f32, fade_start: f32) -> u8 {
     if elapsed < fade_start {
         u8::MAX
     } else {
-        (f32::from(u8::MAX) * (1.0 - (elapsed - fade_start) / FADE_DURATION_S).clamp(0.0, 1.0))
-            as u8
+        (f32::from(u8::MAX) * (1.0 - (elapsed - fade_start) / FADE_DURATION_S).clamp(0.0, 1.0)) as u8
     }
 }
 
@@ -270,15 +256,7 @@ fn add_outline_antialiasing(
     }
     for index in 0..outline.len() as u32 {
         let next = (index + 1) % outline.len() as u32;
-        mesh.add_triangle(
-            fringe + 2 * index,
-            fringe + 2 * index + 1,
-            fringe + 2 * next,
-        );
-        mesh.add_triangle(
-            fringe + 2 * next,
-            fringe + 2 * index + 1,
-            fringe + 2 * next + 1,
-        );
+        mesh.add_triangle(fringe + 2 * index, fringe + 2 * index + 1, fringe + 2 * next);
+        mesh.add_triangle(fringe + 2 * next, fringe + 2 * index + 1, fringe + 2 * next + 1);
     }
 }

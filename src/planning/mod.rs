@@ -24,9 +24,7 @@ pub(crate) mod treetop;
 pub(crate) use basic::BasicPlanner;
 pub(crate) use bezier_toppra::BezierToppraPlanner;
 pub(crate) use catalog::PlannerKind;
-pub(crate) use compute_budget::{
-    COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT,
-};
+pub(crate) use compute_budget::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT};
 pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS, warm_start_matches};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats};
@@ -111,12 +109,7 @@ pub(crate) fn test_ctx<'a>(road: &'a Road, actors: &'a [State]) -> Context<'a> {
 }
 
 #[cfg(test)]
-pub(crate) fn test_run(
-    planner: &mut dyn Planner,
-    ego: State,
-    actors: &[State],
-    ticks: usize,
-) -> Vec<State> {
+pub(crate) fn test_run(planner: &mut dyn Planner, ego: State, actors: &[State], ticks: usize) -> Vec<State> {
     let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
     test_run_on(planner, &road, ego, actors, ticks)
 }

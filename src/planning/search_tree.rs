@@ -79,11 +79,7 @@ pub(crate) fn signed_max(a: f64, b: f64) -> f64 {
 
 /// Walk parent pointers from a leaf back to `root`, returning root-exclusive
 /// node ids in root-to-leaf order.
-pub(crate) fn parent_chain(
-    mut node: usize,
-    root: usize,
-    mut parent: impl FnMut(usize) -> Option<usize>,
-) -> Vec<usize> {
+pub(crate) fn parent_chain(mut node: usize, root: usize, mut parent: impl FnMut(usize) -> Option<usize>) -> Vec<usize> {
     let mut chain = Vec::new();
     while node != root {
         chain.push(node);
@@ -116,11 +112,7 @@ pub(crate) fn best_first(
         node: start,
     });
 
-    while let Some(QueueEntry {
-        cost: priority,
-        node,
-    }) = heap.pop()
-    {
+    while let Some(QueueEntry { cost: priority, node }) = heap.pop() {
         if priority > dist[node] + heuristic(node) {
             continue;
         }
@@ -147,18 +139,11 @@ pub(crate) fn best_first(
 
     let goal = (0..n_nodes)
         .filter(|&node| node != start && dist[node].is_finite())
-        .max_by(|&a, &b| {
-            depth(a)
-                .cmp(&depth(b))
-                .then_with(|| dist[b].total_cmp(&dist[a]))
-        })?;
+        .max_by(|&a, &b| depth(a).cmp(&depth(b)).then_with(|| dist[b].total_cmp(&dist[a])))?;
     Some(BestFirstResult { goal, parent })
 }
 
-pub(crate) fn record_diagnostics(
-    diag: &Diagnostics,
-    nodes: impl IntoIterator<Item = ([f64; 2], Vec<[f64; 2]>)>,
-) {
+pub(crate) fn record_diagnostics(diag: &Diagnostics, nodes: impl IntoIterator<Item = ([f64; 2], Vec<[f64; 2]>)>) {
     for (point, trajectory) in nodes {
         diag.record_point(point);
         diag.record_trajectory(trajectory);
@@ -166,9 +151,7 @@ pub(crate) fn record_diagnostics(
 }
 
 pub(crate) fn repeat_last_controls(controls: &[Control], horizon: usize) -> Vec<Control> {
-    (0..horizon)
-        .map(|t| controls[t.min(controls.len() - 1)])
-        .collect()
+    (0..horizon).map(|t| controls[t.min(controls.len() - 1)]).collect()
 }
 
 pub(crate) fn brake_controls(ego: State, ctx: &Context, accel: f64) -> Vec<Control> {
@@ -202,11 +185,7 @@ pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Co
 
 /// Roll `actions` out open-loop from `x0` through the kinematic model,
 /// letting [`world_step`] enforce the state and action limits.
-pub(crate) fn rollout_constrained(
-    x0: State,
-    actions: &[Control],
-    dt: f64,
-) -> (Vec<State>, Vec<Control>) {
+pub(crate) fn rollout_constrained(x0: State, actions: &[Control], dt: f64) -> (Vec<State>, Vec<Control>) {
     let mut xs = Vec::with_capacity(actions.len() + 1);
     let mut us = Vec::with_capacity(actions.len());
     xs.push(x0);
@@ -220,12 +199,7 @@ pub(crate) fn rollout_constrained(
 }
 
 /// Road-centerline PD base policy for local trajectory optimizers.
-pub(crate) fn centerline_follow_controls(
-    ego: State,
-    path: &Path,
-    ctx: &Context,
-    horizon: usize,
-) -> Vec<Control> {
+pub(crate) fn centerline_follow_controls(ego: State, path: &Path, ctx: &Context, horizon: usize) -> Vec<Control> {
     let mut x = ego;
     let mut controls = Vec::with_capacity(horizon);
     for _ in 0..horizon {
@@ -236,17 +210,12 @@ pub(crate) fn centerline_follow_controls(
             .iter()
             .filter_map(|actor| {
                 let (actor_s, d) = path.project(actor.position());
-                (d.abs() < 2.0 && actor_s > s).then(|| {
-                    (actor.speed * actor.speed - x.speed * x.speed)
-                        / (2.0 * (actor_s - s - 5.0).max(1.0))
-                })
+                (d.abs() < 2.0 && actor_s > s)
+                    .then(|| (actor.speed * actor.speed - x.speed * x.speed) / (2.0 * (actor_s - s - 5.0).max(1.0)))
             })
             .min_by(f64::total_cmp)
             .unwrap_or(0.0);
-        let accel = base
-            .acceleration
-            .min(traffic_brake)
-            .clamp(MIN_LON_ACCEL, 0.0);
+        let accel = base.acceleration.min(traffic_brake).clamp(MIN_LON_ACCEL, 0.0);
         let u = Control {
             acceleration: accel,
             curvature: base.curvature,
@@ -268,8 +237,8 @@ const PATH_TRACK_CURVATURE_GAIN: f64 = 1.0;
 pub(crate) fn path_to_controls(ego: State, path: &Path, speed: f64, ctx: &Context) -> Vec<Control> {
     let total_len = path.length();
     let dt = ctx.road.dt;
-    let lookahead = (speed * dt * PATH_TRACK_LOOKAHEAD_TICKS)
-        .clamp(PATH_TRACK_LOOKAHEAD_MIN_M, PATH_TRACK_LOOKAHEAD_MAX_M);
+    let lookahead =
+        (speed * dt * PATH_TRACK_LOOKAHEAD_TICKS).clamp(PATH_TRACK_LOOKAHEAD_MIN_M, PATH_TRACK_LOOKAHEAD_MAX_M);
     let mut x = ego;
     (0..ctx.horizon)
         .map(|i| {

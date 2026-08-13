@@ -52,16 +52,12 @@ struct DrivableArea {
 
 impl HardConstraint for DrivableArea {
     fn is_violated(&self, sample: &Sample) -> bool {
-        let (right, left) = sample
-            .road_bounds
-            .unwrap_or((-self.half_width, self.half_width));
+        let (right, left) = sample.road_bounds.unwrap_or((-self.half_width, self.half_width));
         sample.lateral < right || sample.lateral > left
     }
 
     fn violation_depth(&self, sample: &Sample) -> f64 {
-        let (right, left) = sample
-            .road_bounds
-            .unwrap_or((-self.half_width, self.half_width));
+        let (right, left) = sample.road_bounds.unwrap_or((-self.half_width, self.half_width));
         (right - sample.lateral).max(0.0) + (sample.lateral - left).max(0.0)
     }
 }
@@ -114,13 +110,7 @@ pub(crate) struct HardConstraints<'a> {
 }
 
 impl<'a> HardConstraints<'a> {
-    pub(crate) fn new(
-        road_half_width: f64,
-        actors: &'a [State],
-        track: &'a Path,
-        initial_speed: f64,
-        dt: f64,
-    ) -> Self {
+    pub(crate) fn new(road_half_width: f64, actors: &'a [State], track: &'a Path, initial_speed: f64, dt: f64) -> Self {
         HardConstraints {
             drivable: DrivableArea {
                 half_width: road_half_width,
@@ -141,9 +131,7 @@ impl<'a> HardConstraints<'a> {
         if self.drivable.is_violated(sample) || self.collision.is_violated_at(sample, actor_time) {
             return f64::INFINITY;
         }
-        let forward_speed = sample
-            .station_speed
-            .unwrap_or(sample.speed * sample.heading_err.cos());
+        let forward_speed = sample.station_speed.unwrap_or(sample.speed * sample.heading_err.cos());
         let tick = (sample.t / self.dt).round().max(0.0) as usize;
         let scores = [
             1.0,
@@ -159,8 +147,7 @@ impl<'a> HardConstraints<'a> {
     }
 
     fn violation_penalty_with_actor_time(&self, sample: &Sample, actor_time: f64) -> f64 {
-        let depth = self.drivable.violation_depth(sample)
-            + self.collision.violation_depth_at(sample, actor_time);
+        let depth = self.drivable.violation_depth(sample) + self.collision.violation_depth_at(sample, actor_time);
         HARD_VIOLATION_PENALTY * (1.0 + depth)
     }
 
@@ -211,12 +198,7 @@ mod tests {
         };
         let scores = [
             1.0,
-            progress::speed_score(
-                sample.speed,
-                INITIAL_SPEED,
-                (sample.t / DT).round() as usize,
-                DT,
-            ),
+            progress::speed_score(sample.speed, INITIAL_SPEED, (sample.t / DT).round() as usize, DT),
             comfort::jerk_score(sample.lon_jerk, sample.lat_jerk),
         ];
         assert_eq!(

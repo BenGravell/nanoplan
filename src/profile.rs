@@ -101,12 +101,7 @@ pub fn run(planner: &str, track: &str, laps: f64) -> Result<LapProfile, String> 
     run_from(planner, track, laps, InitialState::default())
 }
 
-pub fn run_from(
-    planner: &str,
-    track: &str,
-    laps: f64,
-    initial: InitialState,
-) -> Result<LapProfile, String> {
+pub fn run_from(planner: &str, track: &str, laps: f64, initial: InitialState) -> Result<LapProfile, String> {
     if !laps.is_finite() || laps <= 0.0 {
         return Err(format!("laps must be finite and positive, got {laps}"));
     }
@@ -123,19 +118,12 @@ pub fn run_from(
         ));
     }
     if !initial.yaw_offset.is_finite() {
-        return Err(format!(
-            "yaw offset must be finite, got {}",
-            initial.yaw_offset
-        ));
+        return Err(format!("yaw offset must be finite, got {}", initial.yaw_offset));
     }
     if !initial.speed.is_finite() || initial.speed < 0.0 {
-        return Err(format!(
-            "speed must be finite and non-negative, got {}",
-            initial.speed
-        ));
+        return Err(format!("speed must be finite and non-negative, got {}", initial.speed));
     }
-    let planner_kind =
-        planner_kind(planner).ok_or_else(|| format!("unknown planner {planner:?}"))?;
+    let planner_kind = planner_kind(planner).ok_or_else(|| format!("unknown planner {planner:?}"))?;
     let (track_index, track_name) = track_index(track)?;
     let track = crate::track::Track::from_catalog(track_index, 1);
     let lap_length = track

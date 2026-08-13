@@ -3,8 +3,8 @@ use crate::geometry::curvature::curvature_between;
 use crate::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::simulation::State;
 use crate::vehicle::{
-    FRONT_TIRE_DIAMETER_M, FRONT_TIRE_WIDTH_M, FRONT_TRACK_M, MAX_ABS_CURVATURE,
-    REAR_TIRE_DIAMETER_M, REAR_TIRE_WIDTH_M, REAR_TRACK_M, WHEELBASE_M,
+    FRONT_TIRE_DIAMETER_M, FRONT_TIRE_WIDTH_M, FRONT_TRACK_M, MAX_ABS_CURVATURE, REAR_TIRE_DIAMETER_M,
+    REAR_TIRE_WIDTH_M, REAR_TRACK_M, WHEELBASE_M,
 };
 use crate::world::SmartActor;
 use bevy::prelude::*;
@@ -40,8 +40,7 @@ pub(in crate::viewer::live) fn draw_actor(
     };
     let curvature = if distance <= MAX_ACTOR_INTERPOLATION_M {
         previous.map_or(0.0, |previous| {
-            curvature_between(previous.pose(), actor.state.pose())
-                .clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
+            curvature_between(previous.pose(), actor.state.pose()).clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
         })
     } else {
         0.0
@@ -49,22 +48,12 @@ pub(in crate::viewer::live) fn draw_actor(
     draw_vehicle(gizmos, &state, curvature, CAR_FOOTPRINT, ACTOR_VEHICLE);
 }
 
-fn draw_vehicle(
-    gizmos: &mut Gizmos,
-    state: &State,
-    curvature: f64,
-    footprint: Footprint,
-    color: Color,
-) {
+fn draw_vehicle(gizmos: &mut Gizmos, state: &State, curvature: f64, footprint: Footprint, color: Color) {
     let size = Vec2::new(footprint.length as f32, footprint.width as f32);
     let center = footprint.center(state.pose());
     let iso = Isometry2d::new(px(&center.into()), Rot2::radians(state.yaw as f32));
     gizmos.rect_2d(iso, size * PX_PER_M, color);
-    gizmos.line_2d(
-        iso * Vec2::ZERO,
-        iso * Vec2::new(size.x * PX_PER_M / 2.0, 0.0),
-        color,
-    );
+    gizmos.line_2d(iso * Vec2::ZERO, iso * Vec2::new(size.x * PX_PER_M / 2.0, 0.0), color);
     let steering = (curvature * footprint.length).atan() as f32;
     for (x, track, diameter, width, angle) in [
         (

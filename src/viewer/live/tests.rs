@@ -7,8 +7,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use super::camera::{
-    CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
-    cursor_over_driving_canvas, followed_camera_center, pinch_scale, smooth_angle,
+    CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, cursor_over_driving_canvas,
+    followed_camera_center, pinch_scale, smooth_angle,
 };
 use super::screen::PX_PER_M;
 use super::*;
@@ -16,9 +16,7 @@ use super::*;
 #[test]
 fn viewer_camera_prefers_msaa_and_can_disable_it() {
     let mut world = World::new();
-    let camera = world
-        .spawn((Camera::default(), crate::viewer::VIEW_MSAA))
-        .id();
+    let camera = world.spawn((Camera::default(), crate::viewer::VIEW_MSAA)).id();
 
     assert_eq!(crate::viewer::VIEW_MSAA.samples(), 4);
     assert!(crate::viewer::disable_msaa(&mut world));
@@ -51,10 +49,7 @@ fn resize_oom_rolls_back_without_recreating_the_gpu_device() {
     );
 
     assert!(matches!(policy, RenderErrorPolicy::Ignore));
-    assert_eq!(
-        world.resource::<ResizeDebounce>().displayed,
-        UVec2::new(1280, 720)
-    );
+    assert_eq!(world.resource::<ResizeDebounce>().displayed, UVec2::new(1280, 720));
     assert_eq!(*world.get::<Msaa>(camera).unwrap(), Msaa::Off);
 }
 
@@ -103,10 +98,7 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
 
     assert_eq!(camera.center, screen::px(&ego));
     assert_eq!(camera.zoom, DEFAULT_ZOOM);
-    assert_eq!(
-        camera.rotation,
-        ego.yaw as f32 - std::f32::consts::FRAC_PI_2
-    );
+    assert_eq!(camera.rotation, ego.yaw as f32 - std::f32::consts::FRAC_PI_2);
     assert!(camera.follow);
     assert!(camera.align_heading);
     assert!(camera.smooth);
@@ -129,23 +121,14 @@ fn pinch_distance_controls_zoom_without_dividing_by_zero() {
 fn mouse_wheel_zoom_requires_the_cursor_to_be_over_the_driving_canvas() {
     let canvas = Rect::from_corners(Vec2::new(300.0, 0.0), Vec2::new(900.0, 600.0));
 
-    assert!(cursor_over_driving_canvas(
-        Some(Vec2::new(600.0, 300.0)),
-        Some(canvas)
-    ));
-    assert!(!cursor_over_driving_canvas(
-        Some(Vec2::new(100.0, 300.0)),
-        Some(canvas)
-    ));
+    assert!(cursor_over_driving_canvas(Some(Vec2::new(600.0, 300.0)), Some(canvas)));
+    assert!(!cursor_over_driving_canvas(Some(Vec2::new(100.0, 300.0)), Some(canvas)));
     assert!(!cursor_over_driving_canvas(
         Some(Vec2::new(1000.0, 300.0)),
         Some(canvas)
     ));
     assert!(!cursor_over_driving_canvas(None, Some(canvas)));
-    assert!(!cursor_over_driving_canvas(
-        Some(Vec2::new(600.0, 300.0)),
-        None
-    ));
+    assert!(!cursor_over_driving_canvas(Some(Vec2::new(600.0, 300.0)), None));
 }
 
 #[test]
@@ -167,8 +150,7 @@ fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
         let center = followed_camera_center(camera, ego, viewport_height);
         let up = Rot2::radians(camera.rotation) * Vec2::Y;
         let ego_in_view = (screen::px(&ego) - center).dot(up);
-        let rear_extent =
-            CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
+        let rear_extent = CAR_FOOTPRINT.support(ego.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
         let rear_screen_y = (ego_in_view - rear_extent) * zoom;
 
         assert!((rear_screen_y + viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX).abs() < 1e-3);
@@ -210,10 +192,7 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
     assert!((live.world.ego().yaw - track_yaw).abs() < 1e-12);
     assert_eq!(live.previous.ego.yaw, track_yaw);
-    assert_eq!(
-        live.camera.rotation,
-        track_yaw as f32 - std::f32::consts::FRAC_PI_2
-    );
+    assert_eq!(live.camera.rotation, track_yaw as f32 - std::f32::consts::FRAC_PI_2);
     assert_eq!(live.camera.center, screen::px(&live.world.ego()));
     assert_eq!(live.acc, 0.0);
 }

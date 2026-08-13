@@ -48,19 +48,14 @@
 //! **Diagnostics**: every tree node as a point and every edge's rollout
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
-use super::{
-    GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, state_distance, take_warm,
-    zero_action_point,
-};
+use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, state_distance, take_warm, zero_action_point};
 use crate::common::differencing::forward_difference;
 use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
-use crate::planning::search_tree::{
-    parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained,
-};
+use crate::planning::search_tree::{parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State, world_step};
@@ -154,13 +149,7 @@ impl Tree {
             ctx,
             initial_speed: start.speed,
         };
-        let constraints = HardConstraints::new(
-            ctx.road.half_width,
-            ctx.actors,
-            path,
-            start.speed,
-            ctx.road.dt,
-        );
+        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, start.speed, ctx.road.dt);
 
         // Root node.
         tree.nodes.push(Node {
@@ -259,10 +248,7 @@ impl Tree {
                 // is the equivalent).
                 let t_s = layer as f64 * steer_dur;
                 let (_, sample) = planner_math::state_sample(path, &target, t_s, None);
-                if !ctx
-                    .time("cost", || constraints.point_cost(&sample))
-                    .is_finite()
-                {
+                if !ctx.time("cost", || constraints.point_cost(&sample)).is_finite() {
                     continue;
                 }
 
@@ -464,12 +450,8 @@ impl Grower<'_, '_> {
         );
         for i in 0..us.len() {
             let x = &xs[i + 1];
-            let (_, mut sample) =
-                planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
-            let accel = (
-                us[i].acceleration,
-                lateral_acceleration(x.speed, us[i].curvature),
-            );
+            let (_, mut sample) = planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
+            let accel = (us[i].acceleration, lateral_acceleration(x.speed, us[i].curvature));
             if let Some(previous) = previous_accel {
                 sample.lon_jerk = forward_difference(previous.0, accel.0, dt);
                 sample.lat_jerk = forward_difference(previous.1, accel.1, dt);
@@ -524,9 +506,7 @@ impl Planner for RrtPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(ctx.road.centerline()));
         let goal = goal_state(&path, ego, ctx);
-        let warm = ctx.time("warm_start", || {
-            take_warm(&mut self.prev, self.expected_next, ego)
-        });
+        let warm = ctx.time("warm_start", || take_warm(&mut self.prev, self.expected_next, ego));
 
         // Offline calibration: 150 tree samples is about 100 ms.
         let samples = ctx.compute_budget.scale(SAMPLES, 20);
@@ -573,12 +553,7 @@ mod tests {
         let actions = steer_actions(&from, &target, dur, dt);
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
-        assert!(
-            (end.x - target.x).abs() < 0.1,
-            "x {} vs {}",
-            end.x,
-            target.x
-        );
+        assert!((end.x - target.x).abs() < 0.1, "x {} vs {}", end.x, target.x);
         assert!(end.y.abs() < 0.01);
         assert!(end.speed <= target.speed);
         assert!(

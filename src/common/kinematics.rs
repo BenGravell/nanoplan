@@ -2,8 +2,8 @@
 
 use crate::common::types::{Control, State};
 use crate::vehicle::{
-    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL,
-    MIN_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
+    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
+    ROLLING_RESISTANCE_ACCEL,
 };
 
 pub(crate) const LOW_SPEED_LIMIT_MPS: f64 = 0.001;
@@ -89,10 +89,7 @@ pub(crate) fn commanded_accel_for_net(net_accel: f64, speed: f64) -> f64 {
 
 /// State curvature bound for a given speed.
 pub(crate) fn curvature_limit(speed: f64) -> f64 {
-    MAX_ABS_CURVATURE.min(curvature_from_lateral_acceleration(
-        speed,
-        MAX_ABS_LAT_ACCEL,
-    ))
+    MAX_ABS_CURVATURE.min(curvature_from_lateral_acceleration(speed, MAX_ABS_LAT_ACCEL))
 }
 
 fn clamp_accel(accel: f64) -> f64 {
@@ -123,10 +120,7 @@ mod tests {
         let curvature = -0.025;
         let acceleration = lateral_acceleration(speed, curvature);
         assert_eq!(acceleration, -10.0);
-        assert_eq!(
-            curvature_from_lateral_acceleration(speed, acceleration),
-            curvature
-        );
+        assert_eq!(curvature_from_lateral_acceleration(speed, acceleration), curvature);
     }
 
     #[test]
@@ -221,10 +215,7 @@ mod tests {
 
         let fast = 25.0;
         let kappa_lat = curvature_from_lateral_acceleration(fast, MAX_ABS_LAT_ACCEL);
-        assert!(
-            kappa_lat < MAX_ABS_CURVATURE,
-            "test speed too low to bind lat accel"
-        );
+        assert!(kappa_lat < MAX_ABS_CURVATURE, "test speed too low to bind lat accel");
         assert_eq!(
             clamp_control(
                 Control {

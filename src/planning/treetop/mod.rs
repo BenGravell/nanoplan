@@ -121,9 +121,7 @@ pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
 /// own comment concedes this is "a decent choice empirically (even if it
 /// is not very principled)".
 pub(crate) fn state_distance(a: &State, b: &State) -> f64 {
-    (a.x - b.x).hypot(a.y - b.y)
-        + crate::common::math::wrap_angle(a.yaw - b.yaw).abs()
-        + (a.speed - b.speed).abs()
+    (a.x - b.x).hypot(a.y - b.y) + crate::common::math::wrap_angle(a.yaw - b.yaw).abs() + (a.speed - b.speed).abs()
 }
 
 /// A trajectory endpoint within this [`state_distance`] of the goal counts
@@ -193,11 +191,7 @@ pub(crate) fn shift_actions(mut actions: Vec<Control>) -> Vec<Control> {
 /// Take a warm start only if the ego ended up where the previous plan
 /// predicted (within 1 m, the same gate PI²-DDP and the judo planners
 /// use); a diverged warm start describes a maneuver from somewhere else.
-pub(crate) fn take_warm(
-    prev: &mut Option<Vec<Control>>,
-    expected_next: State,
-    ego: State,
-) -> Option<Vec<Control>> {
+pub(crate) fn take_warm(prev: &mut Option<Vec<Control>>, expected_next: State, ego: State) -> Option<Vec<Control>> {
     match prev.take() {
         Some(a) if warm_start_matches(expected_next, ego) => Some(shift_actions(a)),
         _ => None,
@@ -208,9 +202,7 @@ impl Planner for TreetopPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || Path::new(ctx.road.centerline()));
         let goal = goal_state(&path, ego, ctx);
-        let warm = ctx.time("warm_start", || {
-            take_warm(&mut self.prev, self.expected_next, ego)
-        });
+        let warm = ctx.time("warm_start", || take_warm(&mut self.prev, self.expected_next, ego));
         // Offline calibration: 450 tree samples plus the fixed refinement
         // pass is about 100 ms.
         let tree_samples = ctx.compute_budget.scale(TREE_SAMPLES, 45);
@@ -241,8 +233,7 @@ impl Planner for TreetopPlanner {
                     let actions = tree.actions_of(cand);
                     let sol = ilqr::solve(&ocp, &actions, OPT_ITERS);
                     let dist = state_distance(sol.states.last().unwrap(), &goal);
-                    if dist < GOAL_HIT_TOL && best_hit.as_ref().is_none_or(|(c, ..)| sol.cost < *c)
-                    {
+                    if dist < GOAL_HIT_TOL && best_hit.as_ref().is_none_or(|(c, ..)| sol.cost < *c) {
                         best_hit = Some((sol.cost, i, sol.clone()));
                     }
                     if best_any.as_ref().is_none_or(|(d, ..)| dist < *d) {
@@ -267,9 +258,7 @@ impl Planner for TreetopPlanner {
             diag.record_trajectory(sol.states.iter().map(|s| [s.x, s.y]).collect());
         }
 
-        let controls = ctx.time("extract", || {
-            repeat_last_controls(&sol.controls, ctx.horizon)
-        });
+        let controls = ctx.time("extract", || repeat_last_controls(&sol.controls, ctx.horizon));
         self.expected_next = world_step(ego, controls[0], ctx.road.dt);
         self.prev = Some(sol.controls);
         controls
@@ -349,8 +338,7 @@ mod tests {
             x: 40.0,
             ..Default::default()
         };
-        let trace =
-            crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[obstacle], 150);
+        let trace = crate::planning::test_run(&mut TreetopPlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
             .map(|s| (s.x - 40.0).hypot(s.y))

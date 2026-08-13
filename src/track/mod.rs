@@ -34,11 +34,7 @@ mod tests {
         let length = track.lap_length().unwrap();
         assert!(dist(track.point(0.0), track.point(length)) < 1e-9);
         let TrackGeometry::Circuit(circuit) = &track.geometry;
-        let points = circuit
-            .samples
-            .iter()
-            .map(|sample| sample.point)
-            .collect::<Vec<_>>();
+        let points = circuit.samples.iter().map(|sample| sample.point).collect::<Vec<_>>();
         assert!(is_simple(&points));
     }
 
@@ -59,11 +55,7 @@ mod tests {
         for index in 1..=TRACK_CATALOG.len() {
             let track = Track::from_catalog(TRACK_PRESETS.len() + index, 0);
             let TrackGeometry::Circuit(circuit) = &track.geometry;
-            let points = circuit
-                .samples
-                .iter()
-                .map(|sample| sample.point)
-                .collect::<Vec<_>>();
+            let points = circuit.samples.iter().map(|sample| sample.point).collect::<Vec<_>>();
             assert!(
                 is_simple(&points),
                 "{} intersects itself",
@@ -71,12 +63,7 @@ mod tests {
             );
             let (point, yaw) = track.pose(100.0);
             let widths = track.widths(100.0);
-            assert!(
-                point
-                    .into_iter()
-                    .chain([yaw, widths.0, widths.1])
-                    .all(f64::is_finite)
-            );
+            assert!(point.into_iter().chain([yaw, widths.0, widths.1]).all(f64::is_finite));
             assert!(widths.0 > 0.0 && widths.1 > 0.0);
         }
     }
@@ -97,12 +84,7 @@ mod tests {
                 let progress = length * i as f64 / circuit.samples.len() as f64;
                 let (point, yaw) = track.pose(progress);
                 let (right, left) = track.widths(progress);
-                assert!(
-                    point
-                        .into_iter()
-                        .chain([yaw, right, left])
-                        .all(f64::is_finite)
-                );
+                assert!(point.into_iter().chain([yaw, right, left]).all(f64::is_finite));
                 assert!(right > 0.0 && left > 0.0);
             }
         }

@@ -32,11 +32,7 @@ impl RoadPolygon {
             return None;
         }
 
-        let segment_count = if closed {
-            centerline.len()
-        } else {
-            centerline.len() - 1
-        };
+        let segment_count = if closed { centerline.len() } else { centerline.len() - 1 };
         let normals = (0..segment_count)
             .map(|i| {
                 let next = (i + 1) % centerline.len();
@@ -142,23 +138,14 @@ mod tests {
     fn high_curvature_corner_has_continuous_mitered_boundaries() {
         let road = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).unwrap();
 
-        assert_eq!(
-            road.right_boundary(),
-            &[[0.0, -2.0], [12.0, -2.0], [12.0, 10.0]]
-        );
+        assert_eq!(road.right_boundary(), &[[0.0, -2.0], [12.0, -2.0], [12.0, 10.0]]);
         assert_eq!(road.left_boundary(), &[[0.0, 2.0], [8.0, 2.0], [8.0, 10.0]]);
         assert_eq!(road.quads().count(), 2);
     }
 
     #[test]
     fn each_side_uses_its_own_station_width() {
-        let road = RoadPolygon::new(
-            vec![[0.0, 0.0], [10.0, 0.0]],
-            vec![1.0, 2.0],
-            vec![3.0, 4.0],
-            false,
-        )
-        .unwrap();
+        let road = RoadPolygon::new(vec![[0.0, 0.0], [10.0, 0.0]], vec![1.0, 2.0], vec![3.0, 4.0], false).unwrap();
 
         assert_eq!(road.right_boundary(), &[[0.0, -1.0], [10.0, -2.0]]);
         assert_eq!(road.left_boundary(), &[[0.0, 3.0], [10.0, 4.0]]);

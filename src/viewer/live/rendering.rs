@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use super::Live;
 use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh,
-    PlannedTrajectoryGizmos, RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh, PlannedTrajectoryGizmos,
+    RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
 use super::screen::px;
 use crate::common::interp::interpolate_state;
@@ -25,11 +25,7 @@ impl RenderSnapshot {
     pub(super) fn capture(world: &LiveWorld) -> Self {
         Self {
             ego: world.ego(),
-            actors: world
-                .actors
-                .iter()
-                .map(|actor| (actor.id, actor.state))
-                .collect(),
+            actors: world.actors.iter().map(|actor| (actor.id, actor.state)).collect(),
         }
     }
 }
@@ -91,11 +87,8 @@ pub(crate) fn draw(
     } else {
         grid::clear(&mut meshes, &mut grid_mesh);
     }
-    live.recorder.record(
-        "visualization.grid",
-        grid_started.elapsed().as_secs_f64() * 1e3,
-        1,
-    );
+    live.recorder
+        .record("visualization.grid", grid_started.elapsed().as_secs_f64() * 1e3, 1);
     visualization_clocks += 1;
 
     let world = &live.world;
@@ -144,12 +137,7 @@ pub(crate) fn draw(
 
     let diagnostics_started = Instant::now();
     let diagnostics_clocks = world.diagnostics.points.len() as u64
-        + world
-            .diagnostics
-            .trajectories
-            .iter()
-            .map(Vec::len)
-            .sum::<usize>() as u64;
+        + world.diagnostics.trajectories.iter().map(Vec::len).sum::<usize>() as u64;
     diagnostics::draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,

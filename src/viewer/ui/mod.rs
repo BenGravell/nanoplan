@@ -42,8 +42,7 @@ pub(crate) fn ui(
         "viewer_ui".into(),
         egui::UiBuilder::new().max_rect(ctx.content_rect()),
     );
-    let viewport_constraints =
-        viewport_constraints(root.max_rect().width(), root.max_rect().height());
+    let viewport_constraints = viewport_constraints(root.max_rect().width(), root.max_rect().height());
     if !viewport_constraints.satisfied() {
         portrait_prompt::show(&mut root, is_mobile_device(), viewport_constraints);
         ctx.request_repaint();
@@ -53,9 +52,7 @@ pub(crate) fn ui(
         if state.tutorial {
             tutorial::show(&mut root, &mut state.tutorial);
         } else {
-            let UiState {
-                started, tutorial, ..
-            } = &mut *state;
+            let UiState { started, tutorial, .. } = &mut *state;
             landing::show(&mut root, started, tutorial);
         }
         return;
@@ -80,10 +77,7 @@ fn is_mobile_device() -> bool {
         return false;
     };
     let navigator = window.navigator();
-    let user_agent = navigator
-        .user_agent()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let user_agent = navigator.user_agent().unwrap_or_default().to_ascii_lowercase();
     user_agent.contains("android")
         || user_agent.contains("iphone")
         || user_agent.contains("ipad")
@@ -92,12 +86,7 @@ fn is_mobile_device() -> bool {
         || (user_agent.contains("macintosh") && navigator.max_touch_points() > 1)
 }
 
-fn viewer_layout(
-    root: &mut egui::Ui,
-    state: &mut UiState,
-    live: &mut Live,
-    active_tab: &mut ControlTab,
-) -> egui::Rect {
+fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, active_tab: &mut ControlTab) -> egui::Rect {
     let canvas = root.max_rect();
     let viewport = canvas.size();
     let compact = compact_layout(viewport);
@@ -119,9 +108,7 @@ fn viewer_layout(
             let rect = ui.max_rect();
             control_deck(ui, state, live, active_tab, compact);
             ui.interact(rect, ui.id().with("control_deck"), egui::Sense::hover())
-                .widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Control deck")
-                });
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Control deck"));
         });
 
     let road_rect = center_rail_rect(canvas, left_width, right_width);
@@ -163,10 +150,7 @@ fn frame_time_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, compa
             .fill(PANEL)
             .inner_margin(egui::Margin::symmetric(8, 4))
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(format!("FRAME {:.2} ms", live.frame_rate.milliseconds()))
-                        .monospace(),
-                );
+                ui.label(egui::RichText::new(format!("FRAME {:.2} ms", live.frame_rate.milliseconds())).monospace());
             });
     });
 }
@@ -176,11 +160,7 @@ fn overlay_root(root: &egui::Ui, id: &'static str) -> egui::Ui {
 }
 
 fn overlay_root_at(root: &egui::Ui, id: &'static str, rect: egui::Rect) -> egui::Ui {
-    egui::Ui::new(
-        root.ctx().clone(),
-        id.into(),
-        egui::UiBuilder::new().max_rect(rect),
-    )
+    egui::Ui::new(root.ctx().clone(), id.into(), egui::UiBuilder::new().max_rect(rect))
 }
 
 fn center_rail_rect(canvas: egui::Rect, left_width: f32, right_width: f32) -> egui::Rect {
@@ -194,11 +174,7 @@ fn pause_rail(root: &mut egui::Ui, live: &mut Live, compact: bool) {
     let margin = if compact { 6 } else { 10 };
     egui::Panel::top("pause_rail")
         .exact_size(if compact { 44.0 } else { 52.0 })
-        .frame(
-            egui::Frame::new()
-                .fill(PANEL)
-                .inner_margin(egui::Margin::same(margin)),
-        )
+        .frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin::same(margin)))
         .show(root, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 if ui
@@ -211,13 +187,7 @@ fn pause_rail(root: &mut egui::Ui, live: &mut Live, compact: bool) {
         });
 }
 
-fn pause_modal(
-    ctx: &egui::Context,
-    state: &mut UiState,
-    live: &mut Live,
-    compact: bool,
-    allow_escape_close: bool,
-) {
+fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compact: bool, allow_escape_close: bool) {
     if !live.paused {
         return;
     }

@@ -72,33 +72,18 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, friction: &Frictio
             plot.left()..=center.x - feasible_half_width,
             center.x + feasible_half_width..=plot.right(),
         ] {
-            painter.rect_filled(
-                egui::Rect::from_x_y_ranges(x_range, plot.y_range()),
-                0.0,
-                FAINT,
-            );
+            painter.rect_filled(egui::Rect::from_x_y_ranges(x_range, plot.y_range()), 0.0, FAINT);
         }
     }
     painter.line_segment(
-        [
-            egui::pos2(plot.left(), center.y),
-            egui::pos2(plot.right(), center.y),
-        ],
+        [egui::pos2(plot.left(), center.y), egui::pos2(plot.right(), center.y)],
         egui::Stroke::new(scale, GREY_152),
     );
     painter.line_segment(
-        [
-            egui::pos2(center.x, plot.top()),
-            egui::pos2(center.x, plot.bottom()),
-        ],
+        [egui::pos2(center.x, plot.top()), egui::pos2(center.x, plot.bottom())],
         egui::Stroke::new(scale, GREY_152),
     );
-    painter.rect_stroke(
-        plot,
-        0.0,
-        egui::Stroke::new(scale, GREY_152),
-        egui::StrokeKind::Inside,
-    );
+    painter.rect_stroke(plot, 0.0, egui::Stroke::new(scale, GREY_152), egui::StrokeKind::Inside);
     draw_bound_labels(painter, plot, scale);
 
     for sample in &friction.samples {
@@ -123,9 +108,7 @@ fn plot_rect(rect: egui::Rect) -> egui::Rect {
     let scale = rect.height() / 121.0;
     // Leave room for the two four-character lateral labels, their gaps, and
     // a lean outer inset so they never spill out of a narrow phone rail.
-    let size = (rect.width() - 46.0 * scale)
-        .min(rect.height() - 20.0 * scale)
-        .max(0.0);
+    let size = (rect.width() - 46.0 * scale).min(rect.height() - 20.0 * scale).max(0.0);
     egui::Rect::from_min_size(
         egui::pos2(rect.center().x - size / 2.0, rect.center().y - size / 2.0),
         egui::vec2(size, size),
@@ -161,13 +144,7 @@ fn draw_bound_labels(painter: &egui::Painter, plot: egui::Rect, scale: f32) {
             false,
         ),
     ] {
-        painter.text(
-            position,
-            align,
-            gravity_label(value, signed),
-            font.clone(),
-            DIM_TEXT,
-        );
+        painter.text(position, align, gravity_label(value, signed), font.clone(), DIM_TEXT);
     }
 }
 
@@ -185,14 +162,8 @@ fn attainable_lateral_fraction(speed: f64) -> f32 {
 }
 
 fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
-    let v0 = [
-        previous.speed * previous.yaw.cos(),
-        previous.speed * previous.yaw.sin(),
-    ];
-    let v1 = [
-        current.speed * current.yaw.cos(),
-        current.speed * current.yaw.sin(),
-    ];
+    let v0 = [previous.speed * previous.yaw.cos(), previous.speed * previous.yaw.sin()];
+    let v1 = [current.speed * current.yaw.cos(), current.speed * current.yaw.sin()];
     let dv = [
         forward_difference(v0[0], v1[0], dt),
         forward_difference(v0[1], v1[1], dt),
@@ -290,14 +261,8 @@ mod tests {
 
     #[test]
     fn utilization_runs_from_guppy_blue_to_orange() {
-        assert_eq!(
-            utilization_color(0.0),
-            egui::Color32::from_rgb(42, 182, 196)
-        );
-        assert_eq!(
-            utilization_color(1.0),
-            egui::Color32::from_rgb(254, 107, 44)
-        );
+        assert_eq!(utilization_color(0.0), egui::Color32::from_rgb(42, 182, 196));
+        assert_eq!(utilization_color(1.0), egui::Color32::from_rgb(254, 107, 44));
     }
 
     #[test]

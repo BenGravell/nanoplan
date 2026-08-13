@@ -132,13 +132,7 @@ fn empty_mesh() -> Mesh {
     mesh
 }
 
-fn push_rect(
-    vertices: &mut Vec<[f32; 3]>,
-    colors: &mut Vec<[f32; 4]>,
-    center: Vec2,
-    size: Vec2,
-    color: LinearRgba,
-) {
+fn push_rect(vertices: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>, center: Vec2, size: Vec2, color: LinearRgba) {
     let half = size / 2.0;
     let corners = [
         [center.x - half.x, center.y - half.y, 0.0],

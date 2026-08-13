@@ -9,8 +9,7 @@ use super::super::Live;
 use super::super::screen::ppx;
 use super::config::ROAD_SURFACE_Z;
 use crate::viewer::colors::{
-    ROAD_SURFACE, SUBDUED_TRACK_CENTERLINE, SUBDUED_TRACK_EDGE, TRACK_CENTERLINE, TRACK_EDGE,
-    TRACK_STATION,
+    ROAD_SURFACE, SUBDUED_TRACK_CENTERLINE, SUBDUED_TRACK_EDGE, TRACK_CENTERLINE, TRACK_EDGE, TRACK_STATION,
 };
 
 const VISIBLE_TRACK_BEHIND_M: f64 = 250.0;
@@ -74,14 +73,7 @@ pub(in crate::viewer::live) fn draw(
     if track.lap_length().is_none() {
         update_surface(meshes, surface, &polygon);
     }
-    draw_lines(
-        gizmos,
-        &polygon,
-        false,
-        show_centerline,
-        TRACK_EDGE,
-        TRACK_CENTERLINE,
-    );
+    draw_lines(gizmos, &polygon, false, show_centerline, TRACK_EDGE, TRACK_CENTERLINE);
 
     if show_stations {
         for (&right, &left) in polygon.right_boundary().iter().zip(polygon.left_boundary()) {
@@ -189,9 +181,7 @@ mod tests {
         let road = RoadPolygon::uniform(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).unwrap();
 
         let mesh = surface_mesh(&road);
-        let VertexAttributeValues::Float32x3(vertices) =
-            mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
-        else {
+        let VertexAttributeValues::Float32x3(vertices) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() else {
             panic!("surface positions have the wrong format");
         };
         let Indices::U32(indices) = mesh.indices().unwrap() else {

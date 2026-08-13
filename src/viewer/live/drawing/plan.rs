@@ -14,10 +14,6 @@ pub(crate) fn configure(mut configs: ResMut<GizmoConfigStore>) {
     configs.config_mut::<PlannedTrajectoryGizmos>().0.line.width = WIDTH;
 }
 
-pub(in crate::viewer::live) fn draw(
-    gizmos: &mut Gizmos<PlannedTrajectoryGizmos>,
-    ego: &State,
-    plan: &[State],
-) {
+pub(in crate::viewer::live) fn draw(gizmos: &mut Gizmos<PlannedTrajectoryGizmos>, ego: &State, plan: &[State]) {
     gizmos.linestrip_2d(std::iter::once(ego).chain(plan).map(px), ACCENT);
 }

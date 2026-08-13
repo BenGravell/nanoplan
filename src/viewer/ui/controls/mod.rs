@@ -45,20 +45,18 @@ pub(super) fn control_deck(
     ui.add_space(if compact { 6.0 } else { 9.0 });
 
     let content_width = ui.available_width();
-    egui::ScrollArea::vertical()
-        .max_width(content_width)
-        .show(ui, |ui| {
-            ui.set_width(content_width);
-            match *active_tab {
-                ControlTab::Track => track_controls(ui, state, live, compact),
-                ControlTab::Planner => planner::show(ui, state),
-                ControlTab::Opponents => opponents::show(ui, state, live),
-                ControlTab::Camera => camera::show(ui, live, compact, content_width),
-                ControlTab::Visibility => visibility::show(ui, state, compact, content_width),
-                ControlTab::Metrics => metrics::show(ui, live),
-                ControlTab::Timing => timing::show(ui, live),
-            }
-        });
+    egui::ScrollArea::vertical().max_width(content_width).show(ui, |ui| {
+        ui.set_width(content_width);
+        match *active_tab {
+            ControlTab::Track => track_controls(ui, state, live, compact),
+            ControlTab::Planner => planner::show(ui, state),
+            ControlTab::Opponents => opponents::show(ui, state, live),
+            ControlTab::Camera => camera::show(ui, live, compact, content_width),
+            ControlTab::Visibility => visibility::show(ui, state, compact, content_width),
+            ControlTab::Metrics => metrics::show(ui, live),
+            ControlTab::Timing => timing::show(ui, live),
+        }
+    });
 }
 
 impl ControlTab {
@@ -100,11 +98,7 @@ fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, compa
                 ui.selectable_value(&mut state.track, index + 1, track.name);
             }
             for (index, track) in TRACK_CATALOG.iter().enumerate() {
-                ui.selectable_value(
-                    &mut state.track,
-                    index + TRACK_PRESETS.len() + 1,
-                    track.name,
-                );
+                ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len() + 1, track.name);
             }
         });
     if state.track != previous_track {
@@ -118,12 +112,7 @@ fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, compa
             egui::Button::new(egui::RichText::new("↻ NEW TRACK").size(13.0)),
         );
         if response.clicked() {
-            live.regenerate_with_actor_count(
-                live.seed + 1,
-                state.planner,
-                state.track,
-                state.opponents,
-            );
+            live.regenerate_with_actor_count(live.seed + 1, state.planner, state.track, state.opponents);
         }
     }
 }

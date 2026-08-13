@@ -15,13 +15,8 @@ pub(crate) struct DiagnosticTrajectoryGizmos;
 pub(crate) struct DiagnosticPointGizmos;
 
 pub(crate) fn configure(live: NonSend<Live>, mut configs: ResMut<GizmoConfigStore>) {
-    configs
-        .config_mut::<DiagnosticTrajectoryGizmos>()
-        .0
-        .line
-        .width = 1.5;
-    configs.config_mut::<DiagnosticPointGizmos>().0.line.width =
-        POINT_RADIUS_M * PX_PER_M * live.camera.zoom * 1.2;
+    configs.config_mut::<DiagnosticTrajectoryGizmos>().0.line.width = 1.5;
+    configs.config_mut::<DiagnosticPointGizmos>().0.line.width = POINT_RADIUS_M * PX_PER_M * live.camera.zoom * 1.2;
 }
 
 pub(in crate::viewer::live) fn draw(

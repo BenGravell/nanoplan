@@ -22,8 +22,8 @@ fn time_to_unsafe_state(ctx: &TickCtx, i: usize) -> Option<f64> {
         .enumerate()
         .take_while(|(offset, _)| *offset as f64 * ctx.trajectory_kinematics.dt <= TTC_HORIZON_S)
         .find_map(|(offset, (ego, actors))| {
-            let unsafe_state = collides_with_road_barrier(*ego, ctx.road)
-                || actors.iter().any(|actor| collides(ego, actor));
+            let unsafe_state =
+                collides_with_road_barrier(*ego, ctx.road) || actors.iter().any(|actor| collides(ego, actor));
             unsafe_state.then_some(offset as f64 * ctx.trajectory_kinematics.dt)
         })
 }
@@ -65,10 +65,7 @@ mod tests {
         ];
 
         let controls = vec![Control::default(); ego.len()];
-        assert_eq!(
-            evaluate_trace(&ego, &controls, &[parked], &road()).per_tick[0][0],
-            1.0
-        );
+        assert_eq!(evaluate_trace(&ego, &controls, &[parked], &road()).per_tick[0][0], 1.0);
     }
 
     #[test]
@@ -89,10 +86,7 @@ mod tests {
             .collect();
 
         let controls = vec![Control::default(); ego.len()];
-        assert_eq!(
-            evaluate_trace(&ego, &controls, &[actor], &road()).per_tick[0][0],
-            1.0
-        );
+        assert_eq!(evaluate_trace(&ego, &controls, &[actor], &road()).per_tick[0][0], 1.0);
     }
 
     #[test]
@@ -108,9 +102,6 @@ mod tests {
         actor[5].x = 0.0;
 
         let controls = vec![Control::default(); ego.len()];
-        assert_eq!(
-            evaluate_trace(&ego, &controls, &[actor], &road()).per_tick[0][0],
-            0.0
-        );
+        assert_eq!(evaluate_trace(&ego, &controls, &[actor], &road()).per_tick[0][0], 0.0);
     }
 }

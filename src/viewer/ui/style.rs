@@ -23,13 +23,9 @@ pub(super) fn configure(ctx: &egui::Context) {
         ))
         .into(),
     );
-    let mut caps = egui::FontData::from_static(include_bytes!(
-        "../../../assets/fonts/SpaceGrotesk/SpaceGrotesk.ttf"
-    ));
+    let mut caps = egui::FontData::from_static(include_bytes!("../../../assets/fonts/SpaceGrotesk/SpaceGrotesk.ttf"));
     caps.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", 700.0)]);
-    fonts
-        .font_data
-        .insert("space_grotesk_bold".into(), caps.into());
+    fonts.font_data.insert("space_grotesk_bold".into(), caps.into());
     fonts
         .families
         .get_mut(&egui::FontFamily::Proportional)

@@ -37,8 +37,8 @@
 /// two dozen-plus primes leaves headroom (a request past this panics in
 /// [`QuasiMonteCarlo::coordinate`] rather than silently reusing a base).
 const PRIMES: [usize; 32] = [
-    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
-    101, 103, 107, 109, 113, 127, 131,
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109,
+    113, 127, 131,
 ];
 
 /// The van der Corput radical-inverse sequence in `base`: reverse the
@@ -173,17 +173,9 @@ pub(crate) fn inv_normal_cdf(p: f64) -> f64 {
 /// tracking tests). Subtracting each dimension's empirical mean restores the
 /// zero-mean property judo's RNG has in expectation, at the cost of one
 /// degree of freedom (negligible at these counts).
-pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(
-    base: usize,
-    count: usize,
-    dim: usize,
-) -> Vec<Vec<f64>> {
+pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(base: usize, count: usize, dim: usize) -> Vec<Vec<f64>> {
     let mut z: Vec<Vec<f64>> = (0..count)
-        .map(|k| {
-            (0..dim)
-                .map(|d| inv_normal_cdf(Q::coordinate(base + k, d)))
-                .collect()
-        })
+        .map(|k| (0..dim).map(|d| inv_normal_cdf(Q::coordinate(base + k, d))).collect())
         .collect();
     if count > 0 {
         for d in 0..dim {

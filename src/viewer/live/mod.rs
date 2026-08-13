@@ -14,8 +14,8 @@ mod screen;
 
 pub(crate) use camera::{CameraState, MAX_ZOOM, MIN_ZOOM, camera_input};
 pub(crate) use drawing::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, PlannedTrajectoryGizmos,
-    configure_diagnostics, configure_plan, setup_carpet, setup_grid, setup_road_surface,
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, PlannedTrajectoryGizmos, configure_diagnostics, configure_plan,
+    setup_carpet, setup_grid, setup_road_surface,
 };
 use rendering::RenderSnapshot;
 pub(crate) use rendering::draw;
@@ -35,9 +35,10 @@ impl FrameRate {
         if !seconds.is_finite() || seconds <= 0.0 {
             return;
         }
-        self.mean_seconds = Some(self.mean_seconds.map_or(seconds, |mean| {
-            mean + FRAME_TIME_SMOOTHING * (seconds - mean)
-        }));
+        self.mean_seconds = Some(
+            self.mean_seconds
+                .map_or(seconds, |mean| mean + FRAME_TIME_SMOOTHING * (seconds - mean)),
+        );
     }
 
     pub(crate) fn fps(self) -> f64 {
@@ -152,10 +153,10 @@ impl Live {
         self.world.tick_recording_latency(&self.recorder);
         self.friction_box
             .record(self.previous.ego, self.world.ego(), self.world.dt());
-        let progress = self.world.track.project_progress(
-            [self.world.ego().x, self.world.ego().y],
-            self.world.track_progress,
-        );
+        let progress = self
+            .world
+            .track
+            .project_progress([self.world.ego().x, self.world.ego().y], self.world.track_progress);
         self.lap_stats
             .tick(self.world.dt(), progress, self.world.track.lap_length());
     }

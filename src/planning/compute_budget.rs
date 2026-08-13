@@ -5,19 +5,11 @@ pub(crate) struct ComputeBudget(u16);
 
 pub(crate) const NOMINAL_COMPUTE_BUDGET_PERCENT: f32 = 100.0;
 
-pub(crate) const COMPUTE_BUDGET_BREAKPOINTS: [f32; 7] = [
-    5.0,
-    10.0,
-    20.0,
-    50.0,
-    NOMINAL_COMPUTE_BUDGET_PERCENT,
-    200.0,
-    500.0,
-];
+pub(crate) const COMPUTE_BUDGET_BREAKPOINTS: [f32; 7] =
+    [5.0, 10.0, 20.0, 50.0, NOMINAL_COMPUTE_BUDGET_PERCENT, 200.0, 500.0];
 
 const MIN_COMPUTE_BUDGET_PERCENT: f32 = COMPUTE_BUDGET_BREAKPOINTS[0];
-const MAX_COMPUTE_BUDGET_PERCENT: f32 =
-    COMPUTE_BUDGET_BREAKPOINTS[COMPUTE_BUDGET_BREAKPOINTS.len() - 1];
+const MAX_COMPUTE_BUDGET_PERCENT: f32 = COMPUTE_BUDGET_BREAKPOINTS[COMPUTE_BUDGET_BREAKPOINTS.len() - 1];
 
 impl ComputeBudget {
     pub(crate) const NOMINAL: Self = Self(NOMINAL_COMPUTE_BUDGET_PERCENT as u16);
@@ -49,10 +41,6 @@ mod tests {
 
     #[test]
     fn breakpoints_are_strictly_increasing() {
-        assert!(
-            COMPUTE_BUDGET_BREAKPOINTS
-                .windows(2)
-                .all(|pair| pair[0] < pair[1])
-        );
+        assert!(COMPUTE_BUDGET_BREAKPOINTS.windows(2).all(|pair| pair[0] < pair[1]));
     }
 }

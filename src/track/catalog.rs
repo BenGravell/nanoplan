@@ -188,17 +188,8 @@ mod tests {
     #[test]
     fn ids_are_unique_lowercase_source_symbols() {
         for (index, track) in TRACK_CATALOG.iter().enumerate() {
-            assert!(
-                track
-                    .id
-                    .bytes()
-                    .all(|c| c.is_ascii_lowercase() || c == b'_')
-            );
-            assert!(
-                !TRACK_CATALOG[..index]
-                    .iter()
-                    .any(|other| other.id == track.id)
-            );
+            assert!(track.id.bytes().all(|c| c.is_ascii_lowercase() || c == b'_'));
+            assert!(!TRACK_CATALOG[..index].iter().any(|other| other.id == track.id));
         }
     }
 }

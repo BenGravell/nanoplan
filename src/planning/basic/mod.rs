@@ -33,9 +33,7 @@ impl Planner for BasicPlanner {
             let mut best: Option<(f64, Vec<Control>)> = None;
             for distance in FIRST_TARGETS_M {
                 for factor in DURATION_FACTORS {
-                    let Some(controls) =
-                        candidate(ego, &path, ctx, s0, lane_speed, distance, factor)
-                    else {
+                    let Some(controls) = candidate(ego, &path, ctx, s0, lane_speed, distance, factor) else {
                         continue;
                     };
                     let Some(cost) = candidate_cost(ego, &controls, &path, ctx) else {
@@ -70,8 +68,7 @@ fn candidate(
         .min(ctx.road.target_speed);
     let fastest_duration = 2.0 * first_distance / (lane_speed + fastest_speed).max(1.0);
     let mut duration = fastest_duration * duration_factor;
-    let mut cruise_speed =
-        (2.0 * first_distance / duration - lane_speed).clamp(0.0, ctx.road.target_speed);
+    let mut cruise_speed = (2.0 * first_distance / duration - lane_speed).clamp(0.0, ctx.road.target_speed);
     let mut target_s = s0 + first_distance;
     let mut x = ego;
     let mut controls = Vec::with_capacity(ctx.horizon);
@@ -108,13 +105,7 @@ fn candidate(
     Some(controls)
 }
 
-fn append_segment(
-    controls: &mut Vec<Control>,
-    x: &mut State,
-    target: State,
-    duration: f64,
-    ctx: &Context,
-) {
+fn append_segment(controls: &mut Vec<Control>, x: &mut State, target: State, duration: f64, ctx: &Context) {
     let remaining = ctx.horizon - controls.len();
     let ticks = remaining.min((duration / ctx.road.dt).round().max(1.0) as usize);
     let duration = ticks as f64 * ctx.road.dt;
@@ -125,13 +116,7 @@ fn append_segment(
 }
 
 fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<f64> {
-    let constraints = HardConstraints::new(
-        ctx.road.half_width,
-        ctx.actors,
-        path,
-        ego.speed,
-        ctx.road.dt,
-    );
+    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
     let mut x = ego;
     let mut total = 0.0;
     let mut feasible = true;
@@ -308,10 +293,7 @@ mod tests {
         BasicPlanner.plan(State::default(), &ctx);
         let data = diagnostics.take();
 
-        assert_eq!(
-            data.trajectories.len(),
-            FIRST_TARGETS_M.len() * DURATION_FACTORS.len()
-        );
+        assert_eq!(data.trajectories.len(), FIRST_TARGETS_M.len() * DURATION_FACTORS.len());
         assert!(
             data.trajectories
                 .iter()
@@ -330,12 +312,7 @@ mod tests {
             for n in 0..20 {
                 let progress = lap * n as f64 / 20.0;
                 let centerline = track.centerline(progress - 50.0, progress + 250.0, 15.0);
-                let road = Road::new(
-                    centerline,
-                    *MAX_TERMINAL_SPEED_MPS,
-                    track.half_width(progress),
-                    0.1,
-                );
+                let road = Road::new(centerline, *MAX_TERMINAL_SPEED_MPS, track.half_width(progress), 0.1);
                 let (p, yaw) = track.pose(progress);
                 let ego = State {
                     x: p[0],

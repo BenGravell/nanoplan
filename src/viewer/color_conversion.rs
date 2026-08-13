@@ -7,11 +7,7 @@ pub(crate) const fn to_rgb8(color: egui::Color32) -> (u8, u8, u8) {
 
 const fn to_unit_rgb(color: egui::Color32) -> (f32, f32, f32) {
     let (red, green, blue) = to_rgb8(color);
-    (
-        red as f32 / 255.0,
-        green as f32 / 255.0,
-        blue as f32 / 255.0,
-    )
+    (red as f32 / 255.0, green as f32 / 255.0, blue as f32 / 255.0)
 }
 
 pub(crate) const fn to_srgb(color: egui::Color32) -> Color {

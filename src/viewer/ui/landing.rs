@@ -21,17 +21,12 @@ pub(super) fn show(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool)
     background_graphics(root);
     title_graphic(root);
     start_menu(root, started, tutorial);
-    root.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(16));
+    root.ctx().request_repaint_after(std::time::Duration::from_millis(16));
 }
 
 pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
     egui::Rect::from_min_size(
-        normalized_pos(
-            screen,
-            0.057_291_668,
-            0.324_074_06 + index as f32 * MENU_ROW_SPACING,
-        ),
+        normalized_pos(screen, 0.057_291_668, 0.324_074_06 + index as f32 * MENU_ROW_SPACING),
         normalized_size(screen, 0.229_166_67, 0.064_814_81),
     )
 }
@@ -69,11 +64,7 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
     }
 
     for (index, label) in MENU_ITEMS.iter().enumerate() {
-        let color = if index == selected {
-            ORANGE
-        } else {
-            MENU_INACTIVE
-        };
+        let color = if index == selected { ORANGE } else { MENU_INACTIVE };
         let row_y = 1.0 / 3.0 + index as f32 * MENU_ROW_SPACING;
         let center_y = row_y + 0.020_370_37;
         let painter = root.painter();
@@ -81,10 +72,7 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
             normalized_pos(screen, 0.080_729_164, center_y),
             egui::Align2::LEFT_CENTER,
             *label,
-            egui::FontId::new(
-                screen.height() * 0.044_444_446,
-                egui::FontFamily::Proportional,
-            ),
+            egui::FontId::new(screen.height() * 0.044_444_446, egui::FontFamily::Proportional),
             color,
         );
         if index == selected {
@@ -107,15 +95,9 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
             root.input(|input| input.key_pressed(egui::Key::Enter))
                 .then_some(selected)
         })
-        .or_else(|| {
-            root.input(|input| input.key_pressed(egui::Key::Space))
-                .then_some(0)
-        });
+        .or_else(|| root.input(|input| input.key_pressed(egui::Key::Space)).then_some(0));
     if let Some(index) = activate {
-        activation = Some(MenuActivation {
-            index,
-            started_at: now,
-        });
+        activation = Some(MenuActivation { index, started_at: now });
     }
     if let Some(active) = activation
         && activation_ready(now - active.started_at)
@@ -212,11 +194,7 @@ pub(super) fn paint_bottom_corner(ui: &egui::Ui, corner: BottomCorner) {
             "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
         )),
     };
-    paint_svg(
-        ui,
-        image,
-        background_rect(ui.max_rect(), egui::Align2::LEFT_TOP),
-    );
+    paint_svg(ui, image, background_rect(ui.max_rect(), egui::Align2::LEFT_TOP));
 }
 
 pub(super) fn title_rect(screen: egui::Rect) -> egui::Rect {
@@ -232,18 +210,13 @@ fn normalized_pos(screen: egui::Rect, x: f32, y: f32) -> egui::Pos2 {
 }
 
 fn normalized_size(screen: egui::Rect, x: f32, y: f32) -> egui::Vec2 {
-    egui::vec2(
-        screen.height() * BACKGROUND_ASPECT_RATIO * x,
-        screen.height() * y,
-    )
+    egui::vec2(screen.height() * BACKGROUND_ASPECT_RATIO * x, screen.height() * y)
 }
 
 fn title_graphic(ui: &egui::Ui) {
     paint_svg(
         ui,
-        egui::Image::new(egui::include_image!(
-            "../../../assets/landing/nanoplan_title.svg"
-        )),
+        egui::Image::new(egui::include_image!("../../../assets/landing/nanoplan_title.svg")),
         title_rect(ui.max_rect()),
     );
 }
@@ -254,9 +227,7 @@ fn paint_svg(ui: &egui::Ui, image: egui::Image<'_>, rect: egui::Rect) {
         ui.pixels_per_point(),
         ui.input(|input| input.max_texture_side),
     );
-    if let Ok(egui::load::TexturePoll::Ready { texture }) =
-        image.load_for_size(ui.ctx(), raster_size)
-    {
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), raster_size) {
         ui.painter().image(
             texture.id,
             rect,

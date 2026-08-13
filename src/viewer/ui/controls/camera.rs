@@ -5,11 +5,7 @@ use super::super::style::caps_font;
 use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
 pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_width: f32) {
-    ui.label(
-        egui::RichText::new("FOLLOW")
-            .font(caps_font(11.0))
-            .color(DIM_TEXT),
-    );
+    ui.label(egui::RichText::new("FOLLOW").font(caps_font(11.0)).color(DIM_TEXT));
     ui.checkbox(
         &mut live.camera.follow,
         if compact { "Follow" } else { "Follow camera" },
@@ -26,11 +22,7 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
         &mut live.camera.smooth,
         if compact { "Smooth" } else { "Smooth motion" },
     );
-    ui.label(
-        egui::RichText::new("ZOOM")
-            .font(caps_font(11.0))
-            .color(DIM_TEXT),
-    );
+    ui.label(egui::RichText::new("ZOOM").font(caps_font(11.0)).color(DIM_TEXT));
     let zoom = ui
         .scope(|ui| {
             if compact {
@@ -47,12 +39,7 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
         })
         .inner;
     zoom.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Zoom control"));
-    let labels = [
-        "-15°",
-        if compact { "NORTH" } else { "NORTH UP" },
-        "+15°",
-        "RESET",
-    ];
+    let labels = ["-15°", if compact { "NORTH" } else { "NORTH UP" }, "+15°", "RESET"];
     let mut clicked = [false; 4];
     ui.scope(|ui| {
         if compact {
@@ -64,11 +51,8 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
                 for column in 0..2 {
                     let index = row * 2 + column;
                     let height = ui.spacing().interact_size.y;
-                    let text =
-                        egui::RichText::new(labels[index]).size(if compact { 12.0 } else { 15.0 });
-                    clicked[index] = ui
-                        .add_sized([button_width, height], egui::Button::new(text))
-                        .clicked();
+                    let text = egui::RichText::new(labels[index]).size(if compact { 12.0 } else { 15.0 });
+                    clicked[index] = ui.add_sized([button_width, height], egui::Button::new(text)).clicked();
                 }
             });
         }

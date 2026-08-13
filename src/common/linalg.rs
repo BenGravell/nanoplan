@@ -26,9 +26,6 @@ pub(crate) fn vec_add<const N: usize>(a: [f64; N], b: [f64; N]) -> [f64; N] {
     std::array::from_fn(|i| a[i] + b[i])
 }
 
-pub(crate) fn mat_add<const M: usize, const N: usize>(
-    a: [[f64; N]; M],
-    b: [[f64; N]; M],
-) -> [[f64; N]; M] {
+pub(crate) fn mat_add<const M: usize, const N: usize>(a: [[f64; N]; M], b: [[f64; N]; M]) -> [[f64; N]; M] {
     std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
 }

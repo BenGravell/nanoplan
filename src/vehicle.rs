@@ -42,9 +42,7 @@ pub(crate) const AIR_DENSITY_KG_M3: f64 = 1.225;
 /// the Ford GT's 347 km/h claimed top speed.
 pub(crate) const DRAG_AREA_M2: f64 = 1.66;
 /// Aerodynamic-drag acceleration per squared speed.
-pub(crate) const AERO_DRAG_ACCEL_COEFFICIENT: f64 =
-    0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 / EGO_MASS_KG;
+pub(crate) const AERO_DRAG_ACCEL_COEFFICIENT: f64 = 0.5 * AIR_DENSITY_KG_M3 * DRAG_AREA_M2 / EGO_MASS_KG;
 /// Drag-limited speed under maximum requested acceleration.
-pub(crate) static MAX_TERMINAL_SPEED_MPS: LazyLock<f64> = LazyLock::new(|| {
-    ((MAX_LON_ACCEL - ROLLING_RESISTANCE_ACCEL) / AERO_DRAG_ACCEL_COEFFICIENT).sqrt()
-});
+pub(crate) static MAX_TERMINAL_SPEED_MPS: LazyLock<f64> =
+    LazyLock::new(|| ((MAX_LON_ACCEL - ROLLING_RESISTANCE_ACCEL) / AERO_DRAG_ACCEL_COEFFICIENT).sqrt());

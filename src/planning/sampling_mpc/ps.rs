@@ -29,12 +29,7 @@ impl Optimizer for PredictiveSampling {
         self.cfg
     }
 
-    fn sample_control_knots(
-        &mut self,
-        nominal: &[Knot],
-        sample_base: usize,
-        num_rollouts: usize,
-    ) -> Vec<Vec<Knot>> {
+    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
         let sigma = self.sigma;
         let cfg = self.cfg;
         noised_knots(nominal, num_rollouts, sample_base, |n| {

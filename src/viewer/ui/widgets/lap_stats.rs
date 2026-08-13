@@ -7,12 +7,7 @@ use crate::viewer::live::LapStats;
 
 use super::super::style::caps_font;
 
-pub(crate) fn draw(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    stats: LapStats,
-    grid_position: (usize, usize),
-) {
+pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, stats: LapStats, grid_position: (usize, usize)) {
     let scale = rect.height() / 121.0;
     painter.text(
         rect.left_top(),

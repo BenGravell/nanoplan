@@ -3,9 +3,7 @@
 use std::f64::consts::PI;
 
 use super::model::GeneratedTrack;
-use crate::vehicle::{
-    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
-};
+use crate::vehicle::{AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_LON_ACCEL, ROLLING_RESISTANCE_ACCEL};
 
 const STRAIGHT_HALF_WIDTH_M: f64 = 10.0;
 const CURVED_HALF_WIDTH_M: f64 = 5.0;
@@ -213,8 +211,7 @@ fn point_distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 
 fn chirp_offset(along: f64, length: f64, amplitude: f64) -> f64 {
     let u = (along / length).clamp(0.0, 1.0);
-    let frequency_ramp =
-        CHIRP_START_FREQUENCY_RATIO * u + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
+    let frequency_ramp = CHIRP_START_FREQUENCY_RATIO * u + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
     let phase_cycles = CHIRP_CYCLES * frequency_ramp;
     let period = phase_cycles.floor() as usize;
     if period % 2 == 1 || phase_cycles >= CHIRP_CYCLES {
@@ -271,14 +268,7 @@ fn sample(points: &mut Vec<[f64; 2]>, approximate_length: f64, point: impl Fn(f6
     points.extend((0..count).map(|i| point(i as f64 / count as f64)));
 }
 
-fn superellipse_cap(
-    center_x: f64,
-    angle: f64,
-    side: f64,
-    reach: f64,
-    half_separation: f64,
-    exponent: f64,
-) -> [f64; 2] {
+fn superellipse_cap(center_x: f64, angle: f64, side: f64, reach: f64, half_separation: f64, exponent: f64) -> [f64; 2] {
     [
         center_x + side * reach * angle.cos().abs().powf(exponent),
         half_separation * angle.sin().signum() * angle.sin().abs().powf(exponent),
@@ -321,17 +311,13 @@ mod tests {
                 .all(|&width| width == STRAIGHT_HALF_WIDTH_M)
         );
 
-        let cap_samples = (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M)
-            / SAMPLE_STEP_M)
-            .ceil() as usize;
+        let cap_samples =
+            (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M) / SAMPLE_STEP_M).ceil() as usize;
         let right_cap = &generated.right[straight_samples..straight_samples + cap_samples];
         assert_eq!(right_cap[0], STRAIGHT_HALF_WIDTH_M);
         assert!(right_cap.windows(2).all(|pair| pair[1] < pair[0]));
         assert!(right_cap.last().unwrap() > &CURVED_HALF_WIDTH_M);
-        assert_eq!(
-            generated.right[straight_samples + cap_samples],
-            CURVED_HALF_WIDTH_M
-        );
+        assert_eq!(generated.right[straight_samples + cap_samples], CURVED_HALF_WIDTH_M);
 
         let left_cap = &generated.right[generated.right.len() - cap_samples..];
         assert_eq!(left_cap[0], CURVED_HALF_WIDTH_M);
@@ -355,9 +341,7 @@ mod tests {
         let u_for_phase_cycles = |phase_cycles: f64| {
             let ramp = phase_cycles / CHIRP_CYCLES;
             (-(CHIRP_START_FREQUENCY_RATIO)
-                + (CHIRP_START_FREQUENCY_RATIO.powi(2)
-                    + 4.0 * (1.0 - CHIRP_START_FREQUENCY_RATIO) * ramp)
-                    .sqrt())
+                + (CHIRP_START_FREQUENCY_RATIO.powi(2) + 4.0 * (1.0 - CHIRP_START_FREQUENCY_RATIO) * ramp).sqrt())
                 / (2.0 * (1.0 - CHIRP_START_FREQUENCY_RATIO))
         };
         for period in 0..CHIRP_CYCLES as usize {
@@ -393,8 +377,7 @@ mod tests {
                     .enumerate()
                     .filter(|(i, _)| {
                         let u = (*i + 1) as f64 / count as f64;
-                        let ramp = CHIRP_START_FREQUENCY_RATIO * u
-                            + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
+                        let ramp = CHIRP_START_FREQUENCY_RATIO * u + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
                         (from..to).contains(&ramp)
                     })
                     .map(|(_, points)| polyline_curvature(points[0], points[1], points[2]))
@@ -415,30 +398,24 @@ mod tests {
     #[test]
     fn large_end_caps_support_fifty_percent_of_terminal_speed() {
         let generated = generate(0);
-        let straight_samples =
-            (acceleration_distance(TERMINAL_SPEED_FRACTION).ceil() / SAMPLE_STEP_M).ceil() as usize;
-        let cap_samples = (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M)
-            / SAMPLE_STEP_M)
-            .ceil() as usize;
+        let straight_samples = (acceleration_distance(TERMINAL_SPEED_FRACTION).ceil() / SAMPLE_STEP_M).ceil() as usize;
+        let cap_samples =
+            (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M) / SAMPLE_STEP_M).ceil() as usize;
         let peak_curvature = generated.points[straight_samples..straight_samples + cap_samples]
             .windows(3)
             .map(|points| polyline_curvature(points[0], points[1], points[2]))
             .fold(0.0, f64::max);
         let sustainable_speed = (MAX_ABS_LAT_ACCEL / peak_curvature).sqrt();
         let fraction = sustainable_speed / *MAX_TERMINAL_SPEED_MPS;
-        assert!(
-            (0.50..=0.55).contains(&fraction),
-            "speed fraction: {fraction}"
-        );
+        assert!((0.50..=0.55).contains(&fraction), "speed fraction: {fraction}");
     }
 
     #[test]
     fn small_track_is_two_straights_with_a_thirty_second_reference_lap() {
         let generated = generate(1);
         let straight_samples = (SMALL_STRAIGHT_LENGTH_M / SAMPLE_STEP_M).ceil() as usize;
-        let cap_samples = (cap_length_estimate(SMALL_END_CAP_REACH_M, SMALL_HALF_SEPARATION_M)
-            / SAMPLE_STEP_M)
-            .ceil() as usize;
+        let cap_samples =
+            (cap_length_estimate(SMALL_END_CAP_REACH_M, SMALL_HALF_SEPARATION_M) / SAMPLE_STEP_M).ceil() as usize;
         assert_eq!(generated.points.len(), 2 * (straight_samples + cap_samples));
         assert!(
             generated.points[..straight_samples]
@@ -459,9 +436,6 @@ mod tests {
             .map(|(&a, &b)| point_distance(a, b))
             .sum::<f64>();
         let lap_time = lap_length / (SMALL_REFERENCE_SPEED_FRACTION * *MAX_TERMINAL_SPEED_MPS);
-        assert!(
-            (lap_time - SMALL_TARGET_LAP_TIME_S).abs() < 0.1,
-            "lap time: {lap_time}"
-        );
+        assert!((lap_time - SMALL_TARGET_LAP_TIME_S).abs() < 0.1, "lap time: {lap_time}");
     }
 }

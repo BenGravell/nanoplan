@@ -40,10 +40,7 @@ pub(crate) fn draw(painter: &egui::Painter, rect: egui::Rect, velocity: f64) {
     let center = free_area.center();
     let value = format!("{speed:04.1}");
     let mut value_font = egui::FontId::monospace(VALUE_FONT_SIZE * scale);
-    let value_width = painter
-        .layout_no_wrap(value.clone(), value_font.clone(), TEXT)
-        .size()
-        .x;
+    let value_width = painter.layout_no_wrap(value.clone(), value_font.clone(), TEXT).size().x;
     if value_width > free_area.width() {
         value_font.size *= free_area.width() / value_width;
     }
@@ -106,9 +103,7 @@ fn ribbon_mesh(
         .iter()
         .enumerate()
         .map(|(index, &point)| {
-            point
-                + inward_miter(path, index)
-                    * thickness(outer_distances[index], bottom_length, scale)
+            point + inward_miter(path, index) * thickness(outer_distances[index], bottom_length, scale)
         })
         .collect();
     let sections = ribbon_sections(path, &inner);
@@ -166,15 +161,13 @@ fn ribbon_sections(outer: &[egui::Pos2], inner: &[egui::Pos2]) -> Vec<(egui::Pos
         let inner_before = point_before(inner[index], inner[index - 1], blend);
         let outer_before = project_onto_segment(inner_before, outer[index - 1], outer[index]);
         let requested_outer_after = point_before(outer[index], outer[index + 1], blend);
-        let first_square_outer_after =
-            project_onto_segment(inner[index], outer[index], outer[index + 1]);
-        let outer_after = if requested_outer_after.distance(outer[index])
-            >= first_square_outer_after.distance(outer[index])
-        {
-            requested_outer_after
-        } else {
-            first_square_outer_after
-        };
+        let first_square_outer_after = project_onto_segment(inner[index], outer[index], outer[index + 1]);
+        let outer_after =
+            if requested_outer_after.distance(outer[index]) >= first_square_outer_after.distance(outer[index]) {
+                requested_outer_after
+            } else {
+                first_square_outer_after
+            };
         let inner_after = project_onto_segment(outer_after, inner[index], inner[index + 1]);
 
         // The edge is perpendicular on either side of the corner. Within the
@@ -296,9 +289,7 @@ mod tests {
         let inner: Vec<_> = path
             .iter()
             .enumerate()
-            .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
-            })
+            .map(|(index, &point)| point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0))
             .collect();
         let sections = ribbon_sections(&path, &inner);
         let lengths: Vec<_> = sections
@@ -306,12 +297,8 @@ mod tests {
             .map(|section| section_center(section[0]).distance(section_center(section[1])))
             .collect();
         let total: f32 = lengths.iter().sum();
-        let at_corner =
-            ribbon_mesh(&path, lengths[0] / total, 1.0, |_| egui::Color32::WHITE).unwrap();
-        let past_corner = ribbon_mesh(&path, (lengths[0] + 1.0) / total, 1.0, |_| {
-            egui::Color32::WHITE
-        })
-        .unwrap();
+        let at_corner = ribbon_mesh(&path, lengths[0] / total, 1.0, |_| egui::Color32::WHITE).unwrap();
+        let past_corner = ribbon_mesh(&path, (lengths[0] + 1.0) / total, 1.0, |_| egui::Color32::WHITE).unwrap();
 
         assert_eq!(at_corner.vertices, past_corner.vertices[..4]);
         assert_eq!(at_corner.indices, past_corner.indices[..6]);
@@ -328,9 +315,7 @@ mod tests {
         let inner: Vec<_> = path
             .iter()
             .enumerate()
-            .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
-            })
+            .map(|(index, &point)| point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0))
             .collect();
         let sections = ribbon_sections(&path, &inner);
 
@@ -362,37 +347,23 @@ mod tests {
             egui::pos2(130.0, 70.0),
             egui::pos2(130.0, 0.0),
         ];
-        let outer_distances = [
-            0.0,
-            100.0,
-            100.0 + 30.0 * 2.0_f32.sqrt(),
-            170.0 + 30.0 * 2.0_f32.sqrt(),
-        ];
+        let outer_distances = [0.0, 100.0, 100.0 + 30.0 * 2.0_f32.sqrt(), 170.0 + 30.0 * 2.0_f32.sqrt()];
         let inner: Vec<_> = path
             .iter()
             .enumerate()
-            .map(|(index, &point)| {
-                point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0)
-            })
+            .map(|(index, &point)| point + inward_miter(&path, index) * thickness(outer_distances[index], 100.0, 1.0))
             .collect();
         let sections = ribbon_sections(&path, &inner);
 
         assert!((sections[0].0.x - sections[0].1.x).abs() < GEOMETRY_EPSILON);
         assert!((sections[1].0.x - sections[1].1.x).abs() < GEOMETRY_EPSILON);
-        assert!(
-            (sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs()
-                < GEOMETRY_EPSILON
-        );
-        assert!(
-            (sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs()
-                < GEOMETRY_EPSILON
-        );
+        assert!((sections[sections.len() - 2].0.y - sections[sections.len() - 2].1.y).abs() < GEOMETRY_EPSILON);
+        assert!((sections[sections.len() - 1].0.y - sections[sections.len() - 1].1.y).abs() < GEOMETRY_EPSILON);
     }
 
     #[test]
     fn gauge_keeps_its_content_area_clear_of_its_arms() {
-        let gauge =
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 120.0 * 3.0 / 5.0));
+        let gauge = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 120.0 * 3.0 / 5.0));
         let free = free_area(gauge, 1.0);
 
         assert!(free.right() <= gauge.right() - INSET - HIGH_THICKNESS);

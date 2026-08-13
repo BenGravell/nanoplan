@@ -31,10 +31,7 @@ impl Path {
 
     pub(crate) fn pose_at(&self, s: f64) -> ([f64; 2], f64) {
         let s = s.clamp(0.0, self.length());
-        let i = self
-            .s
-            .partition_point(|&x| x < s)
-            .clamp(1, self.pts.len() - 1);
+        let i = self.s.partition_point(|&x| x < s).clamp(1, self.pts.len() - 1);
         let (a, b) = (self.pts[i - 1], self.pts[i]);
         let u = (s - self.s[i - 1]) / (self.s[i] - self.s[i - 1]).max(1e-9);
         (
@@ -60,9 +57,7 @@ impl Path {
         }
         let (s, d) = self.project(state.position());
         let projection = (s, d, self.pose_at(s).1);
-        self.actor_projections
-            .borrow_mut()
-            .push((state, projection));
+        self.actor_projections.borrow_mut().push((state, projection));
         projection
     }
 
@@ -71,16 +66,8 @@ impl Path {
         self.actor_projections.borrow().len()
     }
 
-    pub(crate) fn project_near(
-        &self,
-        p: impl Into<Position>,
-        hint: f64,
-        window: f64,
-    ) -> (f64, f64) {
-        let lo = self
-            .s
-            .partition_point(|&x| x < hint - window)
-            .saturating_sub(1);
+    pub(crate) fn project_near(&self, p: impl Into<Position>, hint: f64, window: f64) -> (f64, f64) {
+        let lo = self.s.partition_point(|&x| x < hint - window).saturating_sub(1);
         let hi = self.s.partition_point(|&x| x <= hint + window).max(lo + 1);
         self.project_range(p.into(), lo, hi)
     }

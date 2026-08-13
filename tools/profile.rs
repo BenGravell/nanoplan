@@ -39,8 +39,7 @@ Example:
 }
 
 fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    args.next()
-        .ok_or_else(|| format!("{flag} requires a value"))
+    args.next().ok_or_else(|| format!("{flag} requires a value"))
 }
 
 fn number(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<f64, String> {
@@ -105,13 +104,7 @@ fn run() -> Result<bool, String> {
     for seam in &profile.seams {
         println!(
             "{:<28} calls {:>5}  mean {:>8.3}ms  max {:>8.3}ms  clocks {:>8.1}/{:>6} total {}",
-            seam.name,
-            seam.calls,
-            seam.mean_ms,
-            seam.max_ms,
-            seam.mean_clocks,
-            seam.max_clocks,
-            seam.total_clocks,
+            seam.name, seam.calls, seam.mean_ms, seam.max_ms, seam.mean_clocks, seam.max_clocks, seam.total_clocks,
         );
     }
 

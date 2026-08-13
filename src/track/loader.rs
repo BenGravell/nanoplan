@@ -99,10 +99,7 @@ pub(crate) async fn load() -> Result<(), String> {
         if !response.ok() {
             return Err(format!("download {file}: HTTP {}", response.status()));
         }
-        response
-            .text()
-            .await
-            .map_err(|error| format!("read {file}: {error}"))
+        response.text().await.map_err(|error| format!("read {file}: {error}"))
     }))
     .await?;
     install_track_data(&tracks)?;
@@ -123,8 +120,7 @@ pub(crate) fn install_test_catalog() {
     use super::model::TrackModel;
 
     LOADED_CATALOG.get_or_init(|| {
-        let circuit =
-            Arc::new(Circuit::parse("0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n").unwrap());
+        let circuit = Arc::new(Circuit::parse("0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n").unwrap());
         let model = TrackModel::train(&[circuit.training_track()]).unwrap();
         LoadedCatalog {
             circuits: vec![circuit; TRACK_CATALOG.len()],

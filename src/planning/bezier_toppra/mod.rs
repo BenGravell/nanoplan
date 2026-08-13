@@ -11,8 +11,8 @@ use crate::simulation::curvature_limit;
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 use crate::vehicle::{
-    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL,
-    MIN_LON_ACCEL, ROLLING_RESISTANCE_ACCEL,
+    AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
+    ROLLING_RESISTANCE_ACCEL,
 };
 
 const GRID_STEPS: usize = 100;
@@ -33,10 +33,9 @@ impl Planner for BezierToppraPlanner {
             ctx.work(1);
             bezier
         });
-        let horizon_m = (ego.speed.max(0.0) * PLANNING_HORIZON_S
-            + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2))
-        .max(lookahead)
-        .min(path.length() - s0);
+        let horizon_m = (ego.speed.max(0.0) * PLANNING_HORIZON_S + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2))
+            .max(lookahead)
+            .min(path.length() - s0);
         let ds = (horizon_m / GRID_STEPS as f64).max(1e-3);
 
         let speed2 = ctx.time("optimize", || {
@@ -60,8 +59,7 @@ impl Planner for BezierToppraPlanner {
 
             // Dynamic collision constraints are tightened monotonically from
             // the arrival times of the current parameterization.
-            let mut speed2 =
-                toppra_profile_clocked(ego.speed.max(0.0).powi(2), ds, &max_speed2, ctx);
+            let mut speed2 = toppra_profile_clocked(ego.speed.max(0.0).powi(2), ds, &max_speed2, ctx);
             for _ in 0..2 {
                 let times = arrival_times_clocked(ds, &speed2, ctx);
                 let mut changed = false;
@@ -71,8 +69,7 @@ impl Planner for BezierToppraPlanner {
                     if ctx.actors.iter().any(|actor| {
                         ctx.work(1);
                         let p = predict(actor, &path, time);
-                        (xy[0] - p.x).hypot(xy[1] - p.y)
-                            < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
+                        (xy[0] - p.x).hypot(xy[1] - p.y) < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
                     }) {
                         let stop = i - 1;
                         if max_speed2[stop] != 0.0 {
@@ -90,8 +87,7 @@ impl Planner for BezierToppraPlanner {
             // Feed the first full-footprint road collision back into the
             // speed envelope until the complete rollout is feasible.
             for _ in 0..GRID_STEPS {
-                let controls =
-                    extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
+                let controls = extract_controls_clocked(ego, ctx, &path, s0, &b, lookahead, ds, &speed2);
                 let mut state = ego;
                 let mut distance = 0.0;
                 let collision = controls.into_iter().find_map(|u| {
@@ -99,18 +95,11 @@ impl Planner for BezierToppraPlanner {
                     let prev = state;
                     distance += state.speed.max(0.0) * ctx.road.dt;
                     state = world_step(state, u, ctx.road.dt);
-                    (collide_with_road_barriers(
-                        prev,
-                        state,
-                        crate::geometry::EGO_FOOTPRINT,
-                        ctx.road,
-                    ) != state)
+                    (collide_with_road_barriers(prev, state, crate::geometry::EGO_FOOTPRINT, ctx.road) != state)
                         .then_some(distance)
                 });
                 let Some(distance) = collision else { break };
-                let collision_index = ((distance / ds) as usize)
-                    .saturating_sub(1)
-                    .min(GRID_STEPS - 1);
+                let collision_index = ((distance / ds) as usize).saturating_sub(1).min(GRID_STEPS - 1);
                 let Some(stop) = (0..=collision_index).rev().find(|&i| max_speed2[i] != 0.0) else {
                     break;
                 };
@@ -126,12 +115,7 @@ impl Planner for BezierToppraPlanner {
     }
 }
 
-fn toppra_profile_clocked(
-    start_speed2: f64,
-    ds: f64,
-    max_speed2: &[f64],
-    ctx: &Context,
-) -> Vec<f64> {
+fn toppra_profile_clocked(start_speed2: f64, ds: f64, max_speed2: &[f64], ctx: &Context) -> Vec<f64> {
     let speed2 = toppra_profile(start_speed2, ds, max_speed2);
     ctx.work(2 * (max_speed2.len() - 1) as u64);
     speed2
@@ -218,8 +202,7 @@ fn extract_controls(
             let u = Control {
                 acceleration: (path_accel + longitudinal_resistance_accel(state.speed))
                     .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
-                curvature: (planned_curvature(b, path, s0, lookahead, distance)
-                    + feedback.curvature)
+                curvature: (planned_curvature(b, path, s0, lookahead, distance) + feedback.curvature)
                     .clamp(-curvature_limit(state.speed), curvature_limit(state.speed)),
             };
             distance += state.speed.max(0.0) * ctx.road.dt;
@@ -240,13 +223,7 @@ fn fit_bezier(ego: State, path: &Path, s0: f64, lookahead: f64) -> [[f64; 2]; 4]
     ]
 }
 
-fn planned_position(
-    b: &[[f64; 2]; 4],
-    path: &Path,
-    s0: f64,
-    lookahead: f64,
-    distance: f64,
-) -> [f64; 2] {
+fn planned_position(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> [f64; 2] {
     if distance <= lookahead {
         bezier_point(b, distance / lookahead)
     } else {
@@ -254,13 +231,7 @@ fn planned_position(
     }
 }
 
-fn planned_curvature(
-    b: &[[f64; 2]; 4],
-    path: &Path,
-    s0: f64,
-    lookahead: f64,
-    distance: f64,
-) -> f64 {
+fn planned_curvature(b: &[[f64; 2]; 4], path: &Path, s0: f64, lookahead: f64, distance: f64) -> f64 {
     if distance <= lookahead {
         bezier_curvature(b, distance / lookahead)
     } else {
@@ -294,10 +265,8 @@ fn bezier_d1(p: &[[f64; 2]; 4], t: f64) -> [f64; 2] {
 fn bezier_d2(p: &[[f64; 2]; 4], t: f64) -> [f64; 2] {
     let mt = 1.0 - t;
     [
-        6.0 * mt * (p[2][0] - 2.0 * p[1][0] + p[0][0])
-            + 6.0 * t * (p[3][0] - 2.0 * p[2][0] + p[1][0]),
-        6.0 * mt * (p[2][1] - 2.0 * p[1][1] + p[0][1])
-            + 6.0 * t * (p[3][1] - 2.0 * p[2][1] + p[1][1]),
+        6.0 * mt * (p[2][0] - 2.0 * p[1][0] + p[0][0]) + 6.0 * t * (p[3][0] - 2.0 * p[2][0] + p[1][0]),
+        6.0 * mt * (p[2][1] - 2.0 * p[1][1] + p[0][1]) + 6.0 * t * (p[3][1] - 2.0 * p[2][1] + p[1][1]),
     ]
 }
 
