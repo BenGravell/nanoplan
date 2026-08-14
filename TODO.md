@@ -1,34 +1,6 @@
 # TODO
 
 
---
-
-src/world/mod.rs
-
-self.actors.push(SmartActor {
-                id: next_id,
-                state: State::from((
-                    Position::new(p.x + lateral * left.x, p.y + lateral * left.y),
-                    yaw,
-                    5.0 + 4.0 * rng.uniform(),
-                )),
-                personality,
-                track_x: x,
-                lateral,
-                lateral_target: lateral,
-                next_wander_x: x + 15.0 + 25.0 * actor_rng.uniform(),
-                rng: actor_rng,
-            });
-
-
-no magic numbers, use named constants
-
-
-
---
-src/world/mod.rs
-
-file is too big, split up using conceptual divisions
 
 --
 Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 
