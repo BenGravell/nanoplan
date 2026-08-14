@@ -72,7 +72,7 @@ ureq = "3.3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 gloo-net = { version = "0.7", default-features = false, features = ["http"] }
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Navigator", "Storage", "Window"] }
+web-sys = { version = "0.3", features = ["Navigator", "Performance", "Storage", "Window"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.35", features = ["wgpu"] }
@@ -94,3 +94,9 @@ opt-level = 3
 opt-level = 3
 lto = "thin"
 strip = "debuginfo"
+
+# browser compilation dominates cold startup; keep native release
+# fast and give Trunk a less complex WASM module to compile.
+[profile.web]
+inherits = "release"
+opt-level = "s"

@@ -6,9 +6,9 @@ Nanoplan provides procedurally generated, preset, and real-world tracks.
 
 The real-world tracks come from the [TUM racetrack database](https://github.com/TUMFTM/racetrack-database).
 
-Before opening the viewer, `loader.rs` loads many real-world tracks from a single cache entry or downloads them from a pinned revision of the [TUM racetrack database](https://github.com/TUMFTM/racetrack-database).
-It parses and validates every circuit before installing the catalog.
-The first startup downloads the catalog; later desktop starts use one combined file in a cache directory, while web starts use one `localStorage` entry.
+After opening the viewer with a built-in track, `loader.rs` loads the real-world tracks from a single cache entry or downloads them from a pinned revision of the [TUM racetrack database](https://github.com/TUMFTM/racetrack-database).
+It installs the downloaded source catalog immediately, then parses and validates a circuit when the user selects it.
+The first startup downloads the catalog in the background; later desktop starts use one combined file in a cache directory, while web starts use one `localStorage` entry.
 Delete that file or entry to force a fresh download.
 
 The source CSV files are not included in this repository.

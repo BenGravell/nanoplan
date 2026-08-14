@@ -3,7 +3,6 @@
 use std::sync::{Arc, OnceLock};
 
 use super::circuit::Circuit;
-use super::model::TrackModel;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TrackInfo {
@@ -138,15 +137,43 @@ pub(crate) const TRACK_CATALOG: [TrackInfo; 24] = [
 pub(super) static LOADED_CATALOG: OnceLock<LoadedCatalog> = OnceLock::new();
 
 pub(super) struct LoadedCatalog {
-    pub(super) circuits: Vec<Arc<Circuit>>,
-    pub(super) model: TrackModel,
+    pub(super) sources: Vec<String>,
+    pub(super) circuits: Vec<OnceLock<Arc<Circuit>>>,
+}
+
+impl LoadedCatalog {
+    pub(super) fn circuit(&self, index: usize) -> Result<Arc<Circuit>, String> {
+        let source = self
+            .sources
+            .get(index)
+            .ok_or_else(|| "track catalog index out of bounds".to_owned())?;
+        let cached = self
+            .circuits
+            .get(index)
+            .ok_or_else(|| "track catalog index out of bounds".to_owned())?;
+        if let Some(circuit) = cached.get() {
+            return Ok(circuit.clone());
+        }
+        let track = TRACK_CATALOG[index];
+        let circuit = Circuit::parse(source)
+            .and_then(|circuit| {
+                circuit
+                    .is_simple()
+                    .then_some(circuit)
+                    .ok_or_else(|| "road intersects itself".to_owned())
+            })
+            .map(Arc::new)
+            .map_err(|error| format!("{}: {error}", track.id))?;
+        let _ = cached.set(circuit.clone());
+        Ok(circuit)
+    }
 }
 
 pub(super) fn loaded_catalog() -> Option<&'static LoadedCatalog> {
     LOADED_CATALOG.get()
 }
 
-pub(super) fn track_catalog_loaded() -> bool {
+pub(crate) fn track_catalog_loaded() -> bool {
     loaded_catalog().is_some()
 }
 
@@ -158,25 +185,10 @@ pub(super) fn install_track_data(data: &[String]) -> Result<(), String> {
             data.len()
         ));
     }
-    let circuits = data
-        .iter()
-        .zip(TRACK_CATALOG.iter())
-        .map(|(csv, track)| {
-            Circuit::parse(csv)
-                .and_then(|circuit| {
-                    circuit
-                        .is_simple()
-                        .then_some(circuit)
-                        .ok_or_else(|| "road intersects itself".to_owned())
-                })
-                .map(Arc::new)
-                .map_err(|error| format!("{}: {error}", track.id))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     LOADED_CATALOG
         .set(LoadedCatalog {
-            circuits,
-            model: TrackModel::pretrained(),
+            sources: data.to_vec(),
+            circuits: (0..data.len()).map(|_| OnceLock::new()).collect(),
         })
         .map_err(|_| "track catalog already loaded".to_owned())
 }
@@ -184,6 +196,17 @@ pub(super) fn install_track_data(data: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn circuit_processing_is_deferred_until_selection() {
+        let catalog = LoadedCatalog {
+            sources: vec!["not a circuit".to_owned()],
+            circuits: vec![OnceLock::new()],
+        };
+
+        assert!(catalog.circuits[0].get().is_none());
+        assert!(catalog.circuit(0).is_err());
+    }
 
     #[test]
     fn ids_are_unique_lowercase_source_symbols() {

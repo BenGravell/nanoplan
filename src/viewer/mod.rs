@@ -109,56 +109,96 @@ impl Default for UiState {
 }
 
 pub(crate) fn run() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "nanoplan".into(),
-                fit_canvas_to_parent: true,
-                recognize_pinch_gesture: true,
-                desired_maximum_frame_latency: NonZeroU32::new(1),
-                ..default()
-            }),
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "nanoplan".into(),
+            fit_canvas_to_parent: true,
+            recognize_pinch_gesture: true,
+            desired_maximum_frame_latency: NonZeroU32::new(1),
             ..default()
-        }))
-        .add_plugins(ResizeDebouncePlugin)
-        .insert_resource(RenderErrorHandler(recover_failed_resize))
-        .add_plugins(EguiPlugin::default())
-        .init_gizmo_group::<live::PlannedTrajectoryGizmos>()
-        .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
-        .init_gizmo_group::<live::DiagnosticPointGizmos>()
-        .insert_resource(ClearColor(Color::srgb_u8(
-            NON_DRIVABLE_RGB.0,
-            NON_DRIVABLE_RGB.1,
-            NON_DRIVABLE_RGB.2,
-        )))
-        .init_resource::<UiState>()
-        .init_resource::<DrivingCanvas>()
-        .init_non_send::<live::Live>()
-        .add_systems(
-            Startup,
-            (
-                |mut commands: Commands| {
-                    commands.spawn((Camera2d, VIEW_MSAA));
-                },
-                live::setup_grid,
-                live::setup_road_surface,
-                live::setup_carpet,
-            ),
+        }),
+        ..default()
+    }))
+    .add_plugins(ResizeDebouncePlugin)
+    .insert_resource(RenderErrorHandler(recover_failed_resize))
+    .add_plugins(EguiPlugin::default())
+    .init_gizmo_group::<live::PlannedTrajectoryGizmos>()
+    .init_gizmo_group::<live::DiagnosticTrajectoryGizmos>()
+    .init_gizmo_group::<live::DiagnosticPointGizmos>()
+    .insert_resource(ClearColor(Color::srgb_u8(
+        NON_DRIVABLE_RGB.0,
+        NON_DRIVABLE_RGB.1,
+        NON_DRIVABLE_RGB.2,
+    )))
+    .init_resource::<UiState>()
+    .init_resource::<DrivingCanvas>()
+    .init_non_send::<live::Live>()
+    .add_systems(
+        Startup,
+        (
+            |mut commands: Commands| {
+                commands.spawn((Camera2d, VIEW_MSAA));
+            },
+            live::setup_grid,
+            live::setup_road_surface,
+            live::setup_carpet,
+        ),
+    )
+    .add_systems(EguiPrimaryContextPass, ui::ui)
+    .add_systems(
+        Update,
+        (
+            live::camera_input,
+            live::update,
+            live::configure_diagnostics,
+            live::configure_plan,
+            live::draw,
         )
-        .add_systems(EguiPrimaryContextPass, ui::ui)
-        .add_systems(
-            Update,
-            (
-                live::camera_input,
-                live::update,
-                live::configure_diagnostics,
-                live::configure_plan,
-                live::draw,
-            )
-                .chain()
-                .run_if(driving),
-        )
-        .run();
+            .chain()
+            .run_if(driving),
+    );
+    #[cfg(target_family = "wasm")]
+    app.add_systems(Update, load_track_catalog_after_first_frame);
+    app.run();
+}
+
+#[cfg(target_family = "wasm")]
+fn load_track_catalog_after_first_frame(mut frame: Local<u8>) {
+    if catalog_load_due(&mut frame) {
+        wasm_bindgen_futures::spawn_local(async {
+            if let Err(error) = crate::track::loader::load().await {
+                if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
+                    let _ = performance.mark("nanoplan-track-catalog-failed");
+                }
+                bevy::log::error!("failed to load track catalog: {error}");
+            } else {
+                if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
+                    let _ = performance.mark("nanoplan-track-catalog-ready");
+                    let ready_ms = performance.now();
+                    bevy::log::info!("track catalog ready at {ready_ms:.0} ms after navigation");
+                } else {
+                    bevy::log::info!("track catalog ready");
+                }
+            }
+        });
+    }
+}
+
+#[cfg(any(test, target_family = "wasm"))]
+fn catalog_load_due(frame: &mut u8) -> bool {
+    let due = *frame == 1;
+    *frame = frame.saturating_add(1).min(2);
+    due
+}
+
+#[cfg(test)]
+#[test]
+fn catalog_load_waits_for_one_complete_frame_and_runs_once() {
+    let mut frame = 0;
+    assert!(!catalog_load_due(&mut frame));
+    assert!(catalog_load_due(&mut frame));
+    assert!(!catalog_load_due(&mut frame));
 }
 
 struct ResizeDebouncePlugin;

@@ -23,6 +23,9 @@ target
 # Trunk build output
 dist
 
+# npm dependencies
+node_modules
+
 # Headless viewer render-test output for manual layout inspection
 viewer-renders/
 

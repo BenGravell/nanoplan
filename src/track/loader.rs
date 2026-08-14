@@ -78,18 +78,21 @@ pub(crate) async fn load() -> Result<(), String> {
     if track_catalog_loaded() {
         return Ok(());
     }
+    startup_mark("nanoplan-track-catalog-cache-check");
     let cache_key = cache_key();
     let storage = web_sys::window().and_then(|window| window.local_storage().ok().flatten());
-    if let Some(tracks) = storage
+    let cached_tracks = storage
         .as_ref()
         .and_then(|storage| storage.get_item(&cache_key).ok().flatten())
         .as_deref()
-        .and_then(unpack)
-        && install_track_data(&tracks).is_ok()
-    {
-        return Ok(());
+        .and_then(unpack);
+    if let Some(tracks) = cached_tracks {
+        if install_track_data(&tracks).is_ok() {
+            return Ok(());
+        }
     }
 
+    startup_mark("nanoplan-track-catalog-download-start");
     let tracks = try_join_all(TRACK_CATALOG.iter().map(|track| async move {
         let file = track.file;
         let response = Request::get(&url(file))
@@ -99,9 +102,12 @@ pub(crate) async fn load() -> Result<(), String> {
         if !response.ok() {
             return Err(format!("download {file}: HTTP {}", response.status()));
         }
-        response.text().await.map_err(|error| format!("read {file}: {error}"))
+        let track = response.text().await.map_err(|error| format!("read {file}: {error}"))?;
+        startup_mark("nanoplan-track-downloaded");
+        Ok(track)
     }))
     .await?;
+    startup_mark("nanoplan-track-catalog-store");
     install_track_data(&tracks)?;
     if let Some(storage) = storage {
         storage
@@ -111,20 +117,28 @@ pub(crate) async fn load() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_family = "wasm")]
+fn startup_mark(name: &str) {
+    if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
+        let _ = performance.mark(name);
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn install_test_catalog() {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use super::catalog::{LOADED_CATALOG, LoadedCatalog};
     use super::circuit::Circuit;
-    use super::model::TrackModel;
 
     LOADED_CATALOG.get_or_init(|| {
-        let circuit = Arc::new(Circuit::parse("0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n").unwrap());
-        let model = TrackModel::train(&[circuit.training_track()]).unwrap();
+        let source = "0,0,5,5\n1000,0,5,5\n1000,1000,5,5\n0,1000,5,5\n".to_owned();
+        let circuit = Arc::new(Circuit::parse(&source).unwrap());
         LoadedCatalog {
-            circuits: vec![circuit; TRACK_CATALOG.len()],
-            model,
+            sources: vec![source; TRACK_CATALOG.len()],
+            circuits: (0..TRACK_CATALOG.len())
+                .map(|_| OnceLock::from(circuit.clone()))
+                .collect(),
         }
     });
 }

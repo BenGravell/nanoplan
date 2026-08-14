@@ -10,7 +10,7 @@ mod road;
 #[allow(clippy::module_inception)]
 mod track;
 
-pub(crate) use catalog::TRACK_CATALOG;
+pub(crate) use catalog::{TRACK_CATALOG, track_catalog_loaded};
 pub(crate) use path::Path;
 pub(crate) use presets::TRACK_PRESETS;
 pub(crate) use road::Road;

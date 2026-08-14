@@ -13,7 +13,7 @@ cargo run --release
 Run the web app:
 
 ```bash
-trunk serve --release
+mise exec -- trunk serve --release --cargo-profile web
 ```
 
 ## Profiling

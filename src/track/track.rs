@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::catalog::loaded_catalog;
 use super::circuit::Circuit;
+use super::model::TrackModel;
 use super::presets::{self, TRACK_PRESETS};
 use crate::geometry::RoadPolygon;
 use crate::simulation::Position;
@@ -22,12 +23,8 @@ pub(super) enum TrackGeometry {
 
 impl Track {
     pub(crate) fn new(seed: u64) -> Self {
-        #[cfg(test)]
-        super::loader::install_test_catalog();
         let circuit = Circuit::generated(
-            loaded_catalog()
-                .expect("track catalog not loaded at startup")
-                .model
+            TrackModel::pretrained()
                 .generate(seed)
                 .expect("spectral track model could not generate a simple circuit"),
         );
@@ -49,10 +46,8 @@ impl Track {
             geometry: TrackGeometry::Circuit(
                 loaded_catalog()
                     .expect("track catalog not loaded at startup")
-                    .circuits
-                    .get(index - TRACK_PRESETS.len() - 1)
-                    .expect("track catalog index out of bounds")
-                    .clone(),
+                    .circuit(index - TRACK_PRESETS.len() - 1)
+                    .expect("selected track is invalid"),
             ),
         }
     }

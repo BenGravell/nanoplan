@@ -1,16 +1,25 @@
 # TODO
 
+--
+Tracks
+Eliminate runtime dependence on downloading track data from TUM.
+Create an offline module that handles offline async downloading of those tracks, and only offer procedurally pre-generated tracks at runtime.
+Pre-generated tracks shall be checked in to git repo.
+This eliminates download payload from TUM, avoids license issues, and avoids heavy spline fitting and validation of tracks (all pushed to offline pregen workload)
 
 --
-Web app load time blew up after we went to optimized builds, unusably slow (waited on mobile phone for several minutes, appeared hung)
-Need new strategy to manage download payload size and startup time.
+color definitions in web/style.css and src/viewer/colors.rs should derive from a single source truth.
+add a dedicated color definitions file under web/ to use in index.html
+
+--
+everything displayed by index.html should use same fonts as app. use a single source of truth. fonts come from assets/fonts
 
 --
 Add a minimap display to upper right corner of the track canvas area.
 
 Use a simplified rep.
 - Track width constant, simple polyline using track centerline. Can be decimated since minimap always render small, only need coarse samples every 5m.
-- Ego and opponents each rendered as circular dots. Ego should always render drawn over top of opponents. Ego should be orange, opponents blue.
+- Ego and opponents each rendered as circular dots. Ego should always render drawn over top of opponents. Ego should be orange, opponents dark grey.
 - Minimap should not rotate, use a constant position and rotation. Nothing fancy.
 
 

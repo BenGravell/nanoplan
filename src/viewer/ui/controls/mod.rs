@@ -1,4 +1,4 @@
-use crate::track::{GENERATED_TRACK_NAME, TRACK_CATALOG, TRACK_PRESETS};
+use crate::track::{GENERATED_TRACK_NAME, TRACK_CATALOG, TRACK_PRESETS, track_catalog_loaded};
 use bevy_egui::egui;
 
 use crate::viewer::UiState;
@@ -97,8 +97,10 @@ fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, compa
             for (index, track) in TRACK_PRESETS.iter().enumerate() {
                 ui.selectable_value(&mut state.track, index + 1, track.name);
             }
-            for (index, track) in TRACK_CATALOG.iter().enumerate() {
-                ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len() + 1, track.name);
+            if track_catalog_loaded() {
+                for (index, track) in TRACK_CATALOG.iter().enumerate() {
+                    ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len() + 1, track.name);
+                }
             }
         });
     if state.track != previous_track {

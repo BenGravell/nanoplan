@@ -14,63 +14,33 @@
     <meta name="apple-mobile-web-app-title" content="nanoplan" />
     <link rel="apple-touch-icon" href="icons/icon-192.png" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <link data-trunk rel="rust" data-bin="nanoplan" data-wasm-opt="4" />
+    <link
+      data-trunk
+      rel="rust"
+      data-bin="nanoplan"
+      data-wasm-opt="4"
+      data-initializer="web/initializer.js"
+    />
+    <link data-trunk rel="css" href="web/style.css" />
     <link data-trunk rel="copy-file" href="manifest.webmanifest" />
     <link data-trunk rel="copy-dir" href="assets/icons" />
-    <style>
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        height: 100dvh;
-        box-sizing: border-box;
-        padding: env(safe-area-inset-top) env(safe-area-inset-right)
-          env(safe-area-inset-bottom) env(safe-area-inset-left);
-        overflow: hidden;
-        background: #2b2c2f;
-      }
-      canvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-        outline: none;
-        touch-action: none;
-      }
-      #fullscreen {
-        position: fixed;
-        z-index: 1;
-        top: calc(env(safe-area-inset-top) + 8px);
-        right: calc(env(safe-area-inset-right) + 8px);
-        width: 44px;
-        height: 44px;
-        border: 2px solid white;
-        border-radius: 6px;
-        color: white;
-        background: #ff6900;
-        font: 24px sans-serif;
-      }
-      @media (display-mode: fullscreen), (display-mode: standalone) {
-        #fullscreen {
-          display: none;
-        }
-      }
-    </style>
   </head>
   <body>
-    <button id="fullscreen" aria-label="Enter full screen" title="Full screen">&#x26F6;</button>
-    <script>
-      const button = document.querySelector("#fullscreen");
-      const enterFullscreen = () => {
-        if (!document.fullscreenElement)
-          document.documentElement.requestFullscreen?.().catch(() => {});
-      };
-      button.addEventListener("click", enterFullscreen);
-      document.addEventListener("pointerdown", enterFullscreen, { once: true });
-      document.addEventListener("keydown", enterFullscreen, { once: true });
-      document.addEventListener("fullscreenchange", () => {
-        button.hidden = Boolean(document.fullscreenElement);
-      });
-      if (!document.documentElement.requestFullscreen) button.hidden = true;
-    </script>
+    <div id="loading" role="status" aria-live="polite" aria-atomic="true">
+      <div class="startup-panel">
+        <div id="startup-icon" aria-hidden="true"></div>
+        <div>
+          <div id="startup-title">Opening nanoplan</div>
+          <div id="startup-detail">Connecting to the driving engine.</div>
+          <div id="startup-transfer" aria-hidden="true"></div>
+          <div class="startup-meter" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+    <button id="fullscreen" aria-label="Enter full screen" title="Full screen">
+      <img src="icons/maximize.svg" alt="" />
+    </button>
+    <script data-trunk src="web/startup.js"></script>
+    <script data-trunk src="web/fullscreen.js"></script>
   </body>
 </html>

@@ -14,7 +14,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - uses: jetli/trunk-action@v0.5.1
-      - run: trunk build --release --public-url /nanoplan/
+      - run: npm ci
+      - run: trunk build --release --cargo-profile web --public-url /nanoplan/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
