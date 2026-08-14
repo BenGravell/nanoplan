@@ -3,6 +3,11 @@ pub(crate) fn smoothstep(u: f64) -> f64 {
     u * u * (3.0 - 2.0 * u)
 }
 
+/// Smooth rise from zero, asymptotic approach to one.
+pub(crate) fn smooth_exp_step(t: f32, t_constant: f32) -> f32 {
+    1.0 - (-t / t_constant).exp()
+}
+
 /// Wrap an angle to (-pi, pi].
 pub(crate) fn wrap_angle(a: f64) -> f64 {
     (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI

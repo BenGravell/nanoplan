@@ -1,13 +1,9 @@
 # TODO
 
-
-
---
-Pausing should also pause the camera, not allow camera to continue rotating/moving while paused. 
-
 --
 Ego carpet
-Draw the starting band consistently with the ego footprint. Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
+Draw the starting band/edge consistently with the ego footprint.
+Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
 
 --
 Add a minimap display to upper right corner of the track canvas area.
@@ -19,7 +15,8 @@ Use a simplified rep.
 
 
 --
-Put this info on the Tutorial page. Probably need separate pages for introduction and keymap/controls.
+Put this info on the Tutorial page.
+Probably need separate pages for introduction and keymap/controls.
 
 INTRODUCTION
 The ego and traffic race on various circuits.
@@ -37,7 +34,7 @@ The ego and traffic race on various circuits.
 
 
 --
-expand the tutorial with more pictures and a steady easy onboarding info flow
+expand the tutorial with more pictograms and a steady easy onboarding info flow
 
 --
 Taxonomy of planners

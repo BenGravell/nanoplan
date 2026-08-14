@@ -62,6 +62,10 @@ pub(crate) fn camera_input(
     window: Single<&Window>,
     time: Res<Time>,
 ) {
+    if live.paused {
+        return;
+    }
+
     if !egui_input.wants_any_pointer_input() {
         if cursor_over_driving_canvas(window.cursor_position(), driving_canvas.rect) {
             let scroll_steps = match scroll.unit {

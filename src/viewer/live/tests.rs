@@ -2,7 +2,7 @@ use crate::common::interp::lerp_state;
 use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
-use crate::viewer::{RESIZE_DEBOUNCE_SECONDS, ResizeDebounce, VIEW_MSAA, recover_failed_resize};
+use crate::viewer::{DrivingCanvas, RESIZE_DEBOUNCE_SECONDS, ResizeDebounce, VIEW_MSAA, recover_failed_resize};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -10,6 +10,7 @@ use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, cursor_over_driving_canvas,
     followed_camera_center, pinch_scale, smooth_angle,
 };
+use super::rendering::camera_blend;
 use super::screen::PX_PER_M;
 use super::*;
 
@@ -100,6 +101,47 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
     assert!(camera.follow);
     assert!(camera.align_heading);
     assert!(camera.smooth);
+}
+
+#[test]
+fn paused_camera_ignores_input() {
+    use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+    use bevy_egui::input::EguiWantsInput;
+
+    let mut app = App::new();
+    let mut live = Live::default();
+    live.paused = true;
+    live.camera.follow = false;
+    let camera = live.camera;
+    let mut keys = ButtonInput::<KeyCode>::default();
+    keys.press(KeyCode::KeyF);
+    let mut mouse = ButtonInput::<MouseButton>::default();
+    mouse.press(MouseButton::Right);
+    app.insert_non_send(live)
+        .insert_resource(keys)
+        .insert_resource(mouse)
+        .insert_resource(Touches::default())
+        .insert_resource(AccumulatedMouseMotion { delta: Vec2::X })
+        .insert_resource(AccumulatedMouseScroll::default())
+        .insert_resource(EguiWantsInput::default())
+        .insert_resource(DrivingCanvas::default())
+        .insert_resource(Time::<()>::default())
+        .add_systems(Update, camera_input);
+    app.world_mut().spawn(Window::default());
+
+    app.update();
+
+    let live = app.world().non_send::<Live>();
+    assert_eq!(live.camera.center, camera.center);
+    assert_eq!(live.camera.zoom, camera.zoom);
+    assert_eq!(live.camera.rotation, camera.rotation);
+    assert_eq!(live.camera.follow, camera.follow);
+    assert_eq!(live.camera.align_heading, camera.align_heading);
+}
+
+#[test]
+fn paused_camera_stops_smoothing() {
+    assert_eq!(camera_blend(true, true, 1.0), 0.0);
 }
 
 #[test]

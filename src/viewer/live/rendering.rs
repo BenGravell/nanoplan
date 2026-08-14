@@ -10,6 +10,7 @@ use super::drawing::{
 };
 use super::screen::px;
 use crate::common::interp::lerp_state;
+use crate::common::math::smooth_exp_step;
 use crate::viewer::ui::controls::metrics::preview_metrics_for_trajectory;
 use crate::viewer::{DT, UiState};
 use web_time::Instant;
@@ -61,11 +62,7 @@ pub(crate) fn draw(
         .camera
         .align_heading
         .then_some(ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
-    let blend = if live.camera.smooth {
-        1.0 - (-time.delta_secs() / CAMERA_SMOOTH_DURATION_S).exp()
-    } else {
-        1.0
-    };
+    let blend = camera_blend(live.paused, live.camera.smooth, time.delta_secs());
     if let Some(target) = target_center {
         live.camera.center = live.camera.center.lerp(target, blend);
     }
@@ -185,4 +182,14 @@ pub(crate) fn draw(
         visualization_clocks,
     );
     live.finish_frame();
+}
+
+pub(super) fn camera_blend(paused: bool, smooth: bool, delta_seconds: f32) -> f32 {
+    if paused {
+        0.0
+    } else if smooth {
+        smooth_exp_step(delta_seconds, CAMERA_SMOOTH_DURATION_S)
+    } else {
+        1.0
+    }
 }
