@@ -8,9 +8,16 @@ repos:
         always_run: true
         pass_filenames: false
 
+      - id: cargo-clippy-fix
+        name: cargo clippy fix
+        entry: cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features -- -D warnings
+        language: system
+        always_run: true
+        pass_filenames: false
+
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features -- -D warnings
+        entry: cargo clippy --all-targets --all-features -- -D warnings
         language: system
         always_run: true
         pass_filenames: false

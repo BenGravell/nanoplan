@@ -109,8 +109,10 @@ fn paused_camera_ignores_input() {
     use bevy_egui::input::EguiWantsInput;
 
     let mut app = App::new();
-    let mut live = Live::default();
-    live.paused = true;
+    let mut live = Live {
+        paused: true,
+        ..Default::default()
+    };
     live.camera.follow = false;
     let camera = live.camera;
     let mut keys = ButtonInput::<KeyCode>::default();
