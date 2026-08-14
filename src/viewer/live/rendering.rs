@@ -117,6 +117,7 @@ pub(crate) fn draw(
         carpet::draw(
             &mut meshes,
             &mut carpet_mesh,
+            ego,
             trajectory,
             state.carpet_visualization,
             carpet_metrics.as_ref(),

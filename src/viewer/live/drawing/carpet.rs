@@ -109,12 +109,13 @@ pub(crate) fn setup(
 pub(crate) fn draw(
     meshes: &mut Assets<Mesh>,
     carpet: &mut EgoCarpetMesh,
+    ego: State,
     trajectory: &TrajectoryKinematics,
     visualization: CarpetVisualization,
     metrics: Option<&Metrics>,
 ) -> u64 {
-    let (ego, plan) = trajectory.states.split_first().expect("carpet trajectory is non-empty");
-    let footprints = sample_footprints(*ego, plan, trajectory.dt);
+    let plan = trajectory.states.get(1..).expect("carpet trajectory is non-empty");
+    let footprints = sample_footprints(ego, plan, trajectory.dt);
     let (patches, intersection_clocks) = carpet_patches_clocked(&footprints);
     let values = visualization_values(trajectory, visualization, metrics);
     let colormap = match visualization {
@@ -430,6 +431,7 @@ mod tests {
     use crate::planning::{Latency, LatencyStats};
     use crate::simulation::Control;
     use crate::viewer::DT;
+    use bevy::mesh::VertexAttributeValues;
 
     fn trajectory(ego: State, plan: &[State], dt: f64) -> TrajectoryKinematics {
         let states: Vec<_> = std::iter::once(ego).chain(plan.iter().copied()).collect();
@@ -447,6 +449,35 @@ mod tests {
         let samples = sample_footprints(ego, &[State::from((Position::new(speed * DT, 0.0), 0.0, speed))], DT);
 
         assert_eq!(samples.len(), 2);
+    }
+
+    #[test]
+    fn draw_starts_at_the_rendered_ego_footprint() {
+        let planned_ego = State::from((Position::new(2.0, 0.0), 0.0, 1.0));
+        let rendered_ego = State::from((Position::new(1.0, 0.0), 0.0, 1.0));
+        let plan = [State::from((Position::new(4.0, 0.0), 0.0, 1.0))];
+        let mut meshes = Assets::<Mesh>::default();
+        let mut carpet = EgoCarpetMesh {
+            handle: meshes.add(empty_mesh()),
+            populated: false,
+        };
+
+        draw(
+            &mut meshes,
+            &mut carpet,
+            rendered_ego,
+            &trajectory(planned_ego, &plan, 1.0),
+            CarpetVisualization::Time,
+            None,
+        );
+
+        let mesh = meshes.get(&carpet.handle).unwrap();
+        let VertexAttributeValues::Float32x3(vertices) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() else {
+            panic!("carpet positions have the wrong format");
+        };
+        let rear = vertices.iter().map(|vertex| vertex[0]).fold(f32::INFINITY, f32::min);
+
+        assert!((rear - PX_PER_M).abs() < 1e-3);
     }
 
     #[test]
@@ -706,6 +737,7 @@ mod tests {
             let clocks = draw(
                 &mut meshes,
                 &mut carpet,
+                ego,
                 &trajectory(ego, &plan, DT),
                 CarpetVisualization::Time,
                 None,
@@ -774,6 +806,7 @@ mod tests {
             draw(
                 &mut meshes,
                 &mut carpet,
+                ego,
                 &trajectory(ego, plan, DT),
                 CarpetVisualization::Time,
                 None,
@@ -787,6 +820,7 @@ mod tests {
                 let clocks = draw(
                     &mut meshes,
                     &mut carpet,
+                    ego,
                     &trajectory(ego, plan, DT),
                     CarpetVisualization::Time,
                     None,

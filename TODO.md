@@ -1,9 +1,9 @@
 # TODO
 
+
 --
-Ego carpet
-Draw the starting band/edge consistently with the ego footprint.
-Should use same time linear interpolation used for Ego so that it does not flicker as much and draws smoother over time.
+Web app load time blew up after we went to optimized builds, unusably slow (waited on mobile phone for several minutes, appeared hung)
+Need new strategy to manage download payload size and startup time.
 
 --
 Add a minimap display to upper right corner of the track canvas area.
