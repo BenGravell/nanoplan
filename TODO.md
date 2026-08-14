@@ -4,15 +4,8 @@
 Tracks
 Eliminate runtime dependence on downloading track data from TUM.
 Create an offline module that handles offline async downloading of those tracks, and only offer procedurally pre-generated tracks at runtime.
-Pre-generated tracks shall be checked in to git repo.
+Pre-generated tracks shall be checked in to this git repo.
 This eliminates download payload from TUM, avoids license issues, and avoids heavy spline fitting and validation of tracks (all pushed to offline pregen workload)
-
---
-color definitions in web/style.css and src/viewer/colors.rs should derive from a single source truth.
-add a dedicated color definitions file under web/ to use in index.html
-
---
-everything displayed by index.html should use same fonts as app. use a single source of truth. fonts come from assets/fonts
 
 --
 Add a minimap display to upper right corner of the track canvas area.

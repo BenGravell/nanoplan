@@ -1,5 +1,8 @@
 const loading = document.querySelector("#loading");
 const startupIcon = document.querySelector("#startup-icon");
+document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.documentElement)
+  .getPropertyValue("--orange")
+  .trim();
 const startup = {
   show(icon, title, detail) {
     startupIcon.style.setProperty("--startup-icon", `url("icons/${icon}.svg")`);

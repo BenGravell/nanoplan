@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>nanoplan</title>
-    <meta name="theme-color" content="#ff6900" />
+    <meta name="theme-color" content="" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -21,9 +21,12 @@
       data-wasm-opt="4"
       data-initializer="web/initializer.js"
     />
+    <link data-trunk rel="css" href="web/colors.css" />
+    <link data-trunk rel="css" href="web/fonts.css" />
     <link data-trunk rel="css" href="web/style.css" />
     <link data-trunk rel="copy-file" href="manifest.webmanifest" />
     <link data-trunk rel="copy-dir" href="assets/icons" />
+    <link data-trunk rel="copy-dir" href="assets/fonts" />
   </head>
   <body>
     <div id="loading" role="status" aria-live="polite" aria-atomic="true">
