@@ -5,7 +5,7 @@ fn usage() -> String {
         .map(|id| format!("    {id}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let downloaded_tracks = nanoplan::profile::downloaded_track_ids()
+    let tracks = nanoplan::profile::track_ids()
         .map(|id| format!("    {id}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -29,7 +29,7 @@ Planner ids:
 Track ids:
     large
     small
-{downloaded_tracks}
+{tracks}
 
 Example:
   cargo run --release --bin profile -- --planner lattice --track small --laps 1 \\

@@ -4,6 +4,7 @@ pub(crate) mod barrier;
 pub(crate) mod curvature;
 pub(crate) mod distance;
 mod footprint;
+#[cfg(any(test, feature = "track-pregeneration"))]
 mod polygon;
 mod road_polygon;
 
@@ -12,6 +13,7 @@ use crate::simulation::{Pose, Position};
 use crate::vehicle::{BODY_LENGTH_M, BODY_WIDTH_M};
 
 pub(crate) use footprint::Footprint;
+#[cfg(any(test, feature = "track-pregeneration"))]
 pub(crate) use polygon::{polygons_overlap, segments_intersect};
 pub(crate) use road_polygon::RoadPolygon;
 

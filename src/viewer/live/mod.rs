@@ -168,8 +168,6 @@ impl Live {
 
 impl Default for Live {
     fn default() -> Self {
-        #[cfg(test)]
-        crate::track::loader::install_test_catalog();
         let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
         let previous = RenderSnapshot::capture(&world);
         let lap_stats = LapStats::new(world.track.lap_length());

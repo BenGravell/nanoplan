@@ -1,15 +1,12 @@
-//! Public generated/downloaded track selection and lap geometry.
+//! Public baked track selection and lap geometry.
 
 use std::sync::Arc;
 
-use super::catalog::loaded_catalog;
+use super::catalog::{self, PRESET_TRACKS};
 use super::circuit::Circuit;
-use super::model::TrackModel;
-use super::presets::{self, TRACK_PRESETS};
+use super::presets::TRACK_PRESETS;
 use crate::geometry::RoadPolygon;
 use crate::simulation::Position;
-
-pub(crate) const GENERATED_TRACK_NAME: &str = "Generated Circuit";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Track {
@@ -22,32 +19,15 @@ pub(super) enum TrackGeometry {
 }
 
 impl Track {
-    pub(crate) fn new(seed: u64) -> Self {
-        let circuit = Circuit::generated(
-            TrackModel::pretrained()
-                .generate(seed)
-                .expect("spectral track model could not generate a simple circuit"),
-        );
-        Self {
-            geometry: TrackGeometry::Circuit(Arc::new(circuit)),
-        }
-    }
-
-    pub(crate) fn from_catalog(index: usize, seed: u64) -> Self {
-        if index == 0 {
-            return Self::new(seed);
-        }
-        if index <= TRACK_PRESETS.len() {
+    pub(crate) fn from_catalog(index: usize) -> Self {
+        if index < TRACK_PRESETS.len() {
             return Self {
-                geometry: TrackGeometry::Circuit(Arc::new(Circuit::generated(presets::generate(index - 1)))),
+                geometry: TrackGeometry::Circuit(Arc::new(Circuit::baked(PRESET_TRACKS[index]))),
             };
         }
         Self {
             geometry: TrackGeometry::Circuit(
-                loaded_catalog()
-                    .expect("track catalog not loaded at startup")
-                    .circuit(index - TRACK_PRESETS.len() - 1)
-                    .expect("selected track is invalid"),
+                catalog::circuit(index - TRACK_PRESETS.len()).expect("selected track is invalid"),
             ),
         }
     }

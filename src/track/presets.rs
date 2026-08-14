@@ -2,7 +2,6 @@
 
 use std::f64::consts::PI;
 
-use super::model::GeneratedTrack;
 use crate::simulation::Position;
 use crate::vehicle::{AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_LON_ACCEL, ROLLING_RESISTANCE_ACCEL};
 
@@ -39,6 +38,12 @@ pub(crate) const TRACK_PRESETS: [PresetInfo; 2] = [
     },
 ];
 
+pub(super) struct PresetTrack {
+    pub(super) points: Vec<Position>,
+    pub(super) right: Vec<f64>,
+    pub(super) left: Vec<f64>,
+}
+
 /// Distance needed to reach a fraction of drag-limited terminal speed from rest
 /// under maximum thrust acceleration.
 fn acceleration_distance(speed_fraction: f64) -> f64 {
@@ -47,7 +52,7 @@ fn acceleration_distance(speed_fraction: f64) -> f64 {
     -(1.0 - speed_fraction * speed_fraction).ln() / (2.0 * AERO_DRAG_ACCEL_COEFFICIENT)
 }
 
-pub(crate) fn generate(index: usize) -> GeneratedTrack {
+pub(crate) fn generate(index: usize) -> PresetTrack {
     let _preset = TRACK_PRESETS[index];
     match index {
         0 => generate_large(),
@@ -56,7 +61,7 @@ pub(crate) fn generate(index: usize) -> GeneratedTrack {
     }
 }
 
-fn generate_large() -> GeneratedTrack {
+fn generate_large() -> PresetTrack {
     let straight_length = acceleration_distance(TERMINAL_SPEED_FRACTION).ceil();
     let half_length = straight_length / 2.0;
     let mut points = Vec::new();
@@ -129,14 +134,14 @@ fn generate_large() -> GeneratedTrack {
         CURVED_HALF_WIDTH_M,
         STRAIGHT_HALF_WIDTH_M,
     );
-    GeneratedTrack {
+    PresetTrack {
         points,
         right: widths.clone(),
         left: widths,
     }
 }
 
-fn generate_small() -> GeneratedTrack {
+fn generate_small() -> PresetTrack {
     let straight_length = SMALL_STRAIGHT_LENGTH_M;
     let half_length = straight_length / 2.0;
     let cap_length = cap_length_estimate(SMALL_END_CAP_REACH_M, SMALL_HALF_SEPARATION_M);
@@ -170,7 +175,7 @@ fn generate_small() -> GeneratedTrack {
     });
 
     let widths = vec![CURVED_HALF_WIDTH_M; points.len()];
-    GeneratedTrack {
+    PresetTrack {
         points,
         right: widths.clone(),
         left: widths,

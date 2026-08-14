@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn rolling_road_window_still_returns_to_centerline() {
-        let track = Track::new(1);
+        let track = Track::from_catalog(1);
         let mut road = test_road(&track.centerline(-50.0, 250.0, 15.0));
         road.target_speed = *MAX_TERMINAL_SPEED_MPS;
         let path = Path::new(road.centerline());
@@ -297,12 +297,12 @@ mod tests {
     }
 
     #[test]
-    fn generated_track_predictions_stay_inside_road_for_full_horizon() {
+    fn baked_track_predictions_stay_inside_road_for_full_horizon() {
         use crate::geometry::barrier::collides_with_road_barrier;
-        use crate::track::Road;
+        use crate::track::{Road, TRACK_PRESETS};
 
-        for seed in 0..10 {
-            let track = Track::new(seed);
+        for track_index in 0..TRACK_PRESETS.len() {
+            let track = Track::from_catalog(track_index);
             let lap = track.lap_length().unwrap();
             for n in 0..20 {
                 let progress = lap * n as f64 / 20.0;
@@ -317,7 +317,7 @@ mod tests {
                     let (_, d) = Path::new(road.centerline()).project(state.position());
                     assert!(
                         !collides_with_road_barrier(state, &road),
-                        "seed {seed} progress {progress} width {} tick {tick} d {d} state {state:?}",
+                        "track {track_index} progress {progress} width {} tick {tick} d {d} state {state:?}",
                         road.half_width
                     );
                 }

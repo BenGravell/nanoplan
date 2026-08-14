@@ -29,7 +29,7 @@ fn ego_can_start_from_a_frenet_state() {
 
 #[test]
 fn lattice_small_track_accelerates_and_previews_stay_on_road() {
-    let small_track = crate::track::TRACK_PRESETS.len();
+    let small_track = crate::track::TRACK_PRESETS.len() - 1;
     let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::Lattice, 0, 0.1);
     world.tick_with_latency(None);
     assert!(
@@ -59,7 +59,7 @@ fn lattice_small_track_accelerates_and_previews_stay_on_road() {
 
 #[test]
 fn bezier_toppra_one_lap_logical_clocks_are_stable() {
-    let small_track = crate::track::TRACK_PRESETS.len();
+    let small_track = crate::track::TRACK_PRESETS.len() - 1;
     let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::BezierToppra, 5, 0.1);
     let lap_length = world.track.lap_length().unwrap();
     let recorder = Latency::default();

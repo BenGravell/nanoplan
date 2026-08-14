@@ -357,13 +357,13 @@ mod tests {
     }
 
     #[test]
-    fn generated_track_predictions_stay_inside_road_for_full_horizon() {
+    fn baked_track_predictions_stay_inside_road_for_full_horizon() {
         use crate::geometry::barrier::collides_with_road_barrier;
         use crate::simulation::MAX_TERMINAL_SPEED_MPS;
-        use crate::track::{Road, Track};
+        use crate::track::{Road, TRACK_PRESETS, Track};
 
-        for seed in 0..10 {
-            let track = Track::new(seed);
+        for track_index in 0..TRACK_PRESETS.len() {
+            let track = Track::from_catalog(track_index);
             let lap = track.lap_length().unwrap();
             for n in 0..20 {
                 let progress = lap * n as f64 / 20.0;
@@ -383,7 +383,7 @@ mod tests {
                     let (s, d) = path.project(state.position());
                     assert!(
                         !collides_with_road_barrier(state, &road),
-                        "seed {seed} progress {progress} width {} tick {tick} d {d} heading_err {} control {control:?} state {state:?}",
+                        "track {track_index} progress {progress} width {} tick {tick} d {d} heading_err {} control {control:?} state {state:?}",
                         road.half_width,
                         wrap_angle(state.pose.yaw - path.pose_at(s).1)
                     );

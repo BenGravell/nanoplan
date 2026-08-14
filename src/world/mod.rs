@@ -1,4 +1,4 @@
-//! Realtime driving on a generated or downloaded closed race track.
+//! Realtime driving on a checked-in closed race track.
 
 mod road;
 mod traffic;
@@ -63,7 +63,7 @@ impl LiveWorld {
         dt: f64,
         start: EgoStart,
     ) -> Self {
-        let track = Track::from_catalog(track_index, seed);
+        let track = Track::from_catalog(track_index);
         let (p, centerline_yaw) = track.pose(start.progress);
         let left = Position::from_angle(centerline_yaw + std::f64::consts::FRAC_PI_2);
         let ego = State::from((

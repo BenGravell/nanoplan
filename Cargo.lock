@@ -2848,32 +2848,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gloo-net"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6420f887c48417e9e86c6cf61274eb231830cccc100e49613f7952e269a1fe1"
-dependencies = [
- "gloo-utils",
- "http",
- "js-sys",
- "thiserror 2.0.18",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "gloo-utils"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4202275d95a142fa209a1e35e91c250a710c5600731372cd3464a39ed01573d6"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3604,15 +3578,10 @@ dependencies = [
  "colorgrad",
  "egui_extras",
  "egui_kittest",
- "futures-util",
- "gloo-net",
  "image",
  "rstar",
- "serde",
- "serde_json",
  "splinefit",
  "ureq",
- "wasm-bindgen-futures",
  "web-sys",
  "web-time",
 ]

@@ -58,7 +58,7 @@ pub struct InitialState {
     pub speed: f64,
 }
 
-pub fn downloaded_track_ids() -> impl Iterator<Item = &'static str> {
+pub fn track_ids() -> impl Iterator<Item = &'static str> {
     TRACK_CATALOG.iter().map(|track| track.id)
 }
 
@@ -83,17 +83,13 @@ fn planner_kind(name: &str) -> Option<PlannerKind> {
 
 fn track_index(name: &str) -> Result<(usize, String), String> {
     match name.to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
-        "generated" => Err("generated track is not available for profiling".into()),
-        "large" | "test-track-large" => Ok((1, TRACK_PRESETS[0].name.into())),
-        "small" | "test-track-small" => Ok((2, TRACK_PRESETS[1].name.into())),
-        id => {
-            crate::track::loader::load()?;
-            TRACK_CATALOG
-                .iter()
-                .position(|track| track.id.replace('_', "-") == id)
-                .map(|i| (TRACK_PRESETS.len() + i + 1, TRACK_CATALOG[i].name.into()))
-                .ok_or_else(|| format!("unknown track {name:?}"))
-        }
+        "large" | "test-track-large" => Ok((0, TRACK_PRESETS[0].name.into())),
+        "small" | "test-track-small" => Ok((1, TRACK_PRESETS[1].name.into())),
+        id => TRACK_CATALOG
+            .iter()
+            .position(|track| track.id.replace('_', "-") == id)
+            .map(|i| (TRACK_PRESETS.len() + i, TRACK_CATALOG[i].name.into()))
+            .ok_or_else(|| format!("unknown track {name:?}")),
     }
 }
 
@@ -125,7 +121,7 @@ pub fn run_from(planner: &str, track: &str, laps: f64, initial: InitialState) ->
     }
     let planner_kind = planner_kind(planner).ok_or_else(|| format!("unknown planner {planner:?}"))?;
     let (track_index, track_name) = track_index(track)?;
-    let track = crate::track::Track::from_catalog(track_index, 1);
+    let track = crate::track::Track::from_catalog(track_index);
     let lap_length = track
         .lap_length()
         .ok_or_else(|| format!("track {track_name:?} has no lap length"))?;

@@ -12,6 +12,14 @@ path = "tools/profile.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "pregenerate-tracks"
+path = "tools/pregenerate_tracks.rs"
+required-features = ["track-pregeneration"]
+
+[features]
+track-pregeneration = ["dep:splinefit", "dep:ureq"]
+
 [dependencies]
 # trimmed for wasm size and compile time: 2d rendering only, no 3d/ui/audio/
 # scene/animation. "2d_bevy_render" looks like the minimal 2D bundle but
@@ -61,22 +69,18 @@ web-time = "1" # std::time::Instant shim that works on wasm
 # spatial index R*-tree (wasm-compatible) for near(est)-neighbour queries, with incremental insertion
 rstar = "0.12"
 egui_extras = { version = "0.35", default-features = false, features = ["svg"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-splinefit = "0.4.1"
+splinefit = { version = "0.4.1", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-ureq = "3.3"
+ureq = { version = "3.3", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
-gloo-net = { version = "0.7", default-features = false, features = ["http"] }
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Navigator", "Performance", "Storage", "Window"] }
+web-sys = { version = "0.3", features = ["Navigator", "Window"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.35", features = ["wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+splinefit = "0.4.1"
 
 # ponytail: bevy is slow to compile unoptimized; standard bevy dev-profile setup
 [profile.dev]

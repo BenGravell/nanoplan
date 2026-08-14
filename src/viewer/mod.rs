@@ -158,47 +158,7 @@ pub(crate) fn run() {
             .chain()
             .run_if(driving),
     );
-    #[cfg(target_family = "wasm")]
-    app.add_systems(Update, load_track_catalog_after_first_frame);
     app.run();
-}
-
-#[cfg(target_family = "wasm")]
-fn load_track_catalog_after_first_frame(mut frame: Local<u8>) {
-    if catalog_load_due(&mut frame) {
-        wasm_bindgen_futures::spawn_local(async {
-            if let Err(error) = crate::track::loader::load().await {
-                if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
-                    let _ = performance.mark("nanoplan-track-catalog-failed");
-                }
-                bevy::log::error!("failed to load track catalog: {error}");
-            } else {
-                if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
-                    let _ = performance.mark("nanoplan-track-catalog-ready");
-                    let ready_ms = performance.now();
-                    bevy::log::info!("track catalog ready at {ready_ms:.0} ms after navigation");
-                } else {
-                    bevy::log::info!("track catalog ready");
-                }
-            }
-        });
-    }
-}
-
-#[cfg(any(test, target_family = "wasm"))]
-fn catalog_load_due(frame: &mut u8) -> bool {
-    let due = *frame == 1;
-    *frame = frame.saturating_add(1).min(2);
-    due
-}
-
-#[cfg(test)]
-#[test]
-fn catalog_load_waits_for_one_complete_frame_and_runs_once() {
-    let mut frame = 0;
-    assert!(!catalog_load_due(&mut frame));
-    assert!(catalog_load_due(&mut frame));
-    assert!(!catalog_load_due(&mut frame));
 }
 
 struct ResizeDebouncePlugin;

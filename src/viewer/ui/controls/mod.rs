@@ -1,4 +1,4 @@
-use crate::track::{GENERATED_TRACK_NAME, TRACK_CATALOG, TRACK_PRESETS, track_catalog_loaded};
+use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use bevy_egui::egui;
 
 use crate::viewer::UiState;
@@ -48,7 +48,7 @@ pub(super) fn control_deck(
     egui::ScrollArea::vertical().max_width(content_width).show(ui, |ui| {
         ui.set_width(content_width);
         match *active_tab {
-            ControlTab::Track => track_controls(ui, state, live, compact),
+            ControlTab::Track => track_controls(ui, state, live),
             ControlTab::Planner => planner::show(ui, state),
             ControlTab::Opponents => opponents::show(ui, state, live),
             ControlTab::Camera => camera::show(ui, live, compact, content_width),
@@ -83,48 +83,28 @@ impl ControlTab {
     }
 }
 
-fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, compact: bool) {
+fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
     let previous_track = state.track;
     egui::ComboBox::from_id_salt("track")
-        .selected_text(if compact && state.track == 0 {
-            "Generated"
-        } else {
-            track_name(state.track)
-        })
+        .selected_text(track_name(state.track))
         .width(ui.available_width())
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut state.track, 0, GENERATED_TRACK_NAME);
             for (index, track) in TRACK_PRESETS.iter().enumerate() {
-                ui.selectable_value(&mut state.track, index + 1, track.name);
+                ui.selectable_value(&mut state.track, index, track.name);
             }
-            if track_catalog_loaded() {
-                for (index, track) in TRACK_CATALOG.iter().enumerate() {
-                    ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len() + 1, track.name);
-                }
+            for (index, track) in TRACK_CATALOG.iter().enumerate() {
+                ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len(), track.name);
             }
         });
     if state.track != previous_track {
         live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
     }
-    if state.track == 0 {
-        ui.add_space(6.0);
-
-        let response = ui.add_sized(
-            [ui.available_width(), 36.0],
-            egui::Button::new(egui::RichText::new("↻ NEW TRACK").size(13.0)),
-        );
-        if response.clicked() {
-            live.regenerate_with_actor_count(live.seed + 1, state.planner, state.track, state.opponents);
-        }
-    }
 }
 
 fn track_name(index: usize) -> &'static str {
-    if index == 0 {
-        GENERATED_TRACK_NAME
-    } else if index <= TRACK_PRESETS.len() {
-        TRACK_PRESETS[index - 1].name
+    if index < TRACK_PRESETS.len() {
+        TRACK_PRESETS[index].name
     } else {
-        TRACK_CATALOG[index - TRACK_PRESETS.len() - 1].name
+        TRACK_CATALOG[index - TRACK_PRESETS.len()].name
     }
 }

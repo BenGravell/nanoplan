@@ -11,12 +11,14 @@ mod vehicle;
 mod viewer;
 mod world;
 
+#[cfg(all(feature = "track-pregeneration", not(target_family = "wasm")))]
+pub use track::pregenerate::pregenerate_tracks;
+
 #[cfg(not(target_family = "wasm"))]
 pub mod profile;
 
 #[cfg(not(target_family = "wasm"))]
 pub fn run() {
-    track::loader::load().expect("failed to load track catalog");
     viewer::run();
 }
 

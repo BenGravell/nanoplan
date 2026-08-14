@@ -1,13 +1,6 @@
 # TODO
 
 --
-Tracks
-Eliminate runtime dependence on downloading track data from TUM.
-Create an offline module that handles offline async downloading of those tracks, and only offer procedurally pre-generated tracks at runtime.
-Pre-generated tracks shall be checked in to this git repo.
-This eliminates download payload from TUM, avoids license issues, and avoids heavy spline fitting and validation of tracks (all pushed to offline pregen workload)
-
---
 Add a minimap display to upper right corner of the track canvas area.
 
 Use a simplified rep.
@@ -23,15 +16,13 @@ Probably need separate pages for introduction and keymap/controls.
 INTRODUCTION
 The ego and traffic race on various circuits.
 
-- **track** selects the seeded circuit, a built-in preset, or a downloaded circuit.
+- **track** selects a circuit.
 - **planner** changes the active motion planner.
 - **future preview** sets how many seconds of the current plan are drawn;
   zero hides the preview without stopping the ego.
 - **diagnostic points/trajectories** show the selected planner's sampled
   search geometry when that planner records diagnostics.
 - **pause** freezes the simulation.
-- **new track** increments the seed and spectrally regenerates a simple closed
-  circuit, its width, traffic, and the ego start.
 - **scroll** zooms the camera.
 
 
@@ -48,8 +39,8 @@ Taxonomy of planners
 --
 Measure and reduce time to first display/user interaction on app load in web app / mobile.
 
-Loaders (tracks, otherwise) should go in a background process that is non-blocking.
-Start app with download-free procedural track.
+Loaders should go in a background process that is non-blocking.
+Start app with a download-free preset track.
 
 
 ## Actor planning

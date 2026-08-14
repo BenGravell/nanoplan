@@ -513,11 +513,6 @@ fn section_selector_opens_track_options() {
     harness.run();
 
     assert!(harness.state().tab == ControlTab::Track);
-    assert!(harness.query_by_label("↻ NEW TRACK").is_some());
-
-    harness.state_mut().ui.track = 1;
-    harness.run();
-    assert!(harness.query_by_label("↻ NEW TRACK").is_none());
 }
 
 #[test]

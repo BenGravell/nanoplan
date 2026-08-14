@@ -1,15 +1,23 @@
 //! Closed-circuit samples, parsing, interpolation, and projection.
 
-use super::model::{GeneratedTrack, limit_widths_for_curvature, road_is_simple};
-#[cfg(test)]
-use super::model::{SAMPLE_COUNT, TrainingTrack};
+#[cfg(feature = "track-pregeneration")]
+use super::presets::PresetTrack;
 use crate::common::interp::lerp;
 use crate::geometry::distance::dist;
+#[cfg(any(test, feature = "track-pregeneration"))]
+use crate::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
 use crate::simulation::Position;
+#[cfg(any(test, feature = "track-pregeneration"))]
 use splinefit::{ClosedCubicSplineFit2D, evaluate::evaluate};
 
+#[cfg(any(test, feature = "track-pregeneration"))]
 const SAMPLE_SPACING_M: f64 = 1.0;
+#[cfg(any(test, feature = "track-pregeneration"))]
 const SPLINE_ARC_STEP_M: f64 = 0.25;
+#[cfg(any(test, feature = "track-pregeneration"))]
+const CURVATURE_WIDTH_BUFFER_M: f64 = 0.25;
+#[cfg(any(test, feature = "track-pregeneration"))]
+const MAX_WIDTH_SLOPE: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Sample {
@@ -26,6 +34,7 @@ pub(super) struct Circuit {
 }
 
 impl Circuit {
+    #[cfg(feature = "track-pregeneration")]
     pub(super) fn parse(csv: &str) -> Result<Self, String> {
         let samples = csv
             .lines()
@@ -53,7 +62,7 @@ impl Circuit {
         if samples.len() < 3 {
             return Err("track needs at least three samples".to_owned());
         }
-        let circuit = Self::from_samples(samples);
+        let circuit = Self::processed(samples);
         if !circuit.length.is_finite() || circuit.length <= 0.0 {
             return Err("track length must be finite and positive".to_owned());
         }
@@ -67,8 +76,25 @@ impl Circuit {
         Ok(circuit)
     }
 
-    pub(super) fn generated(track: GeneratedTrack) -> Self {
-        Self::from_samples(
+    #[cfg(feature = "track-pregeneration")]
+    pub(super) fn baked_csv(&self) -> String {
+        use std::fmt::Write;
+
+        let mut csv = "# x_m,y_m,w_tr_right_m,w_tr_left_m\n".to_owned();
+        for sample in &self.samples {
+            writeln!(
+                csv,
+                "{},{},{},{}",
+                sample.point.x as f32, sample.point.y as f32, sample.right as f32, sample.left as f32
+            )
+            .unwrap();
+        }
+        csv
+    }
+
+    #[cfg(feature = "track-pregeneration")]
+    pub(super) fn preset(track: PresetTrack) -> Self {
+        Self::processed(
             track
                 .points
                 .into_iter()
@@ -79,8 +105,30 @@ impl Circuit {
         )
     }
 
+    pub(super) fn baked(csv: &str) -> Self {
+        let samples = csv
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let mut fields = line.split(',');
+                let mut value = || fields.next().unwrap().parse::<f32>().unwrap() as f64;
+                Sample {
+                    point: Position::new(value(), value()),
+                    right: value(),
+                    left: value(),
+                }
+            })
+            .collect();
+        Self::finish(samples)
+    }
+
+    #[cfg(any(test, feature = "track-pregeneration"))]
+    fn processed(samples: Vec<Sample>) -> Self {
+        Self::from_samples(resample_spline(&samples, SAMPLE_SPACING_M))
+    }
+
+    #[cfg(any(test, feature = "track-pregeneration"))]
     fn from_samples(mut samples: Vec<Sample>) -> Self {
-        samples = resample_spline(&samples, SAMPLE_SPACING_M);
         let points = samples.iter().map(|sample| sample.point).collect::<Vec<_>>();
         let mut right = samples.iter().map(|sample| sample.right).collect::<Vec<_>>();
         let mut left = samples.iter().map(|sample| sample.left).collect::<Vec<_>>();
@@ -89,6 +137,10 @@ impl Circuit {
             sample.right = right;
             sample.left = left;
         }
+        Self::finish(samples)
+    }
+
+    fn finish(samples: Vec<Sample>) -> Self {
         let mut distance = vec![0.0];
         for pair in samples.windows(2) {
             distance.push(distance.last().unwrap() + dist(pair[0].point, pair[1].point));
@@ -98,26 +150,6 @@ impl Circuit {
             samples,
             distance,
             length,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn training_track(&self) -> TrainingTrack {
-        let mut points = Vec::with_capacity(SAMPLE_COUNT);
-        let mut right = Vec::with_capacity(SAMPLE_COUNT);
-        let mut left = Vec::with_capacity(SAMPLE_COUNT);
-        for i in 0..SAMPLE_COUNT {
-            let progress = self.length * i as f64 / SAMPLE_COUNT as f64;
-            points.push(self.pose(progress).0);
-            let widths = self.widths(progress);
-            right.push(widths.0);
-            left.push(widths.1);
-        }
-        TrainingTrack {
-            length: self.length,
-            points,
-            right,
-            left,
         }
     }
 
@@ -164,6 +196,7 @@ impl Circuit {
         best.0 + ((hint - best.0) / self.length).round() * self.length
     }
 
+    #[cfg(any(test, feature = "track-pregeneration"))]
     pub(super) fn is_simple(&self) -> bool {
         road_is_simple(
             &self.samples.iter().map(|sample| sample.point).collect::<Vec<_>>(),
@@ -173,8 +206,73 @@ impl Circuit {
     }
 }
 
+#[cfg(any(test, feature = "track-pregeneration"))]
+fn limit_widths_for_curvature(points: &[Position], right: &mut [f64], left: &mut [f64]) {
+    for i in 0..points.len() {
+        let a = points[(i + points.len() - 1) % points.len()];
+        let b = points[i];
+        let c = points[(i + 1) % points.len()];
+        let ab = dist(a, b);
+        let bc = dist(b, c);
+        let ac = dist(a, c);
+        let curvature = 2.0 * ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) / (ab * bc * ac).max(1e-9);
+        let inner_limit = 1.0 / curvature.abs().max(1e-9) - CURVATURE_WIDTH_BUFFER_M;
+        if curvature > 0.0 {
+            left[i] = left[i].min(inner_limit);
+        } else if curvature < 0.0 {
+            right[i] = right[i].min(inner_limit);
+        }
+    }
+    limit_width_slope(points, right);
+    limit_width_slope(points, left);
+}
+
+#[cfg(any(test, feature = "track-pregeneration"))]
+fn limit_width_slope(points: &[Position], widths: &mut [f64]) {
+    let n = widths.len();
+    let mut smooth = (0..3 * n).map(|i| widths[i % n]).collect::<Vec<_>>();
+    for i in 1..smooth.len() {
+        smooth[i] = smooth[i].min(smooth[i - 1] + MAX_WIDTH_SLOPE * dist(points[(i - 1) % n], points[i % n]));
+    }
+    for i in (0..smooth.len() - 1).rev() {
+        smooth[i] = smooth[i].min(smooth[i + 1] + MAX_WIDTH_SLOPE * dist(points[i % n], points[(i + 1) % n]));
+    }
+    widths.copy_from_slice(&smooth[n..2 * n]);
+}
+
+#[cfg(any(test, feature = "track-pregeneration"))]
+fn is_simple(points: &[Position]) -> bool {
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[(i + 1) % points.len()]);
+        for j in i + 2..points.len() {
+            if (i != 0 || j != points.len() - 1) && segments_intersect(a, b, points[j], points[(j + 1) % points.len()])
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[cfg(any(test, feature = "track-pregeneration"))]
+fn road_is_simple(points: &[Position], right: &[f64], left: &[f64]) -> bool {
+    if !is_simple(points) || points.len() != right.len() || points.len() != left.len() {
+        return false;
+    }
+    let Some(road) = RoadPolygon::new(points.to_vec(), right.to_vec(), left.to_vec(), true) else {
+        return false;
+    };
+    let quads = road.quads().collect::<Vec<_>>();
+    quads.iter().all(|quad| is_simple(quad))
+        && (0..quads.len()).all(|i| {
+            (i + 1..quads.len())
+                .all(|j| j == i + 1 || (i == 0 && j == quads.len() - 1) || !polygons_overlap(&quads[i], &quads[j]))
+        })
+}
+
 /// Fit a closed, periodic cubic spline through the source stations and return
 /// a nearly arc-length-uniform polyline.
+#[cfg(any(test, feature = "track-pregeneration"))]
 fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
     #[derive(Clone, Copy)]
     struct Station {
@@ -277,7 +375,7 @@ mod tests {
             })
             .collect();
 
-        let circuit = Circuit::from_samples(samples);
+        let circuit = Circuit::processed(samples);
 
         assert!(circuit.samples.iter().all(|sample| sample.right == 20.0));
         assert!(circuit.samples.iter().all(|sample| sample.left < 20.0));

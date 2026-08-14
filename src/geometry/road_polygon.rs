@@ -124,6 +124,7 @@ impl RoadPolygon {
         self.closed
     }
 
+    #[cfg(any(test, feature = "track-pregeneration"))]
     pub(crate) fn quads(&self) -> impl Iterator<Item = [Position; 4]> + '_ {
         (0..self.segment_count()).map(|i| {
             let next = (i + 1) % self.centerline.len();
