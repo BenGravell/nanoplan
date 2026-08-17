@@ -5,6 +5,7 @@ use crate::geometry::barrier::{Barrier, road_side_barriers};
 use crate::simulation::Position;
 
 /// The finite planning window sampled from the active track.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone)]
 pub(crate) struct Road {
     polygon: RoadPolygon,

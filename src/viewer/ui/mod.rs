@@ -13,7 +13,7 @@ mod tutorial;
 mod visualization;
 mod widgets;
 
-use super::colors::{PANEL, SIDE_PANEL};
+use super::colors::{ORANGE, PANEL, SIDE_PANEL, WHITE};
 pub(crate) use controls::ControlTab;
 use controls::control_deck;
 use style::{configure, scale_to_viewport};
@@ -115,6 +115,7 @@ fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, acti
     let road_rect = center_rail_rect(canvas, left_width, right_width);
     let mut pause_overlay = overlay_root_at(root, "pause_overlay", road_rect);
     pause_rail(&mut pause_overlay, live, compact);
+    planner_warning_overlay(root, live, road_rect, compact);
     if state.show_frame_time {
         frame_time_overlay(root, live, road_rect, compact);
     }
@@ -127,6 +128,30 @@ fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, acti
     }
     pause_modal(root.ctx(), state, live, compact, paused_before_escape);
     road_rect
+}
+
+fn planner_warning_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, compact: bool) {
+    if !live.world.planner_slow {
+        return;
+    }
+    let top = road_rect.top() + if compact { 50.0 } else { 58.0 };
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(road_rect.left(), top),
+        egui::pos2(road_rect.right(), road_rect.bottom()),
+    );
+    let mut overlay = overlay_root_at(root, "planner_warning_overlay", rect);
+    overlay.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        egui::Frame::new()
+            .fill(ORANGE)
+            .inner_margin(egui::Margin::symmetric(10, 5))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("PLANNER TOO SLOW · REUSING LAST PLAN")
+                        .color(WHITE)
+                        .strong(),
+                );
+            });
+    });
 }
 
 fn handle_keyboard_controls(ctx: &egui::Context, state: &mut UiState, live: &mut Live) {

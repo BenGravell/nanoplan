@@ -13,6 +13,7 @@
 use crate::simulation::Position;
 
 /// Recorded introspection geometry from one `plan()` call.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DiagnosticsData {
     /// Standalone sample points, e.g. lattice grid nodes or PI²-DDP rollout

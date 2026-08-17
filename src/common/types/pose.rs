@@ -1,5 +1,6 @@
 use super::{Position, State};
 
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Pose {
     pub(crate) position: Position,

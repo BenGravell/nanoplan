@@ -7,6 +7,7 @@ subdirectory per planner implementation.
 ```
 planning/
 ├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
+├── engine.rs      asynchronous planner execution for native threads and Web Workers
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── constraints.rs hard rules and the shared composite-metric objective
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
@@ -40,6 +41,29 @@ warm-starts its policy this way); planners with no state to keep, like
 An empty return value is treated as "coast" (zero control) by the simulator,
 not an error — no planner currently exercises this, but it's a legal escape
 hatch for "couldn't find anything, don't do anything worse."
+
+## Planner engine
+
+`engine.rs` keeps planner latency off the live simulation loop. On native
+targets, `PlannerEngine` owns the planner on a background thread; on WebAssembly,
+it sends the same serializable request to a Web Worker. The simulation remains
+fixed-step and interacts with either implementation through the same
+non-blocking `submit`, `poll`, and `is_slow` operations.
+
+At each tick, `LiveWorld` first polls for a completed `PlanResult`, then submits
+a snapshot of the current ego state, road, actors, horizon, compute budget, and
+diagnostic setting. Only one request may be in flight, so ticks never build up
+a queue of stale planning work. When no new result is ready, the simulation
+continues with the remaining controls from the last accepted plan; after that
+plan's horizon is exhausted, its final control is retained. Before the first
+plan arrives, the empty plan produces the normal zero-control fallback.
+
+A planner is considered too slow when either its completed runtime or the age
+of its outstanding request exceeds one simulation timestep. `LiveWorld` exposes
+that state as `planner_slow`, and the viewer displays **PLANNER TOO SLOW ·
+REUSING LAST PLAN** until a timely result is accepted. Native tests and batch
+measurement can explicitly wait for a result, but the live viewer never blocks
+the simulation on planning.
 
 ## `Context`
 

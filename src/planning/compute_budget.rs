@@ -1,5 +1,6 @@
 /// Planner-independent share of a calibrated planning allowance.
 /// Each planner converts this into its own useful unit (usually samples).
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ComputeBudget(u16);
 

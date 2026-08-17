@@ -6,6 +6,7 @@ use super::{
 /// PlannerKind: selects which planner to run.
 /// Everything else about a planner (display name, constructor, capabilities) lives in its PlannerSpec row,
 /// so adding a planner means one enum variant plus one complete row.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlannerKind {
     Straight,

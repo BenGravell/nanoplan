@@ -5,6 +5,7 @@ use crate::common::types::Position;
 /// A sampled road represented by its source stations and two continuous
 /// boundary polylines. All rendered and physical road geometry is derived from
 /// this type so corners use the same miter joins everywhere.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoadPolygon {
     centerline: Vec<Position>,

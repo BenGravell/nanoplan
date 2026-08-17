@@ -34,11 +34,14 @@
 //!   assertions. Nested seams see the same work units, just as they see the
 //!   same elapsed wall time.
 
+use std::borrow::Cow;
+
 use web_time::Instant;
 
-#[derive(Debug, Clone, Copy)]
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
+#[derive(Debug, Clone)]
 pub(crate) struct Span {
-    pub(crate) name: &'static str,
+    pub(crate) name: Cow<'static, str>,
     pub(crate) milliseconds: f64,
     pub(crate) clocks: u64,
 }
@@ -58,7 +61,7 @@ impl Latency {
         let c0 = self.clocks.get();
         let out = f();
         self.record_span(Span {
-            name,
+            name: name.into(),
             milliseconds: t0.elapsed().as_secs_f64() * 1e3,
             clocks: self.clocks.get() - c0,
         });
@@ -71,9 +74,9 @@ impl Latency {
     }
 
     /// Record an already measured wall span and its deterministic work.
-    pub(crate) fn record(&self, name: &'static str, milliseconds: f64, clocks: u64) {
+    pub(crate) fn record(&self, name: impl Into<Cow<'static, str>>, milliseconds: f64, clocks: u64) {
         self.record_span(Span {
-            name,
+            name: name.into(),
             milliseconds,
             clocks,
         });
@@ -93,9 +96,9 @@ impl Latency {
 /// One seam's statistics over a run. `calls` counts the samples (normally
 /// rendered frames) in which the seam appeared; repeated recordings within
 /// one sample are summed before folding in.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct SeamStats {
-    pub(crate) name: &'static str,
+    pub(crate) name: Cow<'static, str>,
     pub(crate) calls: usize,
     pub(crate) total_ms: f64,
     pub(crate) max_ms: f64,
@@ -164,28 +167,28 @@ mod tests {
         let mut stats = LatencyStats::default();
         stats.absorb(vec![
             Span {
-                name: "rollouts",
+                name: "rollouts".into(),
                 milliseconds: 1.0,
                 clocks: 2,
             },
             Span {
-                name: "rollouts",
+                name: "rollouts".into(),
                 milliseconds: 2.0,
                 clocks: 3,
             },
             Span {
-                name: "total",
+                name: "total".into(),
                 milliseconds: 5.0,
                 clocks: 8,
             },
         ]);
         stats.absorb(vec![Span {
-            name: "total",
+            name: "total".into(),
             milliseconds: 3.0,
             clocks: 4,
         }]);
         let rollouts = &stats.seams[0];
-        assert_eq!((rollouts.name, rollouts.calls), ("rollouts", 1));
+        assert_eq!((rollouts.name.as_ref(), rollouts.calls), ("rollouts", 1));
         assert!((rollouts.total_ms - 3.0).abs() < 1e-12);
         assert_eq!((rollouts.total_clocks, rollouts.max_clocks), (5, 5));
         let total = &stats.seams[1];
@@ -207,8 +210,8 @@ mod tests {
         assert_eq!(v, 42);
         let spans = lat.take();
         assert_eq!(spans.len(), 2);
-        assert_eq!((spans[0].name, spans[0].clocks), ("inner", 3));
-        assert_eq!((spans[1].name, spans[1].clocks), ("total", 5));
+        assert_eq!((spans[0].name.as_ref(), spans[0].clocks), ("inner", 3));
+        assert_eq!((spans[1].name.as_ref(), spans[1].clocks), ("total", 5));
         assert!(spans.iter().all(|span| span.milliseconds >= 0.0));
         assert!(lat.take().is_empty());
     }

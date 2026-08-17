@@ -554,6 +554,28 @@ fn pause_rail_opens_navigation_modal() {
 }
 
 #[test]
+fn planner_overrun_warning_is_visible_only_while_slow() {
+    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, state: &mut ViewerHarnessState| {
+            if !state.configured {
+                configure(ui.ctx());
+                state.configured = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+        },
+        ViewerHarnessState::default(),
+    );
+    harness.run_steps(2);
+    assert!(harness.query_by_label("PLANNER TOO SLOW · REUSING LAST PLAN").is_none());
+
+    harness.state_mut().live.world.planner_slow = true;
+    harness.run();
+    assert!(harness.query_by_label("PLANNER TOO SLOW · REUSING LAST PLAN").is_some());
+}
+
+#[test]
 fn keyboard_shortcuts_pause_and_toggle_frame_time() {
     let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
         |ui, state: &mut ViewerHarnessState| {

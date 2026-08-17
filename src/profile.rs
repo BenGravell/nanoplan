@@ -23,7 +23,7 @@ const PLANNERS: [(&str, PlannerKind); 12] = [
 
 #[derive(Debug)]
 pub struct SeamProfile {
-    pub name: &'static str,
+    pub name: String,
     pub calls: usize,
     pub mean_ms: f64,
     pub max_ms: f64,
@@ -147,7 +147,7 @@ pub fn run_from(planner: &str, track: &str, laps: f64, initial: InitialState) ->
     let mut ticks = 0;
 
     while world.track_progress < target_progress && ticks < max_ticks {
-        world.tick_recording_latency(&recorder);
+        world.tick_recording_latency_blocking(&recorder);
         latency.absorb(recorder.take());
         ticks += 1;
     }
@@ -166,7 +166,7 @@ pub fn run_from(planner: &str, track: &str, laps: f64, initial: InitialState) ->
             .seams
             .into_iter()
             .map(|seam| SeamProfile {
-                name: seam.name,
+                name: seam.name.clone().into_owned(),
                 calls: seam.calls,
                 mean_ms: seam.mean_ms(),
                 max_ms: seam.max_ms,

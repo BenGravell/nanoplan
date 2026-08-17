@@ -7,6 +7,21 @@ use crate::simulation::Position;
 use crate::track::ROAD_SAMPLE_STEP_M;
 
 #[test]
+fn stale_plan_advances_then_holds_its_last_control() {
+    let plan: Vec<_> = [1.0, 2.0, 3.0]
+        .map(|acceleration| Control {
+            acceleration,
+            curvature: 0.0,
+        })
+        .into();
+
+    assert_eq!(remaining_plan(&plan, 10, 10)[0].acceleration, 1.0);
+    assert_eq!(remaining_plan(&plan, 10, 11)[0].acceleration, 2.0);
+    assert_eq!(remaining_plan(&plan, 10, 99)[0].acceleration, 3.0);
+    assert!(remaining_plan(&[], 10, 99).is_empty());
+}
+
+#[test]
 fn ego_can_start_from_a_frenet_state() {
     let start = EgoStart {
         progress: 123.0,
@@ -85,7 +100,7 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
         ("simulation.preview", 297, 8_910, 30),
         ("simulation.ego", 297, 297, 1),
         ("simulation.collisions", 297, 1_782, 6),
-        ("simulation.total", 297, 760_270, 16_712),
+        ("simulation.total", 297, 25_092, 349),
         ("simulation.roads", 36, 10_836, 301),
     ] {
         let seam = latency

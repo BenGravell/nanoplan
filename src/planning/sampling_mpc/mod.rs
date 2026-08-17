@@ -137,7 +137,7 @@ impl Default for OptimizerConfig {
 /// everything else (rollout, cost, warm start) supplied by
 /// [`SamplingPlanner`]. Mirrors judo's abstract `Optimizer` base — the
 /// three concrete optimizers are `impl`s of this and nothing more.
-pub(crate) trait Optimizer: Default {
+pub(crate) trait Optimizer: Default + Send {
     /// Display name for the planner registry.
     const NAME: &'static str;
 

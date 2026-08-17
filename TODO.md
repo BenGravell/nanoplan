@@ -4,13 +4,9 @@
 Failing to start even after reaching the fully loaded state. Only observed on Samsung Galaxy S22 Ultra. But Samsung Galaxy S24 Ultra and desktop web app was fine.
 
 --
-Rework the planner execution engine.
-Planner should run in a background process/thread, asynchronous from the main simulation (which shall run at a fixed rate and query the planner engine).
-If a fresh plan is not available e.g. due to latency overrun, then sim uses last known plan.
+src/planning/README.md
 
-This is to not cause the app to slow down when planner is running too slow.
-
-Show a warning when planner runs too slow to keep up with the sim.
+split up, move docs for individual planners to sub-directories.
 
 --
 Add a minimap display to upper right corner of the track canvas area.

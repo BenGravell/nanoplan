@@ -22,7 +22,7 @@ pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     for seam in &live.latency.seams {
         metric(
             ui,
-            seam.name,
+            &seam.name,
             format!(
                 "mean {:.3} ms · max {:.3} ms\nmean {:.1} clocks · max {}",
                 seam.mean_ms(),

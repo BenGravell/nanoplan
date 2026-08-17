@@ -1,6 +1,7 @@
 use super::{Pose, State};
 use std::ops::{Add, Mul, Sub};
 
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Position {
     pub(crate) x: f64,

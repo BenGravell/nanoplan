@@ -10,6 +10,7 @@ pub(crate) const BARRIER_RESTITUTION: f64 = 0.2;
 /// A two-sided physical barrier segment. `normal` is only the reference side;
 /// crossing either way clamps the vehicle to the segment and reflects the
 /// velocity component through the crossed side.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Barrier {
     pub(crate) a: Position,

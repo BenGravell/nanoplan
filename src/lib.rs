@@ -11,6 +11,11 @@ mod vehicle;
 mod viewer;
 mod world;
 
+#[cfg(target_family = "wasm")]
+pub fn register_planner_worker() {
+    planning::engine::register();
+}
+
 #[cfg(all(feature = "track-pregeneration", not(target_family = "wasm")))]
 pub use track::pregenerate::pregenerate_tracks;
 

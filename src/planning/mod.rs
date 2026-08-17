@@ -9,6 +9,7 @@ mod compute_budget;
 mod config;
 pub(crate) mod constraints;
 pub(crate) mod diagnostics;
+pub(crate) mod engine;
 pub(crate) mod latency;
 pub(crate) mod lattice;
 pub(crate) mod pi2ddp;
@@ -30,7 +31,7 @@ pub(crate) use catalog::PlannerKind;
 pub(crate) use compute_budget::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT};
 pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
-pub(crate) use latency::{Latency, LatencyStats};
+pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use lattice::LatticePlanner;
 pub(crate) use pi2ddp::Pi2DdpPlanner;
 pub(crate) use rrt_star::RrtStarPlanner;
@@ -114,7 +115,7 @@ impl<'a> Context<'a> {
 /// A planner turns the current 4D state into a direct acceleration/curvature
 /// command trajectory. The simulator applies the first command after clamping
 /// it to the vehicle's static limits.
-pub(crate) trait Planner {
+pub(crate) trait Planner: Send {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
 }
 

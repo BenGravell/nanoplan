@@ -3,14 +3,11 @@
 mod road;
 mod traffic;
 
-use web_time::Instant;
-
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::rng::Rng;
 use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
-use crate::planning::{
-    ComputeBudget, Context, Diagnostics, DiagnosticsData, Latency, PLANNING_HORIZON_S, Planner, PlannerKind,
-};
+use crate::planning::engine::{PlanRequest, PlanResult, PlannerEngine};
+use crate::planning::{ComputeBudget, DiagnosticsData, Latency, PLANNING_HORIZON_S, PlannerKind};
 use crate::simulation::{Control, DynamicBody, Position, Simulator, State, collide_dynamic_bodies};
 use crate::track::{Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
@@ -30,13 +27,17 @@ pub(crate) struct LiveWorld {
     pub(crate) trajectory: TrajectoryKinematics,
     pub(crate) diagnostics: DiagnosticsData,
     pub(crate) last_plan_ms: f64,
+    pub(crate) planner_slow: bool,
     pub(crate) last_planner_actors: usize,
     pub(crate) ego_collision_count: usize,
     pub(crate) preview_ticks: usize,
     pub(crate) diagnostics_enabled: bool,
     pub(crate) compute_budget: ComputeBudget,
     planner_kind: PlannerKind,
-    planner: Box<dyn Planner>,
+    planner: PlannerEngine,
+    plan: Vec<Control>,
+    plan_tick: u64,
+    tick: u64,
     simulator: Simulator,
     collision_road: Road,
     road_anchor_x: f64,
@@ -100,13 +101,17 @@ impl LiveWorld {
             trajectory: TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt),
             diagnostics: DiagnosticsData::default(),
             last_plan_ms: 0.0,
+            planner_slow: false,
             last_planner_actors: 0,
             ego_collision_count: 0,
             preview_ticks: DEFAULT_PREVIEW_TICKS,
             diagnostics_enabled: false,
             compute_budget: ComputeBudget::NOMINAL,
             planner_kind: planner,
-            planner: planner.build(),
+            planner: PlannerEngine::new(planner),
+            plan: Vec::new(),
+            plan_tick: 0,
+            tick: 0,
             simulator: Simulator::new(ego, dt),
             collision_road,
             road_anchor_x: start.progress,
@@ -116,7 +121,9 @@ impl LiveWorld {
     pub(crate) fn set_planner(&mut self, kind: PlannerKind) {
         if kind != self.planner_kind {
             self.planner_kind = kind;
-            self.planner = kind.build();
+            self.planner = PlannerEngine::new(kind);
+            self.plan.clear();
+            self.planner_slow = false;
             self.road = road_window(
                 &self.track,
                 self.road_anchor_x,
@@ -201,10 +208,22 @@ impl LiveWorld {
     }
 
     pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) {
-        latency.time("simulation.total", || self.tick_with_latency(Some(latency)));
+        latency.time("simulation.total", || {
+            self.tick_with_latency_inner(Some(latency), cfg!(test))
+        });
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn tick_recording_latency_blocking(&mut self, latency: &Latency) {
+        latency.time("simulation.total", || self.tick_with_latency_inner(Some(latency), true));
+    }
+
+    #[cfg(test)]
     fn tick_with_latency(&mut self, latency: Option<&Latency>) {
+        self.tick_with_latency_inner(latency, cfg!(test));
+    }
+
+    fn tick_with_latency_inner(&mut self, latency: Option<&Latency>, wait_for_planner: bool) {
         self.track_progress = timed(latency, "simulation.progress", || {
             let progress = self.track.project_progress(self.ego().position(), self.track_progress);
             work(latency, 1);
@@ -246,35 +265,37 @@ impl LiveWorld {
             work(latency, actor_count);
             states
         });
-        self.last_planner_actors = actor_states.len();
-
-        let diagnostics = Diagnostics::default();
-        let ego = self.ego();
-        let controls = {
-            let ctx = Context::new(
-                &self.road,
-                &actor_states,
-                self.preview_ticks.max(1),
-                self.compute_budget,
-                latency,
-                self.diagnostics_enabled.then_some(&diagnostics),
-            );
-            let start = Instant::now();
-            let controls = match latency {
-                Some(l) => l.time("planner.total", || self.planner.plan(ego, &ctx)),
-                None => self.planner.plan(ego, &ctx),
-            };
-            self.last_plan_ms = start.elapsed().as_secs_f64() * 1e3;
-            controls
-        };
-        self.diagnostics = diagnostics.take();
+        let result = self.planner.poll();
+        self.accept_plan(result, latency);
+        let planner_actor_count = actor_states.len();
+        let submitted = self.planner.submit(PlanRequest {
+            tick: self.tick,
+            ego: self.ego(),
+            road: self.road.clone(),
+            actors: actor_states,
+            horizon: self.preview_ticks.max(1),
+            compute_budget: self.compute_budget,
+            diagnostics_enabled: self.diagnostics_enabled,
+        });
+        if submitted {
+            self.last_planner_actors = planner_actor_count;
+        }
+        #[cfg(not(target_family = "wasm"))]
+        if wait_for_planner && submitted {
+            let result = self.planner.wait();
+            self.accept_plan(Some(result), latency);
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = wait_for_planner;
+        self.planner_slow |= self.planner.is_slow(self.dt());
+        let controls = remaining_plan(&self.plan, self.plan_tick, self.tick);
 
         let plan = timed(latency, "simulation.preview", || {
-            let plan = self.simulator.preview(&controls, self.preview_ticks);
+            let plan = self.simulator.preview(controls, self.preview_ticks);
             work(latency, plan.len() as u64);
             plan
         });
-        let plan_controls: Vec<_> = controls.into_iter().take(plan.len()).collect();
+        let plan_controls: Vec<_> = controls.iter().copied().take(plan.len()).collect();
         let previous_ego = self.ego();
         timed(latency, "simulation.ego", || {
             self.simulator.step(plan_controls.first().copied().unwrap_or_default());
@@ -291,6 +312,21 @@ impl LiveWorld {
             plan_controls
         };
         self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
+        self.tick += 1;
+    }
+
+    fn accept_plan(&mut self, result: Option<PlanResult>, latency: Option<&Latency>) {
+        let Some(result) = result else { return };
+        self.planner_slow = result.elapsed_ms > self.dt() * 1e3;
+        self.plan = result.controls;
+        self.plan_tick = result.tick;
+        self.diagnostics = result.diagnostics;
+        self.last_plan_ms = result.elapsed_ms;
+        if let Some(latency) = latency {
+            for span in result.latency {
+                latency.record(span.name, span.milliseconds, span.clocks);
+            }
+        }
     }
 
     fn resolve_collisions(&mut self, previous_ego: State, previous_actors: &[(usize, State)]) {
@@ -345,6 +381,13 @@ impl LiveWorld {
             actor.state = body.state;
         }
     }
+}
+
+fn remaining_plan(plan: &[Control], plan_tick: u64, tick: u64) -> &[Control] {
+    if plan.is_empty() {
+        return plan;
+    }
+    &plan[(tick.saturating_sub(plan_tick) as usize).min(plan.len() - 1)..]
 }
 
 fn racer_progress(track: &Track, state: State, footprint: Footprint, hint: f64) -> f64 {

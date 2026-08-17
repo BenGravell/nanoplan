@@ -13,6 +13,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "planner-worker"
+path = "tools/planner_worker.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "pregenerate-tracks"
 path = "tools/pregenerate_tracks.rs"
 required-features = ["track-pregeneration"]
@@ -75,6 +81,8 @@ splinefit = { version = "0.4.1", optional = true }
 ureq = { version = "3.3", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+gloo-worker = "0.6"
+serde = { version = "1", features = ["derive"] }
 web-sys = { version = "0.3", features = ["Navigator", "Window"] }
 
 [dev-dependencies]

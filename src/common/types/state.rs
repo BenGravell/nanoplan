@@ -2,6 +2,7 @@ use super::vector::V4;
 use super::{Pose, Position};
 
 /// Vehicle state at the rear midpoint: pose and speed.
+#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct State {
     pub(crate) pose: Pose,
