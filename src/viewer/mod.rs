@@ -21,7 +21,13 @@ use colors::CANVAS_RGB;
 use colors::NON_DRIVABLE_RGB;
 
 pub(crate) const DT: f64 = 0.1;
+
+#[cfg(not(target_family = "wasm"))]
 const VIEW_MSAA: Msaa = Msaa::Sample4;
+// browser device memory is opaque; avoid expensive MSAA for web app.
+#[cfg(target_family = "wasm")]
+const VIEW_MSAA: Msaa = Msaa::Off;
+
 const RESIZE_DEBOUNCE_SECONDS: f32 = 0.2;
 pub(crate) const MIN_VIEWPORT_WIDTH: f32 = 520.0;
 pub(crate) const MIN_VIEWPORT_ASPECT_WIDTH: u8 = 4;
