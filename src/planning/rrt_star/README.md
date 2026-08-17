@@ -116,7 +116,7 @@ one level up. Trying identical candidates every tick means the tree finds
 time.
 
 **Feasibility and edge cost both go through the [shared metric
-objective](../README.md#the-shared-metric-objective).** `feasible` additionally enforces its
+objective](../../metrics/README.md#the-shared-metric-objective).** `feasible` additionally enforces its
 own tighter margins before ever calling it — `drivable_bound` (the road's
 own `half_width` less `DRIVABLE_MARGIN_M` = 0.5 m, so it holds just inside
 the shared function's road-edge reject on whatever road is being driven) and

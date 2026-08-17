@@ -26,7 +26,7 @@ centerline plus proportional speed hold (`init_policy`); the initial
 curvature exploration variance `σ_κ` is sized so sampled trajectories span
 roughly the lane half-width (`LANE_HALF_M = 1.75` m) by the preview
 distance, rather than an arbitrary constant. The running cost prices the
-rolled-out state against the [shared metric objective](../README.md#the-shared-metric-objective)
+rolled-out state against the [shared metric objective](../../metrics/README.md#the-shared-metric-objective)
 — `State` is just `(x, y, yaw, speed)`, while `u` is direct
 acceleration/curvature. Unlike
 the lattice and RRT*, which reject a colliding or off-road

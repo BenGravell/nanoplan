@@ -21,7 +21,7 @@
 //! nanoplan deliberately provides neither: its shared metric objective
 //! ([`crate::planning::constraints::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
-//! `src/planning/treetop/README.md`). So this port differentiates **numerically**:
+//! `src/metrics/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the state-cost gradient/Hessian
 //! ([`stage_derivs`]) and the dynamics Jacobians
 //! ([`dynamics_jacobian`]) — the planners still consume exactly the same
