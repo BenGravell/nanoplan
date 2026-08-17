@@ -1,6 +1,21 @@
 # TODO
 
 --
+Failing to start even after reaching the fully loaded state. Only observed on Samsung Galaxy S22 Ultra. But Samsung Galaxy S24 Ultra and desktop web app was fine.
+
+--
+Full-screen button remains visible on mobile even after clicking and going full-screen.
+
+
+--
+Rework the planner execution engine.
+Planner should run in a background process/thread, asynchronous from the main simulation (which shall run at a fixed rate and query the planner engine). If a fresh plan is not available e.g. due to latency overrun, then sim uses last known plan.
+
+This is to not cause the app to slow down when planner is running too slow.
+
+Show a warning when planner runs too slow to keep up with the sim.
+
+--
 Add a minimap display to upper right corner of the track canvas area.
 
 Use a simplified rep.
@@ -73,15 +88,16 @@ This works for static obstacles.
 
 ## UX
 
--- Grid display
-
-Minor headlines are invisible, do not show up.
-
-Zoom based wide grid should be a perfect power 2 multiple of the normal zoom grid so that the lines don't pop position on zoom. Effect should be purely that lines become thicker/thinner and disappear/appear, not popping or shifting position.
+--
+Add Camera controls using mobile touch gestures. We already have good zoom control. We need good controls for panning (singe finger drag) and for rotate (two finger spin). Use standard APIs and frameworks where possible, do not reinvent the wheel.
 
 
 --
-Make chevron on start menu like 50% bigger.
+On mobile the left menu is narrow. Contained elements with lots of text get squished. Sliders with a text or value label should have those above the slider so every slider gets the full column width. Ensure spillage off left or right side is impossible for every element in a menu.
+
+
+--
+Make chevron on start menu 50% bigger.
 
 
 --
