@@ -118,9 +118,9 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
 
 fn paint_chevron(ui: &egui::Ui, screen: egui::Rect, center_y: f32, time: f64) {
     let (offset, scale) = chevron_animation(time);
-    let center_x = 0.066_145_83 + offset;
-    let half_width = 0.002_604_167 * scale;
-    let half_height = 0.007_407_407_3 * scale;
+    let center_x = 0.06 + offset;
+    let half_width = 0.004 * scale;
+    let half_height = 0.011 * scale;
     ui.painter().add(egui::Shape::line(
         [
             normalized_pos(screen, center_x - half_width, center_y - half_height),
@@ -128,7 +128,7 @@ fn paint_chevron(ui: &egui::Ui, screen: egui::Rect, center_y: f32, time: f64) {
             normalized_pos(screen, center_x - half_width, center_y + half_height),
         ]
         .to_vec(),
-        egui::Stroke::new(screen.height() * 0.003_703_703_6 * scale, ORANGE),
+        egui::Stroke::new(screen.height() * 0.005 * scale, ORANGE),
     ));
 }
 

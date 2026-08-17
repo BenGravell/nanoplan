@@ -79,14 +79,6 @@ This works for static obstacles.
 ## UX
 
 --
-Add Camera controls using mobile touch gestures. We already have good zoom control. We need good controls for panning (singe finger drag) and for rotate (two finger spin). Use standard APIs and frameworks where possible, do not reinvent the wheel.
-
-
---
-Make chevron on start menu 50% bigger.
-
-
---
 road window seems to draw over itself on short tracks [Test Track (small)]
 results in weird doubled up station lines
 
