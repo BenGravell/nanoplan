@@ -4,11 +4,6 @@
 Failing to start even after reaching the fully loaded state. Only observed on Samsung Galaxy S22 Ultra. But Samsung Galaxy S24 Ultra and desktop web app was fine.
 
 --
-src/planning/README.md
-
-split up, move docs for individual planners to sub-directories.
-
---
 Add a minimap display to upper right corner of the track canvas area.
 
 Use a simplified rep.
