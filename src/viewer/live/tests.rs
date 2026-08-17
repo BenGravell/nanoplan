@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, cursor_over_driving_canvas,
-    followed_camera_center, pinch_scale, smooth_angle,
+    followed_camera_center, pinch_scale, screen_drag, smooth_angle, twist_angle,
 };
 use super::rendering::camera_blend;
 use super::screen::PX_PER_M;
@@ -157,6 +157,19 @@ fn camera_smoothing_takes_the_short_way_across_pi() {
 fn pinch_distance_controls_zoom_without_dividing_by_zero() {
     assert_eq!(pinch_scale(100.0, 150.0), 1.5);
     assert_eq!(pinch_scale(0.0, 150.0), 1.0);
+}
+
+#[test]
+fn touch_drag_uses_camera_rotation_and_zoom() {
+    let drag = screen_drag(Vec2::new(20.0, 10.0), std::f32::consts::FRAC_PI_2, 2.0);
+    assert!((drag - Vec2::new(5.0, 10.0)).length() < 1e-5);
+}
+
+#[test]
+fn two_finger_twist_controls_rotation_without_degenerate_angles() {
+    assert!((twist_angle(Vec2::X, Vec2::Y) - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    assert!((twist_angle(Vec2::Y, Vec2::X) + std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    assert_eq!(twist_angle(Vec2::ZERO, Vec2::Y), 0.0);
 }
 
 #[test]
