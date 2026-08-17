@@ -1,4 +1,13 @@
 repos:
+  - repo: https://github.com/hukkin/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        args: [--slw-markers=.!?, --slw-wrap=120]
+        additional_dependencies:
+          - mdformat-gfm==1.0.0
+          - mdformat-slw==0.2.0
+
   - repo: local
     hooks:
       - id: cargo-fmt
