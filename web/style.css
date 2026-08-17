@@ -150,6 +150,10 @@ canvas {
   filter: invert(1);
 }
 
+#fullscreen[hidden] {
+  display: none;
+}
+
 @media (display-mode: fullscreen), (display-mode: standalone) {
   #fullscreen {
     display: none;

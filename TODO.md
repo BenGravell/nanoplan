@@ -4,12 +4,9 @@
 Failing to start even after reaching the fully loaded state. Only observed on Samsung Galaxy S22 Ultra. But Samsung Galaxy S24 Ultra and desktop web app was fine.
 
 --
-Full-screen button remains visible on mobile even after clicking and going full-screen.
-
-
---
 Rework the planner execution engine.
-Planner should run in a background process/thread, asynchronous from the main simulation (which shall run at a fixed rate and query the planner engine). If a fresh plan is not available e.g. due to latency overrun, then sim uses last known plan.
+Planner should run in a background process/thread, asynchronous from the main simulation (which shall run at a fixed rate and query the planner engine).
+If a fresh plan is not available e.g. due to latency overrun, then sim uses last known plan.
 
 This is to not cause the app to slow down when planner is running too slow.
 
@@ -49,13 +46,6 @@ Taxonomy of planners
 - Sampling based (MPPI)
 - Tree search (RRT)
 - Local optimization (iLQR)
-
-
---
-Measure and reduce time to first display/user interaction on app load in web app / mobile.
-
-Loaders should go in a background process that is non-blocking.
-Start app with a download-free preset track.
 
 
 ## Actor planning
