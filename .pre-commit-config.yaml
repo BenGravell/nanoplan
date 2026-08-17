@@ -3,7 +3,8 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
-        args: [--slw-markers=.!?, --slw-wrap=120]
+        entry: bash -c 'mdformat --wrap=no --no-wrap-sentences "$@" && mdformat --slw-markers=.!? --slw-wrap=120 "$@"' --
+        exclude: ^\.agents/
         additional_dependencies:
           - mdformat-gfm==1.0.0
           - mdformat-slw==0.2.0
