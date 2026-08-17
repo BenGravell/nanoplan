@@ -99,6 +99,7 @@ fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, acti
     let frame = egui::Frame::new()
         .fill(SIDE_PANEL)
         .inner_margin(egui::Margin::same(side_margin));
+    let control_width = (left_width - 2.0 * f32::from(side_margin)).max(0.0);
     let mut left_overlay = overlay_root(root, "control_overlay");
     egui::Panel::left("control_deck")
         .exact_size(left_width)
@@ -106,7 +107,7 @@ fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, acti
         .frame(frame)
         .show(&mut left_overlay, |ui| {
             let rect = ui.max_rect();
-            control_deck(ui, state, live, active_tab, compact);
+            control_deck(ui, state, live, active_tab, compact, control_width);
             ui.interact(rect, ui.id().with("control_deck"), egui::Sense::hover())
                 .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Control deck"));
         });

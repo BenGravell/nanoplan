@@ -83,10 +83,6 @@ Add Camera controls using mobile touch gestures. We already have good zoom contr
 
 
 --
-On mobile the left menu is narrow. Contained elements with lots of text get squished. Sliders with a text or value label should have those above the slider so every slider gets the full column width. Ensure spillage off left or right side is impossible for every element in a menu.
-
-
---
 Make chevron on start menu 50% bigger.
 
 

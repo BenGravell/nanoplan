@@ -6,7 +6,7 @@ use super::super::style::caps_font;
 use super::super::widgets::breakpoint_slider;
 use crate::viewer::UiState;
 
-pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
+pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, content_width: f32) {
     ui.label(
         egui::RichText::new("ACTIVE PLANNER")
             .font(caps_font(11.0))
@@ -26,6 +26,13 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState) {
             .font(caps_font(11.0))
             .color(DIM_TEXT),
     );
-    breakpoint_slider::show(ui, &mut state.compute_budget_percent, &COMPUTE_BUDGET_BREAKPOINTS, " %")
-        .on_hover_text("100% is a calibrated 100 ms allowance; lower values trade search quality for speed.");
+    let budget = breakpoint_slider::show(
+        ui,
+        content_width,
+        &mut state.compute_budget_percent,
+        &COMPUTE_BUDGET_BREAKPOINTS,
+        " %",
+    )
+    .on_hover_text("100% is a calibrated 100 ms allowance; lower values trade search quality for speed.");
+    budget.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Compute budget"));
 }

@@ -2,6 +2,7 @@ use bevy_egui::egui;
 
 use super::super::super::colors::DIM_TEXT;
 use super::super::style::caps_font;
+use super::super::widgets::stacked_slider;
 use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
 pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_width: f32) {
@@ -23,21 +24,15 @@ pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_wi
         if compact { "Smooth" } else { "Smooth motion" },
     );
     ui.label(egui::RichText::new("ZOOM").font(caps_font(11.0)).color(DIM_TEXT));
-    let zoom = ui
-        .scope(|ui| {
-            if compact {
-                // Reserve space for the percentage field and size the track
-                // from the actual narrow-rail content width.
-                ui.spacing_mut().slider_width = (content_width - 76.0).max(24.0);
-            }
-            ui.add(
-                egui::Slider::new(&mut live.camera.zoom, MIN_ZOOM..=MAX_ZOOM)
-                    .logarithmic(true)
-                    .custom_formatter(|value, _| format!("{:.0}%", value * 100.0))
-                    .trailing_fill(true),
-            )
-        })
-        .inner;
+    let zoom_value = format!("{:.0}%", live.camera.zoom * 100.0);
+    let zoom = stacked_slider::show(
+        ui,
+        content_width,
+        zoom_value,
+        egui::Slider::new(&mut live.camera.zoom, MIN_ZOOM..=MAX_ZOOM)
+            .logarithmic(true)
+            .trailing_fill(true),
+    );
     zoom.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Zoom control"));
     let labels = ["-15°", if compact { "NORTH" } else { "NORTH UP" }, "+15°", "RESET"];
     let mut clicked = [false; 4];

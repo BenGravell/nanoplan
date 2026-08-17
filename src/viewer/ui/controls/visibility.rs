@@ -4,6 +4,7 @@ use crate::planning::PLANNING_HORIZON_S;
 
 use super::super::super::colors::{DIM_TEXT, ORANGE};
 use super::super::style::caps_font;
+use super::super::widgets::stacked_slider;
 use crate::viewer::{CarpetVisualization, UiState};
 
 pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, content_width: f32) {
@@ -26,18 +27,15 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
         )
         .wrap(),
     );
-    let preview = ui
-        .scope(|ui| {
-            if compact {
-                ui.spacing_mut().slider_width = (content_width - 76.0).max(24.0);
-            }
-            ui.add(
-                egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
-                    .step_by(0.5)
-                    .trailing_fill(true),
-            )
-        })
-        .inner;
+    let preview_value = format!("{:.1} s", state.preview_s);
+    let preview = stacked_slider::show(
+        ui,
+        content_width,
+        preview_value,
+        egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
+            .step_by(0.5)
+            .trailing_fill(true),
+    );
     preview.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Future preview"));
     ui.checkbox(&mut state.show_carpet, if compact { "Carpet" } else { "Ego carpet" });
     let previous = state.carpet_visualization;

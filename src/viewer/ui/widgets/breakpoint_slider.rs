@@ -1,8 +1,11 @@
 use bevy_egui::egui;
 
+use super::stacked_slider;
+
 /// A discrete slider with one evenly spaced position per allowed value.
 pub(in crate::viewer::ui) fn show(
     ui: &mut egui::Ui,
+    width: f32,
     value: &mut f32,
     breakpoints: &[f32],
     suffix: &str,
@@ -11,15 +14,12 @@ pub(in crate::viewer::ui) fn show(
     debug_assert!(breakpoints.windows(2).all(|pair| pair[0] < pair[1]));
 
     let mut index = nearest_index(*value, breakpoints);
-    let response = ui.add(
-        egui::Slider::new(&mut index, 0..=breakpoints.len() - 1)
-            .custom_formatter(|index, _| format!("{:.0}", breakpoints[index as usize]))
-            .custom_parser(|text| {
-                text.parse::<f32>()
-                    .ok()
-                    .map(|value| nearest_index(value, breakpoints) as f64)
-            })
-            .suffix(suffix),
+    let label = format!("{:.0}{suffix}", breakpoints[index]);
+    let response = stacked_slider::show(
+        ui,
+        width,
+        label,
+        egui::Slider::new(&mut index, 0..=breakpoints.len() - 1),
     );
     if response.changed() {
         *value = breakpoints[index];

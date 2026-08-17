@@ -29,10 +29,12 @@ pub(super) fn control_deck(
     live: &mut Live,
     active_tab: &mut ControlTab,
     compact: bool,
+    content_width: f32,
 ) {
+    ui.set_max_width(content_width);
     let selector = egui::ComboBox::from_id_salt("control_tab")
         .selected_text(active_tab.label())
-        .width(ui.available_width())
+        .width(content_width)
         .height(ui.available_height())
         .show_ui(ui, |ui| {
             for tab in ControlTab::ALL {
@@ -44,13 +46,12 @@ pub(super) fn control_deck(
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "OPTIONS"));
     ui.add_space(if compact { 6.0 } else { 9.0 });
 
-    let content_width = ui.available_width();
     egui::ScrollArea::vertical().max_width(content_width).show(ui, |ui| {
         ui.set_width(content_width);
         match *active_tab {
             ControlTab::Track => track_controls(ui, state, live),
-            ControlTab::Planner => planner::show(ui, state),
-            ControlTab::Opponents => opponents::show(ui, state, live),
+            ControlTab::Planner => planner::show(ui, state, content_width),
+            ControlTab::Opponents => opponents::show(ui, state, live, content_width),
             ControlTab::Camera => camera::show(ui, live, compact, content_width),
             ControlTab::Visibility => visibility::show(ui, state, compact, content_width),
             ControlTab::Metrics => metrics::show(ui, live),

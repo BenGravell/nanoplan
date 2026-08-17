@@ -817,14 +817,39 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             (selector.right() - (control_width * pixels_per_point - margin)).abs() <= 1.0,
             "selector does not end at the right menu margin at {name}: {selector:?}"
         );
-
-        harness.state_mut().tab = ControlTab::Camera;
-        harness.run();
-        let control_deck = harness.get_by_label("Control deck").rect();
         let control_rail = egui::Rect::from_min_max(
             screen.left_top(),
             egui::pos2(control_width * pixels_per_point, screen.bottom()),
         );
+        let budget = harness
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Compute budget")
+            .rect();
+        assert!(
+            (budget.left() - selector.left()).abs() <= 2.0 && (budget.right() - selector.right()).abs() <= 2.0,
+            "compute budget slider does not use the full menu width at {name}: {budget:?}"
+        );
+
+        harness.state_mut().tab = ControlTab::Opponents;
+        harness.run();
+        for label in ["OPPONENTS", "5"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                control_rail.contains_rect(rect) && rect.is_positive(),
+                "opponent control {label:?} spills outside the control rail at {name}: {rect:?}"
+            );
+        }
+        let opponent_count = harness
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Opponent count")
+            .rect();
+        assert!(
+            (opponent_count.left() - selector.left()).abs() <= 2.0
+                && (opponent_count.right() - selector.right()).abs() <= 2.0,
+            "opponent slider does not use the full menu width at {name}: {opponent_count:?}, menu {selector:?}"
+        );
+
+        harness.state_mut().tab = ControlTab::Camera;
+        harness.run();
+        let control_deck = harness.get_by_label("Control deck").rect();
         assert!(
             control_rail.contains_rect(control_deck) && control_deck.is_positive(),
             "control deck spills outside the viewport at {name}: {control_deck:?}"
@@ -867,6 +892,13 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 );
             }
         }
+        let zoom = harness
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Zoom control")
+            .rect();
+        assert!(
+            (zoom.left() - selector.left()).abs() <= 2.0 && (zoom.right() - selector.right()).abs() <= 2.0,
+            "zoom slider does not use the full menu width at {name}: {zoom:?}"
+        );
 
         harness.state_mut().tab = ControlTab::Visibility;
         harness.run();
@@ -902,6 +934,13 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                 );
             }
         }
+        let preview = harness
+            .get_by_role_and_label(egui::accesskit::Role::Slider, "Future preview")
+            .rect();
+        assert!(
+            (preview.left() - selector.left()).abs() <= 2.0 && (preview.right() - selector.right()).abs() <= 2.0,
+            "future preview slider does not use the full menu width at {name}: {preview:?}"
+        );
 
         harness.state_mut().tab = ControlTab::Metrics;
         harness.run();
