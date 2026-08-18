@@ -4,18 +4,6 @@
 Only observed on Samsung Galaxy S22 Ultra.
 But Samsung Galaxy S24 Ultra and desktop web app was fine.
 
--- Add a minimap display to upper right corner of the track canvas area.
-
-Use a simplified rep.
-
-- Track width constant, simple polyline using track centerline.
-  Can be decimated since minimap always render small, only need coarse samples every 5m.
-- Ego and opponents each rendered as circular dots.
-  Ego should always render drawn over top of opponents.
-  Ego should be orange, opponents dark grey.
-- Minimap should not rotate, use a constant position and rotation.
-  Nothing fancy.
-
 -- Put this info on the Tutorial page.
 Probably need separate pages for introduction and keymap/controls.
 
@@ -71,19 +59,6 @@ myopic and failing to reason about and anticipate corners and overtake maneuvers
 ## UX
 
 -- road window seems to draw over itself on short tracks [Test Track (small)] results in weird doubled up station lines
-
--- New flow for driving startup.
-
-Start -> Track Select
-
-Choose a track.
-Horizontal gallery of tracks.
-Each shown as a minimap thumbnail centered in square lockup with track name caption below.
-Gallery is at bottom of screen, about bottom 20 percent.
-Top 80 percent dedicated to track big map display preview and details / stats about the track: Length Number of
-turns/corners Average/min/max curvature
-
-After selecting track then dive into the driving app mode.
 
 -- Show the predicted future poses of actors in the viewer.
 Re-use the ego carpet element.

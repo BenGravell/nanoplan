@@ -3,6 +3,7 @@ use bevy_egui::egui;
 
 use crate::viewer::UiState;
 use crate::viewer::live::Live;
+use crate::viewer::ui::style::scroll_area;
 
 mod camera;
 pub(crate) mod metrics;
@@ -46,7 +47,7 @@ pub(super) fn control_deck(
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "OPTIONS"));
     ui.add_space(if compact { 6.0 } else { 9.0 });
 
-    egui::ScrollArea::vertical().max_width(content_width).show(ui, |ui| {
+    scroll_area(ui, egui::ScrollArea::vertical().max_width(content_width), |ui| {
         ui.set_width(content_width);
         match *active_tab {
             ControlTab::Track => track_controls(ui, state, live),

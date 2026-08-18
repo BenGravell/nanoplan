@@ -20,7 +20,6 @@ pub(crate) const GREY_080: egui::Color32 = egui::Color32::from_gray(80);
 pub(crate) const GREY_152: egui::Color32 = egui::Color32::from_gray(152);
 pub(crate) const GREY_200: egui::Color32 = egui::Color32::from_gray(200);
 pub(crate) const GREY_224: egui::Color32 = egui::Color32::from_gray(224);
-pub(crate) const GREY_232: egui::Color32 = egui::Color32::from_gray(232);
 pub(crate) const GREY_240: egui::Color32 = egui::Color32::from_gray(240);
 pub(crate) const GREY_248: egui::Color32 = egui::Color32::from_gray(248);
 pub(crate) const WHITE: egui::Color32 = egui::Color32::from_gray(255);
@@ -34,7 +33,7 @@ pub(crate) const PANEL: egui::Color32 = GREY_248;
 // Keep the controls legible while letting the road remain visible beneath the overlays.
 pub(crate) const SIDE_PANEL: egui::Color32 = with_premultiplied_alpha(GREY_224, 208);
 pub(crate) const SURFACE: egui::Color32 = WHITE;
-pub(crate) const CONTROL: egui::Color32 = GREY_232;
+pub(crate) const CONTROL: egui::Color32 = GREY_200;
 pub(crate) const FAINT: egui::Color32 = GREY_224;
 
 // Live viewer colors

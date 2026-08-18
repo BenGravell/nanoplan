@@ -9,11 +9,12 @@ mod hud;
 mod landing;
 mod portrait_prompt;
 mod style;
+mod track_select;
 mod tutorial;
 mod visualization;
 mod widgets;
 
-use super::colors::{ORANGE, PANEL, SIDE_PANEL, WHITE};
+use super::colors::{GREY_152, ORANGE, PANEL, SIDE_PANEL, WHITE};
 pub(crate) use controls::ControlTab;
 use controls::control_deck;
 use style::{configure, scale_to_viewport};
@@ -51,9 +52,15 @@ pub(crate) fn ui(
     if !state.started {
         if state.tutorial {
             tutorial::show(&mut root, &mut state.tutorial);
+        } else if state.selecting_track {
+            track_select::show(&mut root, &mut state, &mut live);
         } else {
-            let UiState { started, tutorial, .. } = &mut *state;
-            landing::show(&mut root, started, tutorial);
+            let UiState {
+                selecting_track,
+                tutorial,
+                ..
+            } = &mut *state;
+            landing::show(&mut root, selecting_track, tutorial);
         }
         return;
     }
@@ -119,6 +126,7 @@ fn viewer_layout(root: &mut egui::Ui, state: &mut UiState, live: &mut Live, acti
     if state.show_frame_time {
         frame_time_overlay(root, live, road_rect, compact);
     }
+    live_minimap(root, state.track, live, road_rect, compact);
     let paused_before_escape = live.paused;
     if !root.ctx().egui_wants_keyboard_input()
         && root.input(|input| input.key_pressed(egui::Key::Escape))
@@ -181,6 +189,36 @@ fn frame_time_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, compa
     });
 }
 
+fn live_minimap(root: &egui::Ui, track: usize, live: &Live, road_rect: egui::Rect, compact: bool) {
+    let margin = if compact { 6.0 } else { 10.0 };
+    let pause_height = if compact { 44.0 } else { 52.0 };
+    let size = (road_rect.width() * 0.25).clamp(if compact { 88.0 } else { 120.0 }, 160.0);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(
+            road_rect.right() - size - margin,
+            road_rect.top() + pause_height + margin,
+        ),
+        egui::Vec2::splat(size),
+    );
+    let overlay = overlay_root_at(root, "live_minimap", rect);
+    overlay.painter().rect_filled(rect, 1.0, PANEL);
+    let opponents = live.world.actors.iter().map(|actor| actor.track_x).collect::<Vec<_>>();
+    widgets::minimap::paint(
+        &overlay,
+        track,
+        rect.shrink(if compact { 7.0 } else { 10.0 }),
+        GREY_152,
+        &opponents,
+        Some(live.world.track_progress),
+    );
+    overlay
+        .painter()
+        .rect_stroke(rect, 1.0, egui::Stroke::new(1.0, GREY_152), egui::StrokeKind::Inside);
+    overlay
+        .interact(rect, overlay.id().with("accessibility"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, false, "Track minimap"));
+}
+
 fn overlay_root(root: &egui::Ui, id: &'static str) -> egui::Ui {
     overlay_root_at(root, id, root.max_rect())
 }
@@ -236,6 +274,7 @@ fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compac
     } else if start {
         live.toggle_pause();
         state.started = false;
+        state.selecting_track = false;
     }
 }
 

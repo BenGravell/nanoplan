@@ -24,7 +24,7 @@ pub(crate) struct SmartActor {
     pub(crate) id: usize,
     pub(crate) state: State,
     pub(crate) personality: Personality,
-    pub(super) track_x: f64,
+    pub(crate) track_x: f64,
     pub(super) lateral: f64,
     pub(super) lateral_target: f64,
     pub(super) next_wander_x: f64,

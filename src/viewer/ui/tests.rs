@@ -7,7 +7,7 @@ use super::controls::metrics::preview_metrics;
 use super::style::desktop_zoom;
 use super::{
     ControlTab, UiState, center_rail_rect, compact_layout, configure, handle_keyboard_controls, landing,
-    portrait_prompt, side_panel_margin, side_rail_widths, tutorial, viewer_layout,
+    portrait_prompt, side_panel_margin, side_rail_widths, track_select, tutorial, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -65,7 +65,13 @@ fn landing_starts_with_the_keyboard() {
                 ctx.request_repaint();
                 return;
             }
-            landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+            if !state.ui.started {
+                if state.ui.selecting_track {
+                    track_select::show(ui, &mut state.ui, &mut state.live);
+                } else {
+                    landing::show(ui, &mut state.ui.selecting_track, &mut state.ui.tutorial);
+                }
+            }
         },
         ViewerHarnessState::default(),
     );
@@ -75,7 +81,110 @@ fn landing_starts_with_the_keyboard() {
     assert!(harness.query_by_label("Exit").is_none());
     harness.key_press(egui::Key::Enter);
     harness.run_steps(20);
+    assert!(harness.state().ui.selecting_track);
+    assert!(harness.query_by_label("CHOOSE A TRACK").is_none());
+    assert!(harness.get_all_by_label("Test Track (large)").next().is_some());
+    assert!(harness.query_by_label("Selected track map").is_some());
+    for label in ["LENGTH", "CORNERS", "AVG RADIUS", "MIN RADIUS"] {
+        assert!(
+            harness.query_by_label(label).is_some(),
+            "{label:?} missing from track select"
+        );
+    }
+
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(1);
+    assert_eq!(harness.state().ui.track, 1);
+    harness.key_press(egui::Key::Enter);
+    harness.run();
     assert!(harness.state().ui.started);
+    assert!(!harness.state().ui.selecting_track);
+}
+
+#[test]
+fn track_select_keeps_preview_details_and_gallery_in_their_panes() {
+    for size in [egui::vec2(520.0, 390.0), egui::vec2(1280.0, 720.0)] {
+        let mut harness = Harness::builder().with_size(size).build_ui_state(
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
+                    configure(ui.ctx());
+                    state.configured = true;
+                    state.ui.selecting_track = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                track_select::show(ui, &mut state.ui, &mut state.live);
+            },
+            ViewerHarnessState::default(),
+        );
+        harness.run_steps(2);
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let top = egui::Rect::from_min_max(screen.min, egui::pos2(screen.right(), screen.top() + size.y * 0.8));
+        let gallery = egui::Rect::from_min_max(egui::pos2(screen.left(), top.bottom()), screen.max);
+        for label in ["LENGTH", "CORNERS", "AVG RADIUS", "MIN RADIUS", "DRIVE", "BACK"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                top.contains_rect(rect),
+                "{label:?} is outside the top pane at {size:?}: {rect:?}"
+            );
+        }
+        let map = harness.get_by_label("Selected track map").rect();
+        assert!(top.contains_rect(map) && map.is_positive());
+        let drive = harness.get_by_label("DRIVE").rect();
+        let back = harness.get_by_label("BACK").rect();
+        assert!(drive.top() >= map.bottom());
+        assert!((drive.center().x - screen.center().x).abs() <= 1.0);
+        assert!(back.center().x > screen.center().x && back.center().y < map.top());
+        assert!(
+            harness
+                .get_all_by_label("Test Track (large)")
+                .any(|node| top.contains_rect(node.rect())),
+            "track title is missing from the top pane at {size:?}"
+        );
+
+        let thumbnail = harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Test Track (large)")
+            .rect();
+        assert!(
+            gallery.expand(1.0).contains_rect(thumbnail),
+            "thumbnail is outside the gallery at {size:?}: {thumbnail:?}"
+        );
+        assert!((thumbnail.width() - thumbnail.height()).abs() <= 1.0);
+
+        let left_control = harness.get_by_label("Scroll tracks left").rect();
+        let right_control = harness.get_by_label("Scroll tracks right").rect();
+        assert!(
+            gallery.expand(1.0).contains_rect(left_control) && gallery.expand(1.0).contains_rect(right_control),
+            "rail controls outside gallery at {size:?}: {left_control:?}, {right_control:?}"
+        );
+        assert!((thumbnail.top() - left_control.top()).abs() <= 1.0);
+        assert_eq!(left_control.height(), right_control.height());
+        harness.get_by_label("Scroll tracks right").click();
+        harness.run_steps(2);
+        let button_scrolled = harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Test Track (large)")
+            .rect();
+        assert!(button_scrolled.left() < thumbnail.left());
+        harness.get_by_label("Scroll tracks left").click();
+        harness.run_steps(2);
+
+        harness.hover_at(gallery.center());
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -100.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+        let scrolled = harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Test Track (large)")
+            .rect();
+        assert!(
+            scrolled.left() < thumbnail.left(),
+            "mouse wheel did not move the gallery at {size:?}"
+        );
+    }
 }
 
 #[test]
@@ -92,7 +201,7 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
             if state.ui.tutorial {
                 tutorial::show(ui, &mut state.ui.tutorial);
             } else {
-                landing::show(ui, &mut state.ui.started, &mut state.ui.tutorial);
+                landing::show(ui, &mut state.ui.selecting_track, &mut state.ui.tutorial);
             }
         },
         ViewerHarnessState::default(),
@@ -635,14 +744,23 @@ fn driving_canvas_excludes_side_rails() {
     );
 
     harness.run_steps(2);
+
+    let (left, right) = side_rail_widths(size);
+    let road = center_rail_rect(egui::Rect::from_min_size(egui::Pos2::ZERO, size), left, right);
+    let minimap = harness.get_by_label("Track minimap").rect();
+    assert!(road.contains_rect(minimap));
+    assert!(minimap.center().x > road.center().x && minimap.top() > road.top());
 }
 
 #[test]
-fn active_scroll_handles_use_the_orange_widget_fill() {
+fn scrollbars_use_the_shared_solid_style() {
     let ctx = egui::Context::default();
     configure(&ctx);
     let style = ctx.style_of(egui::Theme::Light);
 
+    assert!(!style.spacing.scroll.floating);
+    assert_eq!(style.spacing.scroll.bar_width, 10.0);
+    assert_eq!(style.spacing.scroll.fade.strength, 0.0);
     assert!(!style.spacing.scroll.foreground_color);
     assert_eq!(style.visuals.widgets.active.bg_fill, crate::viewer::colors::ORANGE);
     assert_ne!(
@@ -662,6 +780,16 @@ fn orange_ui_states_always_use_white_foregrounds() {
     assert_eq!(style.visuals.selection.bg_fill, crate::viewer::colors::ORANGE);
     assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
     assert_eq!(style.visuals.override_text_color, None);
+}
+
+#[test]
+fn inactive_buttons_contrast_with_the_surface() {
+    let ctx = egui::Context::default();
+    configure(&ctx);
+    let visuals = &ctx.style_of(egui::Theme::Light).visuals;
+
+    assert_eq!(visuals.widgets.inactive.weak_bg_fill, crate::viewer::colors::CONTROL);
+    assert_ne!(visuals.widgets.inactive.weak_bg_fill, crate::viewer::colors::SURFACE);
 }
 
 #[test]

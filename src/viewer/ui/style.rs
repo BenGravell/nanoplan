@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use crate::viewer::colors::{CONTROL, FAINT, HOVER, ORANGE, PANEL, SURFACE, TEXT};
+use crate::viewer::colors::{CONTROL, FAINT, GREY_152, HOVER, ORANGE, PANEL, SURFACE, TEXT};
 
 const DESKTOP_REFERENCE_HEIGHT: f32 = 1080.0;
 const MAX_DESKTOP_ZOOM: f32 = 2.0;
@@ -46,9 +46,11 @@ pub(super) fn configure(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(10.0, 9.0);
     style.spacing.interact_size = egui::vec2(44.0, 32.0);
     style.spacing.button_padding = egui::vec2(12.0, 7.0);
-    // Scroll handles use widget background colors so active handles use the
-    // orange active fill instead of the active foreground (white). Hovered
-    // handles remain gold and visually distinct.
+    // Keep scrollbars solid and visible everywhere. Handles use widget
+    // background colors so the active handle uses the orange active fill.
+    style.spacing.scroll = egui::style::ScrollStyle::solid();
+    style.spacing.scroll.bar_width = 10.0;
+    style.spacing.scroll.fade.strength = 0.0;
     style.spacing.scroll.foreground_color = false;
     style.text_styles.insert(
         egui::TextStyle::Body,
@@ -117,4 +119,19 @@ pub(super) fn desktop_zoom(viewport_height: f32) -> f32 {
 
 pub(super) fn caps_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name("caps".into()))
+}
+
+pub(super) fn scroll_area<R>(
+    ui: &mut egui::Ui,
+    area: egui::ScrollArea,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let inactive_fill = ui.visuals().widgets.inactive.bg_fill;
+    ui.visuals_mut().widgets.inactive.bg_fill = GREY_152;
+    let output = area.show(ui, |ui| {
+        ui.visuals_mut().widgets.inactive.bg_fill = inactive_fill;
+        add_contents(ui)
+    });
+    ui.visuals_mut().widgets.inactive.bg_fill = inactive_fill;
+    output
 }

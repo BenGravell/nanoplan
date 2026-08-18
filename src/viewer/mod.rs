@@ -74,6 +74,7 @@ impl CarpetVisualization {
 #[derive(Resource)]
 pub(crate) struct UiState {
     pub(crate) started: bool,
+    pub(crate) selecting_track: bool,
     pub(crate) tutorial: bool,
     pub(crate) show_frame_time: bool,
     pub(crate) track: usize,
@@ -95,6 +96,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             started: false,
+            selecting_track: false,
             tutorial: false,
             show_frame_time: false,
             track: 0,

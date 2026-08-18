@@ -16,11 +16,11 @@ struct MenuActivation {
     started_at: f64,
 }
 
-pub(super) fn show(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
+pub(super) fn show(root: &mut egui::Ui, selecting_track: &mut bool, tutorial: &mut bool) {
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
     background_graphics(root);
     title_graphic(root);
-    start_menu(root, started, tutorial);
+    start_menu(root, selecting_track, tutorial);
     root.ctx().request_repaint_after(std::time::Duration::from_millis(16));
 }
 
@@ -31,7 +31,7 @@ pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
     )
 }
 
-fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
+fn start_menu(root: &mut egui::Ui, selecting_track: &mut bool, tutorial: &mut bool) {
     let screen = root.max_rect();
     let selection_id = egui::Id::new("landing_menu_selection");
     let activation_id = egui::Id::new("landing_menu_activation");
@@ -104,7 +104,7 @@ fn start_menu(root: &mut egui::Ui, started: &mut bool, tutorial: &mut bool) {
     {
         root.data_mut(|data| data.remove::<MenuActivation>(activation_id));
         if active.index == 0 {
-            *started = true;
+            *selecting_track = true;
         } else if active.index == 1 {
             *tutorial = true;
         }
