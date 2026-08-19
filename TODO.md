@@ -1,9 +1,5 @@
 # TODO
 
--- Failing to start even after reaching the fully loaded state.
-Only observed on Samsung Galaxy S22 Ultra.
-But Samsung Galaxy S24 Ultra and desktop web app was fine.
-
 -- Remove track selection section from the left menu of drive screen.
 
 -- Taxonomy of planners

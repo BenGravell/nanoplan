@@ -185,7 +185,7 @@ struct ResizeDebounce {
     displayed: UVec2,
     observed: UVec2,
     fallback: UVec2,
-    quiet_for: f32,
+    pending_for: f32,
 }
 
 impl ResizeDebounce {
@@ -199,12 +199,15 @@ impl ResizeDebounce {
                 self.fallback = self.displayed;
             }
             self.observed = size;
-            self.quiet_for = 0.0;
-        } else if self.observed != self.displayed {
-            self.quiet_for += delta_seconds;
-            if self.quiet_for >= RESIZE_DEBOUNCE_SECONDS {
+        }
+        if self.observed != self.displayed {
+            self.pending_for += delta_seconds;
+            if self.pending_for >= RESIZE_DEBOUNCE_SECONDS {
                 self.displayed = self.observed;
+                self.pending_for = 0.0;
             }
+        } else {
+            self.pending_for = 0.0;
         }
 
         self.observed != self.displayed
@@ -214,7 +217,7 @@ impl ResizeDebounce {
         (self.fallback != UVec2::ZERO && self.fallback != self.displayed).then(|| {
             self.displayed = self.fallback;
             self.observed = self.fallback;
-            self.quiet_for = 0.0;
+            self.pending_for = 0.0;
             self.fallback
         })
     }

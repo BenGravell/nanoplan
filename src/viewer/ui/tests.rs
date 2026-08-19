@@ -521,7 +521,7 @@ fn viewport_requires_minimum_width_and_safe_background_aspect_ratio() {
 }
 
 #[test]
-fn resize_waits_for_a_quiet_period_then_accepts_native_4k() {
+fn resize_coalesces_changes_then_accepts_native_4k() {
     let mut resize = ResizeDebounce::default();
     assert!(!resize.observe(bevy::math::UVec2::new(1280, 720), 0.0));
     assert!(resize.observe(bevy::math::UVec2::new(3840, 2160), 0.0));
@@ -529,6 +529,16 @@ fn resize_waits_for_a_quiet_period_then_accepts_native_4k() {
     assert!(!resize.observe(bevy::math::UVec2::new(3840, 2160), 0.02));
     assert_eq!(resize.displayed, bevy::math::UVec2::new(3840, 2160));
     assert_eq!(resize.rollback(), Some(bevy::math::UVec2::new(1280, 720)));
+}
+
+#[test]
+fn resize_churn_cannot_disable_rendering_forever() {
+    let mut resize = ResizeDebounce::default();
+    assert!(!resize.observe(bevy::math::UVec2::new(1280, 720), 0.0));
+    assert!(resize.observe(bevy::math::UVec2::new(1280, 719), 0.07));
+    assert!(resize.observe(bevy::math::UVec2::new(1280, 718), 0.07));
+    assert!(!resize.observe(bevy::math::UVec2::new(1280, 717), 0.07));
+    assert_eq!(resize.displayed, bevy::math::UVec2::new(1280, 717));
 }
 
 #[test]
