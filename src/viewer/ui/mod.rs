@@ -7,6 +7,7 @@ use super::{DrivingCanvas, UiState, viewport_constraints};
 pub(crate) mod controls;
 mod hud;
 mod landing;
+mod pictogram;
 mod portrait_prompt;
 mod style;
 mod track_select;

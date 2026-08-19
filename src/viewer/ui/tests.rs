@@ -188,7 +188,7 @@ fn track_select_keeps_preview_details_and_gallery_in_their_panes() {
 }
 
 #[test]
-fn landing_tutorial_opens_the_camera_keymap_and_returns() {
+fn landing_tutorial_opens_the_introduction_and_camera_keymap_and_returns() {
     let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
         |ui, state: &mut ViewerHarnessState| {
             let ctx = ui.ctx().clone();
@@ -212,7 +212,26 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
     harness.run_steps(30);
     for label in [
         "TUTORIAL",
-        "CAMERA CONTROLS",
+        "01 / 02  ·  INTRODUCTION",
+        "The ego and traffic race on various circuits.",
+        "TRACK",
+        "PLANNER",
+        "FUTURE PREVIEW",
+        "DIAGNOSTIC POINTS / TRAJECTORIES",
+        "PAUSE",
+        "SCROLL",
+    ] {
+        assert!(
+            harness.query_by_label(label).is_some(),
+            "{label:?} missing from the Tutorial introduction"
+        );
+    }
+
+    harness.get_by_label("CONTROLS  →").click();
+    harness.run_steps(2);
+    for label in [
+        "TUTORIAL",
+        "02 / 02  ·  CONTROLS",
         "MMB / WASD",
         "PAN",
         "RMB / Q E",
@@ -237,11 +256,11 @@ fn landing_tutorial_opens_the_camera_keymap_and_returns() {
     harness.get_by_label("BACK").click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Start").is_some());
-    assert!(harness.query_by_label("CAMERA CONTROLS").is_none());
+    assert!(harness.query_by_label("02 / 02  ·  CONTROLS").is_none());
 }
 
 #[test]
-fn tutorial_keymap_fits_supported_phone_viewports() {
+fn tutorial_pages_fit_supported_phone_viewports() {
     for (_, size) in PHONE_LANDSCAPE_SIZES {
         let mut harness = Harness::builder().with_size(size).build_ui_state(
             |ui, configured: &mut bool| {
@@ -259,7 +278,17 @@ fn tutorial_keymap_fits_supported_phone_viewports() {
         harness.run_steps(2);
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-        for label in ["TUTORIAL", "CAMERA CONTROLS", "MMB / WASD", "RESET", "BACK"] {
+        for label in ["TUTORIAL", "TRACK", "PAUSE", "BACK", "CONTROLS  →"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                screen.contains_rect(rect),
+                "{label:?} at {rect:?} is clipped at {size:?}"
+            );
+        }
+
+        harness.get_by_label("CONTROLS  →").click();
+        harness.run_steps(2);
+        for label in ["TUTORIAL", "MMB / WASD", "RESET", "BACK", "←  INTRODUCTION"] {
             let rect = harness.get_by_label(label).rect();
             assert!(
                 screen.contains_rect(rect),

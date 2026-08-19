@@ -4,20 +4,7 @@
 Only observed on Samsung Galaxy S22 Ultra.
 But Samsung Galaxy S24 Ultra and desktop web app was fine.
 
--- Put this info on the Tutorial page.
-Probably need separate pages for introduction and keymap/controls.
-
-INTRODUCTION The ego and traffic race on various circuits.
-
-- **track** selects a circuit.
-- **planner** changes the active motion planner.
-- **future preview** sets how many seconds of the current plan are drawn; zero hides the preview without stopping the ego.
-- **diagnostic points/trajectories** show the selected planner's sampled search geometry when that planner records
-  diagnostics.
-- **pause** freezes the simulation.
-- **scroll** zooms the camera.
-
--- expand the tutorial with more pictograms and a steady easy onboarding info flow
+-- Remove track selection section from the left menu of drive screen.
 
 -- Taxonomy of planners
 
