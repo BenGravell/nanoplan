@@ -638,32 +638,6 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
 }
 
 #[test]
-fn section_selector_opens_track_options() {
-    let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
-        |ui, state: &mut ViewerHarnessState| {
-            if !state.configured {
-                configure(ui.ctx());
-                state.configured = true;
-                ui.ctx().request_repaint();
-                return;
-            }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
-        },
-        ViewerHarnessState::default(),
-    );
-    harness.run_steps(2);
-
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "OPTIONS")
-        .click();
-    harness.run();
-    harness.get_by_label("TRACK").click();
-    harness.run();
-
-    assert!(harness.state().tab == ControlTab::Track);
-}
-
-#[test]
 fn pause_rail_opens_navigation_modal() {
     let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
         |ui, state: &mut ViewerHarnessState| {

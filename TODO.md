@@ -1,7 +1,5 @@
 # TODO
 
--- Remove track selection section from the left menu of drive screen.
-
 -- Taxonomy of planners
 
 - Sampling based (MPPI)

@@ -1,4 +1,3 @@
-use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use bevy_egui::egui;
 
 use crate::viewer::UiState;
@@ -14,7 +13,6 @@ mod visibility;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) enum ControlTab {
-    Track,
     #[default]
     Planner,
     Opponents,
@@ -50,7 +48,6 @@ pub(super) fn control_deck(
     scroll_area(ui, egui::ScrollArea::vertical().max_width(content_width), |ui| {
         ui.set_width(content_width);
         match *active_tab {
-            ControlTab::Track => track_controls(ui, state, live),
             ControlTab::Planner => planner::show(ui, state, content_width),
             ControlTab::Opponents => opponents::show(ui, state, live, content_width),
             ControlTab::Camera => camera::show(ui, live, compact, content_width),
@@ -62,8 +59,7 @@ pub(super) fn control_deck(
 }
 
 impl ControlTab {
-    const ALL: [Self; 7] = [
-        Self::Track,
+    const ALL: [Self; 6] = [
         Self::Planner,
         Self::Opponents,
         Self::Camera,
@@ -74,7 +70,6 @@ impl ControlTab {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Track => "TRACK",
             Self::Planner => "PLANNER",
             Self::Opponents => "OPPONENTS",
             Self::Camera => "CAMERA",
@@ -82,31 +77,5 @@ impl ControlTab {
             Self::Metrics => "METRICS",
             Self::Timing => "TIMING",
         }
-    }
-}
-
-fn track_controls(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
-    let previous_track = state.track;
-    egui::ComboBox::from_id_salt("track")
-        .selected_text(track_name(state.track))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for (index, track) in TRACK_PRESETS.iter().enumerate() {
-                ui.selectable_value(&mut state.track, index, track.name);
-            }
-            for (index, track) in TRACK_CATALOG.iter().enumerate() {
-                ui.selectable_value(&mut state.track, index + TRACK_PRESETS.len(), track.name);
-            }
-        });
-    if state.track != previous_track {
-        live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
-    }
-}
-
-fn track_name(index: usize) -> &'static str {
-    if index < TRACK_PRESETS.len() {
-        TRACK_PRESETS[index].name
-    } else {
-        TRACK_CATALOG[index - TRACK_PRESETS.len()].name
     }
 }
