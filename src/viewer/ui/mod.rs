@@ -265,17 +265,18 @@ fn pause_modal(ctx: &egui::Context, state: &mut UiState, live: &mut Live, compac
         ui.add_space(8.0);
         let width = ui.available_width();
         let resume = ui.add_sized([width, 36.0], egui::Button::new("RESUME"));
+        let tracks = ui.add_sized([width, 36.0], egui::Button::new("RETURN TO TRACK SELECT"));
         let start = ui.add_sized([width, 36.0], egui::Button::new("RETURN TO START MENU"));
-        (resume.clicked(), start.clicked())
+        (resume.clicked(), tracks.clicked(), start.clicked())
     });
 
-    let (resume, start) = response.inner;
+    let (resume, tracks, start) = response.inner;
     if resume || (allow_escape_close && response.should_close()) {
         live.toggle_pause();
-    } else if start {
+    } else if tracks || start {
         live.toggle_pause();
         state.started = false;
-        state.selecting_track = false;
+        state.selecting_track = tracks;
     }
 }
 

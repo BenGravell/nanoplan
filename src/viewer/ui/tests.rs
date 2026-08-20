@@ -656,7 +656,7 @@ fn pause_rail_opens_navigation_modal() {
 
     harness.get_by_label("PAUSE").click();
     harness.run();
-    for label in ["RESUME", "RETURN TO START MENU"] {
+    for label in ["RESUME", "RETURN TO TRACK SELECT", "RETURN TO START MENU"] {
         assert!(harness.query_by_label(label).is_some());
     }
     assert!(harness.query_by_label("EXIT").is_none());
@@ -670,9 +670,19 @@ fn pause_rail_opens_navigation_modal() {
 
     harness.get_by_label("PAUSE").click();
     harness.run();
+    harness.get_by_label("RETURN TO TRACK SELECT").click();
+    harness.run();
+    assert!(!harness.state().ui.started);
+    assert!(harness.state().ui.selecting_track);
+
+    harness.state_mut().ui.started = true;
+    harness.run();
+    harness.get_by_label("PAUSE").click();
+    harness.run();
     harness.get_by_label("RETURN TO START MENU").click();
     harness.run();
     assert!(!harness.state().ui.started);
+    assert!(!harness.state().ui.selecting_track);
 }
 
 #[test]
