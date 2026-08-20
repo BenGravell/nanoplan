@@ -14,7 +14,7 @@ pub(in crate::viewer::ui) fn show(
     debug_assert!(breakpoints.windows(2).all(|pair| pair[0] < pair[1]));
 
     let mut index = nearest_index(*value, breakpoints);
-    let label = format!("{:.0}{suffix}", breakpoints[index]);
+    let label = format!("{:.1}{suffix}", breakpoints[index]);
     let response = stacked_slider::show(
         ui,
         width,

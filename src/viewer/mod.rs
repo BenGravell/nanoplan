@@ -2,7 +2,7 @@
 
 use std::num::NonZeroU32;
 
-use crate::planning::{NOMINAL_COMPUTE_BUDGET_PERCENT, PlannerKind};
+use crate::planning::{NOMINAL_COMPUTE_BUDGET_PERCENT, PLANNING_HORIZON_S, PlannerKind};
 use bevy::camera::CameraOutputMode;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
@@ -102,7 +102,7 @@ impl Default for UiState {
             track: 0,
             planner: PlannerKind::Basic,
             compute_budget_percent: NOMINAL_COMPUTE_BUDGET_PERCENT,
-            preview_s: 3.0,
+            preview_s: PLANNING_HORIZON_S as f32,
             opponents: 5,
             show_grid: true,
             show_stations: true,

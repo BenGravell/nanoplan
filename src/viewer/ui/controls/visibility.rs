@@ -1,10 +1,13 @@
 use bevy_egui::egui;
 
-use crate::planning::PLANNING_HORIZON_S;
+use crate::{
+    common::math::{inclusive_step_count, multiples},
+    planning::PLANNING_HORIZON_S,
+};
 
 use super::super::super::colors::{DIM_TEXT, ORANGE};
 use super::super::style::caps_font;
-use super::super::widgets::stacked_slider;
+use super::super::widgets::breakpoint_slider;
 use crate::viewer::{CarpetVisualization, UiState};
 
 pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, content_width: f32) {
@@ -27,15 +30,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
         )
         .wrap(),
     );
-    let preview_value = format!("{:.1} s", state.preview_s);
-    let preview = stacked_slider::show(
-        ui,
-        content_width,
-        preview_value,
-        egui::Slider::new(&mut state.preview_s, 0.0..=PLANNING_HORIZON_S as f32)
-            .step_by(0.5)
-            .trailing_fill(true),
-    );
+    let preview = breakpoint_slider::show(ui, content_width, &mut state.preview_s, &PREVIEW_BREAKPOINTS, " s");
     preview.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Future preview"));
     ui.checkbox(&mut state.show_carpet, if compact { "Carpet" } else { "Ego carpet" });
     let previous = state.carpet_visualization;
@@ -74,6 +69,10 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
         }
     }
 }
+
+const PREVIEW_STEP_S: f32 = 0.5;
+const PREVIEW_BREAKPOINTS: [f32; inclusive_step_count(PLANNING_HORIZON_S as f32, PREVIEW_STEP_S)] =
+    multiples(PREVIEW_STEP_S);
 
 const ALL_VISUALIZATIONS: [CarpetVisualization; 9] = [
     CarpetVisualization::Time,
