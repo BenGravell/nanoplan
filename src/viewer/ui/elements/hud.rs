@@ -1,7 +1,7 @@
 use bevy_egui::egui;
 
-use super::widgets::{friction_box, lap_stats, speedometer};
 use crate::viewer::live::Live;
+use crate::viewer::ui::widgets::{friction_box, lap_stats, speedometer};
 
 pub(super) fn draw(ui: &mut egui::Ui, live: &Live, compact: bool) {
     let (rect, _) = ui.allocate_exact_size(

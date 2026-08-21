@@ -1,8 +1,9 @@
 use bevy_egui::egui;
 
-use super::super::colors::{DIM_TEXT, ORANGE, SURFACE, TEXT};
-use super::pictogram::{Pictogram, pictogram};
-use super::style::caps_font;
+use super::{PageContext, PageOutput, PageView, Route};
+use crate::viewer::colors::{DIM_TEXT, ORANGE, SURFACE, TEXT};
+use crate::viewer::ui::elements::pictogram::{Pictogram, pictogram};
+use crate::viewer::ui::style::caps_font;
 
 const CAMERA_CONTROLS: [(&str, &str); 7] = [
     ("MMB / WASD", "PAN"),
@@ -38,11 +39,24 @@ enum Page {
     Controls,
 }
 
-pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
+#[derive(Default)]
+pub(crate) struct TutorialPage;
+
+impl PageView for TutorialPage {
+    fn show(&mut self, context: PageContext<'_>) -> PageOutput {
+        PageOutput {
+            route: draw(context.root),
+            ..Default::default()
+        }
+    }
+}
+
+fn draw(root: &mut egui::Ui) -> Option<Route> {
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
 
     let page_id = egui::Id::new("tutorial_page");
     let mut page = root.data_mut(|data| data.get_temp::<Page>(page_id).unwrap_or_default());
+    let mut route = None;
     let screen = root.max_rect();
     let compact = screen.height() < 500.0;
     let content_width = (screen.width() * 0.72).clamp(420.0, 880.0).min(screen.width() - 24.0);
@@ -80,7 +94,7 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
             ui.add_space(if compact { 2.0 } else { 12.0 });
             ui.horizontal(|ui| {
                 if ui.button(egui::RichText::new("BACK").font(caps_font(13.0))).clicked() {
-                    *open = false;
+                    route = Some(Route::StartMenu);
                 }
                 match page {
                     Page::Introduction => {
@@ -105,13 +119,14 @@ pub(super) fn show(root: &mut egui::Ui, open: &mut bool) {
     });
 
     if root.input(|input| input.key_pressed(egui::Key::Escape)) {
-        *open = false;
+        route = Some(Route::StartMenu);
     }
-    if *open {
+    if route.is_none() {
         root.data_mut(|data| data.insert_temp(page_id, page));
     } else {
         root.data_mut(|data| data.remove::<Page>(page_id));
     }
+    route
 }
 
 fn introduction(ui: &mut egui::Ui, compact: bool) {

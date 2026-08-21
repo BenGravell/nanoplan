@@ -4,10 +4,11 @@ use bevy_egui::egui;
 use egui_kittest::{Harness, kittest::Queryable};
 
 use super::controls::metrics::preview_metrics;
+use super::elements::{chevron, portrait_prompt};
 use super::style::desktop_zoom;
 use super::{
-    ControlTab, UiState, center_rail_rect, compact_layout, configure, handle_keyboard_controls, landing,
-    portrait_prompt, side_panel_margin, side_rail_widths, track_select, tutorial, viewer_layout,
+    ControlTab, Navigator, Page, Pages, UiState, center_rail_rect, compact_layout, configure, side_panel_margin,
+    side_rail_widths, viewer_layout,
 };
 use crate::planning::{Latency, PlannerKind};
 use crate::viewer::{
@@ -25,6 +26,8 @@ const PHONE_LANDSCAPE_SIZES: [(&str, egui::Vec2); 6] = [
 ];
 
 struct ViewerHarnessState {
+    navigator: Navigator,
+    pages: Pages,
     ui: UiState,
     live: Live,
     tab: ControlTab,
@@ -36,6 +39,8 @@ impl Default for ViewerHarnessState {
         let mut live = Live::default();
         live.world.tick_recording_latency(&Latency::default());
         Self {
+            navigator: Navigator::default(),
+            pages: Pages::default(),
             ui: UiState::default(),
             live,
             tab: ControlTab::Planner,
@@ -47,7 +52,7 @@ impl Default for ViewerHarnessState {
 #[test]
 fn visualization_defaults_show_only_track_stations() {
     let state = UiState::default();
-    assert!(!state.started);
+    assert_eq!(Navigator::default().page(), Page::Start);
     assert_eq!(state.planner, PlannerKind::Basic);
     assert!(state.show_stations);
     assert!(!state.show_centerline);
@@ -65,12 +70,10 @@ fn landing_starts_with_the_keyboard() {
                 ctx.request_repaint();
                 return;
             }
-            if !state.ui.started {
-                if state.ui.selecting_track {
-                    track_select::show(ui, &mut state.ui, &mut state.live);
-                } else {
-                    landing::show(ui, &mut state.ui.selecting_track, &mut state.ui.tutorial);
-                }
+            if state.navigator.page() == Page::Start {
+                state
+                    .navigator
+                    .show(ui, &mut state.pages, &mut state.ui, &mut state.live, &mut state.tab);
             }
         },
         ViewerHarnessState::default(),
@@ -81,7 +84,7 @@ fn landing_starts_with_the_keyboard() {
     assert!(harness.query_by_label("Exit").is_none());
     harness.key_press(egui::Key::Enter);
     harness.run_steps(20);
-    assert!(harness.state().ui.selecting_track);
+    assert!(harness.state().pages.selecting_track());
     assert!(harness.query_by_label("CHOOSE A TRACK").is_none());
     assert!(harness.get_all_by_label("Test Track (large)").next().is_some());
     assert!(harness.query_by_label("Selected track map").is_some());
@@ -97,8 +100,7 @@ fn landing_starts_with_the_keyboard() {
     assert_eq!(harness.state().ui.track, 1);
     harness.key_press(egui::Key::Enter);
     harness.run();
-    assert!(harness.state().ui.started);
-    assert!(!harness.state().ui.selecting_track);
+    assert_eq!(harness.state().navigator.page(), Page::Driving);
 }
 
 #[test]
@@ -109,11 +111,13 @@ fn track_select_keeps_preview_details_and_gallery_in_their_panes() {
                 if !state.configured {
                     configure(ui.ctx());
                     state.configured = true;
-                    state.ui.selecting_track = true;
+                    state.pages.select_track();
                     ui.ctx().request_repaint();
                     return;
                 }
-                track_select::show(ui, &mut state.ui, &mut state.live);
+                state
+                    .navigator
+                    .show(ui, &mut state.pages, &mut state.ui, &mut state.live, &mut state.tab);
             },
             ViewerHarnessState::default(),
         );
@@ -198,11 +202,9 @@ fn landing_tutorial_opens_the_introduction_and_camera_keymap_and_returns() {
                 ctx.request_repaint();
                 return;
             }
-            if state.ui.tutorial {
-                tutorial::show(ui, &mut state.ui.tutorial);
-            } else {
-                landing::show(ui, &mut state.ui.selecting_track, &mut state.ui.tutorial);
-            }
+            state
+                .navigator
+                .show(ui, &mut state.pages, &mut state.ui, &mut state.live, &mut state.tab);
         },
         ViewerHarnessState::default(),
     );
@@ -263,17 +265,19 @@ fn landing_tutorial_opens_the_introduction_and_camera_keymap_and_returns() {
 fn tutorial_pages_fit_supported_phone_viewports() {
     for (_, size) in PHONE_LANDSCAPE_SIZES {
         let mut harness = Harness::builder().with_size(size).build_ui_state(
-            |ui, configured: &mut bool| {
-                if !*configured {
+            |ui, state: &mut ViewerHarnessState| {
+                if !state.configured {
                     configure(ui.ctx());
-                    *configured = true;
+                    state.configured = true;
+                    state.navigator.navigate(Page::Tutorial);
                     ui.ctx().request_repaint();
                     return;
                 }
-                let mut open = true;
-                tutorial::show(ui, &mut open);
+                state
+                    .navigator
+                    .show(ui, &mut state.pages, &mut state.ui, &mut state.live, &mut state.tab);
             },
-            false,
+            ViewerHarnessState::default(),
         );
         harness.run_steps(2);
 
@@ -300,16 +304,16 @@ fn tutorial_pages_fit_supported_phone_viewports() {
 
 #[test]
 fn landing_activation_waits_long_enough_to_show_feedback() {
-    assert!(!landing::activation_ready(0.199));
-    assert!(landing::activation_ready(0.2));
+    assert!(!super::pages::start::landing::activation_ready(0.199));
+    assert!(super::pages::start::landing::activation_ready(0.2));
 }
 
 #[test]
 fn landing_chevron_pulses_and_bounces_horizontally() {
-    let (center, normal) = landing::chevron_animation(0.0);
-    let (shoulder, _) = landing::chevron_animation(1.0 / 6.0);
-    let (right, large) = landing::chevron_animation(1.0 / 3.0);
-    let (left, small) = landing::chevron_animation(1.0);
+    let (center, normal) = chevron::chevron_animation(0.0);
+    let (shoulder, _) = chevron::chevron_animation(1.0 / 6.0);
+    let (right, large) = chevron::chevron_animation(1.0 / 3.0);
+    let (left, small) = chevron::chevron_animation(1.0);
 
     assert!(large > normal && small < normal);
     assert!(right > center && left < center);
@@ -319,7 +323,7 @@ fn landing_chevron_pulses_and_bounces_horizontally() {
 #[test]
 fn landing_title_uses_normalized_reference_coordinates() {
     let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
-    let title = landing::title_rect(screen);
+    let title = super::pages::start::landing::title_rect(screen);
     let reference_width = screen.height() * 16.0 / 9.0;
     assert!(((title.left() - screen.left()) / reference_width - 0.041_666_668).abs() < f32::EPSILON);
     assert!(((title.top() - screen.top()) / screen.height() - 0.148_148_15).abs() < f32::EPSILON);
@@ -330,8 +334,8 @@ fn landing_title_uses_normalized_reference_coordinates() {
 fn landing_menu_uses_normalized_reference_coordinates() {
     let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
     let reference_width = screen.height() * 16.0 / 9.0;
-    let first = landing::menu_row_rect(screen, 0);
-    let second = landing::menu_row_rect(screen, 1);
+    let first = super::pages::start::landing::menu_row_rect(screen, 0);
+    let second = super::pages::start::landing::menu_row_rect(screen, 1);
     assert!(((first.left() - screen.left()) / reference_width - 0.057_291_668).abs() < f32::EPSILON);
     assert!(((first.top() - screen.top()) / screen.height() - 0.324_074_06).abs() < f32::EPSILON);
     assert!(((second.top() - first.top()) / screen.height() - 0.1).abs() < f32::EPSILON);
@@ -340,9 +344,9 @@ fn landing_menu_uses_normalized_reference_coordinates() {
 #[test]
 fn landing_backgrounds_span_height_and_anchor_to_their_corners() {
     let screen = egui::Rect::from_min_size(egui::pos2(13.0, 17.0), egui::vec2(1000.0, 720.0));
-    let bottom_right = landing::background_rect(screen, egui::Align2::RIGHT_BOTTOM);
-    let bottom_left = landing::background_rect(screen, egui::Align2::LEFT_BOTTOM);
-    let top_left = landing::background_rect(screen, egui::Align2::LEFT_TOP);
+    let bottom_right = super::pages::start::landing::background_rect(screen, egui::Align2::RIGHT_BOTTOM);
+    let bottom_left = super::pages::start::landing::background_rect(screen, egui::Align2::LEFT_BOTTOM);
+    let top_left = super::pages::start::landing::background_rect(screen, egui::Align2::LEFT_TOP);
 
     for background in [bottom_right, bottom_left, top_left] {
         assert_eq!(background.height(), screen.height());
@@ -355,12 +359,12 @@ fn landing_backgrounds_span_height_and_anchor_to_their_corners() {
 
 #[test]
 fn landing_background_respects_the_gpu_texture_limit() {
-    let raster = landing::background_raster_size(egui::vec2(2155.0, 1212.0), 1.0, 2048);
+    let raster = super::pages::start::landing::background_raster_size(egui::vec2(2155.0, 1212.0), 1.0, 2048);
     assert_eq!(raster.x, 2048.0);
     assert!(raster.y <= 2048.0);
 }
 
-fn render_bottom_corner(corner: landing::BottomCorner, size: egui::Vec2) -> image::RgbaImage {
+fn render_bottom_corner(corner: super::pages::start::landing::BottomCorner, size: egui::Vec2) -> image::RgbaImage {
     let mut harness = Harness::builder().with_size(size).build_ui_state(
         move |ui, configured: &mut bool| {
             if !*configured {
@@ -369,7 +373,7 @@ fn render_bottom_corner(corner: landing::BottomCorner, size: egui::Vec2) -> imag
                 ui.ctx().request_repaint();
                 return;
             }
-            landing::paint_bottom_corner(ui, corner);
+            super::pages::start::landing::paint_bottom_corner(ui, corner);
         },
         false,
     );
@@ -391,15 +395,15 @@ fn bottom_corners_collide(left: &image::RgbaImage, right: &image::RgbaImage, scr
 
 #[test]
 fn landing_bottom_corner_visibility_threshold_prevents_svg_pixel_collisions() {
-    assert!(landing::show_bottom_left(egui::vec2(31.0, 20.0)));
-    assert!(!landing::show_bottom_left(egui::vec2(3.0, 2.0)));
-    assert!(landing::show_bottom_left(egui::vec2(16.0, 9.0)));
+    assert!(super::pages::start::landing::show_bottom_left(egui::vec2(31.0, 20.0)));
+    assert!(!super::pages::start::landing::show_bottom_left(egui::vec2(3.0, 2.0)));
+    assert!(super::pages::start::landing::show_bottom_left(egui::vec2(16.0, 9.0)));
 
     for height in [360, 720, 1080] {
         let background_width = height * 16 / 9;
         let size = egui::vec2(background_width as f32, height as f32);
-        let left = render_bottom_corner(landing::BottomCorner::Left, size);
-        let right = render_bottom_corner(landing::BottomCorner::Right, size);
+        let left = render_bottom_corner(super::pages::start::landing::BottomCorner::Left, size);
+        let right = render_bottom_corner(super::pages::start::landing::BottomCorner::Right, size);
         let visible_width = (height as f32 * 31.0 / 20.0).ceil() as u32;
         let hidden_width = height * 3 / 2;
 
@@ -551,7 +555,14 @@ fn ego_carpet_selector_lives_in_the_viz_menu() {
                 ui.ctx().request_repaint();
                 return;
             }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -573,7 +584,14 @@ fn future_controls_live_together_in_the_viz_menu() {
                 ui.ctx().request_repaint();
                 return;
             }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -608,7 +626,14 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
                 ui.ctx().request_repaint();
                 return;
             }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -644,11 +669,18 @@ fn pause_rail_opens_navigation_modal() {
             if !state.configured {
                 configure(ui.ctx());
                 state.configured = true;
-                state.ui.started = true;
+                state.navigator.navigate(Page::Driving);
                 ui.ctx().request_repaint();
                 return;
             }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -672,17 +704,17 @@ fn pause_rail_opens_navigation_modal() {
     harness.run();
     harness.get_by_label("RETURN TO TRACK SELECT").click();
     harness.run();
-    assert!(!harness.state().ui.started);
-    assert!(harness.state().ui.selecting_track);
+    assert_eq!(harness.state().navigator.page(), Page::Start);
+    assert!(harness.state().pages.selecting_track());
 
-    harness.state_mut().ui.started = true;
+    harness.state_mut().navigator.navigate(Page::Driving);
     harness.run();
     harness.get_by_label("PAUSE").click();
     harness.run();
     harness.get_by_label("RETURN TO START MENU").click();
     harness.run();
-    assert!(!harness.state().ui.started);
-    assert!(!harness.state().ui.selecting_track);
+    assert_eq!(harness.state().navigator.page(), Page::Start);
+    assert!(!harness.state().pages.selecting_track());
 }
 
 #[test]
@@ -695,7 +727,14 @@ fn planner_overrun_warning_is_visible_only_while_slow() {
                 ui.ctx().request_repaint();
                 return;
             }
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -717,8 +756,14 @@ fn keyboard_shortcuts_pause_and_toggle_frame_time() {
                 ui.ctx().request_repaint();
                 return;
             }
-            handle_keyboard_controls(ui.ctx(), &mut state.ui, &mut state.live);
-            viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
         },
         ViewerHarnessState::default(),
     );
@@ -760,7 +805,14 @@ fn driving_canvas_excludes_side_rails() {
             }
             let viewport = ui.max_rect();
             let (left, right) = side_rail_widths(viewport.size());
-            let canvas = viewer_layout(ui, &mut state.ui, &mut state.live, &mut state.tab);
+            let canvas = viewer_layout(
+                ui,
+                &mut state.navigator,
+                &mut state.pages,
+                &mut state.ui,
+                &mut state.live,
+                &mut state.tab,
+            );
             assert_eq!(canvas, center_rail_rect(viewport, left, right));
         },
         ViewerHarnessState::default(),
@@ -915,7 +967,14 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
                         0.0,
                         egui::Color32::from_rgb(CANVAS_RGB.0, CANVAS_RGB.1, CANVAS_RGB.2),
                     );
-                    viewer_layout(&mut root, &mut state.ui, &mut state.live, &mut state.tab);
+                    viewer_layout(
+                        &mut root,
+                        &mut state.navigator,
+                        &mut state.pages,
+                        &mut state.ui,
+                        &mut state.live,
+                        &mut state.tab,
+                    );
                 },
                 ViewerHarnessState::default(),
             );

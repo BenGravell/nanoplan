@@ -4,7 +4,7 @@ use super::hud;
 use crate::viewer::colors::SIDE_PANEL;
 use crate::viewer::live::Live;
 
-pub(super) fn visualization_rail(root: &mut egui::Ui, live: &Live, width: f32, compact: bool) {
+pub(crate) fn visualization_rail(root: &mut egui::Ui, live: &Live, width: f32, compact: bool) {
     egui::Panel::right("visualization_rail")
         .exact_size(width)
         .resizable(false)

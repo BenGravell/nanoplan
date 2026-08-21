@@ -73,9 +73,6 @@ impl CarpetVisualization {
 
 #[derive(Resource)]
 pub(crate) struct UiState {
-    pub(crate) started: bool,
-    pub(crate) selecting_track: bool,
-    pub(crate) tutorial: bool,
     pub(crate) show_frame_time: bool,
     pub(crate) track: usize,
     pub(crate) planner: PlannerKind,
@@ -95,9 +92,6 @@ pub(crate) struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            started: false,
-            selecting_track: false,
-            tutorial: false,
             show_frame_time: false,
             track: 0,
             planner: PlannerKind::Basic,
@@ -140,6 +134,7 @@ pub(crate) fn run() {
         NON_DRIVABLE_RGB.2,
     )))
     .init_resource::<UiState>()
+    .init_resource::<ui::Navigator>()
     .init_resource::<DrivingCanvas>()
     .init_non_send::<live::Live>()
     .add_systems(
@@ -304,8 +299,8 @@ fn disable_msaa(world: &mut World) -> bool {
     changed
 }
 
-fn driving(window: Single<&Window>, state: Res<UiState>) -> bool {
-    state.started && viewport_supported(window.width(), window.height())
+fn driving(window: Single<&Window>, navigator: Res<ui::Navigator>) -> bool {
+    navigator.page() == ui::Page::Driving && viewport_supported(window.width(), window.height())
 }
 
 fn viewport_supported(width: f32, height: f32) -> bool {

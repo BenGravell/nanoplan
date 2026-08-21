@@ -1,6 +1,9 @@
 use bevy_egui::egui;
 
-use super::super::colors::{ORANGE, SURFACE, WHITE};
+use super::super::Route;
+use super::StartView;
+use crate::viewer::colors::{ORANGE, SURFACE, WHITE};
+use crate::viewer::ui::elements::chevron::paint_chevron;
 
 const BACKGROUND_ASPECT_RATIO: f32 = 16.0 / 9.0;
 const BOTTOM_LEFT_MIN_ASPECT_RATIO: f32 = 31.0 / 20.0;
@@ -16,22 +19,23 @@ struct MenuActivation {
     started_at: f64,
 }
 
-pub(super) fn show(root: &mut egui::Ui, selecting_track: &mut bool, tutorial: &mut bool) {
+pub(super) fn show(root: &mut egui::Ui, view: &mut StartView) -> Option<Route> {
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
     background_graphics(root);
     title_graphic(root);
-    start_menu(root, selecting_track, tutorial);
+    let route = start_menu(root, view);
     root.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+    route
 }
 
-pub(super) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
+pub(crate) fn menu_row_rect(screen: egui::Rect, index: usize) -> egui::Rect {
     egui::Rect::from_min_size(
         normalized_pos(screen, 0.057_291_668, 0.324_074_06 + index as f32 * MENU_ROW_SPACING),
         normalized_size(screen, 0.229_166_67, 0.064_814_81),
     )
 }
 
-fn start_menu(root: &mut egui::Ui, selecting_track: &mut bool, tutorial: &mut bool) {
+fn start_menu(root: &mut egui::Ui, view: &mut StartView) -> Option<Route> {
     let screen = root.max_rect();
     let selection_id = egui::Id::new("landing_menu_selection");
     let activation_id = egui::Id::new("landing_menu_activation");
@@ -104,45 +108,24 @@ fn start_menu(root: &mut egui::Ui, selecting_track: &mut bool, tutorial: &mut bo
     {
         root.data_mut(|data| data.remove::<MenuActivation>(activation_id));
         if active.index == 0 {
-            *selecting_track = true;
+            *view = StartView::TrackSelect;
         } else if active.index == 1 {
-            *tutorial = true;
+            return Some(Route::Tutorial);
         }
-        return;
+        return None;
     }
     root.data_mut(|data| data.insert_temp(selection_id, selected));
     if let Some(active) = activation {
         root.data_mut(|data| data.insert_temp(activation_id, active));
     }
+    None
 }
 
-fn paint_chevron(ui: &egui::Ui, screen: egui::Rect, center_y: f32, time: f64) {
-    let (offset, scale) = chevron_animation(time);
-    let center_x = 0.06 + offset;
-    let half_width = 0.004 * scale;
-    let half_height = 0.011 * scale;
-    ui.painter().add(egui::Shape::line(
-        [
-            normalized_pos(screen, center_x - half_width, center_y - half_height),
-            normalized_pos(screen, center_x + half_width, center_y),
-            normalized_pos(screen, center_x - half_width, center_y + half_height),
-        ]
-        .to_vec(),
-        egui::Stroke::new(screen.height() * 0.005 * scale, ORANGE),
-    ));
-}
-
-pub(super) fn chevron_animation(time: f64) -> (f32, f32) {
-    let sine = (time as f32 * std::f32::consts::TAU * 0.75).sin();
-    let pulse = sine.signum() * (1.0 - (1.0 - sine.abs()).powi(2));
-    (pulse * 0.003_5, 1.0 + pulse * 0.12)
-}
-
-pub(super) fn activation_ready(elapsed_s: f64) -> bool {
+pub(crate) fn activation_ready(elapsed_s: f64) -> bool {
     elapsed_s >= ACTIVATION_DELAY_S
 }
 
-pub(super) fn background_rect(screen: egui::Rect, anchor: egui::Align2) -> egui::Rect {
+pub(crate) fn background_rect(screen: egui::Rect, anchor: egui::Align2) -> egui::Rect {
     let size = egui::vec2(screen.height() * BACKGROUND_ASPECT_RATIO, screen.height());
     anchor.align_size_within_rect(size, screen)
 }
@@ -151,7 +134,7 @@ fn background_graphics(ui: &egui::Ui) {
     paint_svg(
         ui,
         egui::Image::new(egui::include_image!(
-            "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
+            "../../../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
         )),
         background_rect(ui.max_rect(), egui::Align2::RIGHT_BOTTOM),
     );
@@ -159,7 +142,7 @@ fn background_graphics(ui: &egui::Ui) {
         paint_svg(
             ui,
             egui::Image::new(egui::include_image!(
-                "../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
+                "../../../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
             )),
             background_rect(ui.max_rect(), egui::Align2::LEFT_BOTTOM),
         );
@@ -167,37 +150,37 @@ fn background_graphics(ui: &egui::Ui) {
     paint_svg(
         ui,
         egui::Image::new(egui::include_image!(
-            "../../../assets/landing/nanoplan_bkgd_tp_lf_corner.svg"
+            "../../../../../assets/landing/nanoplan_bkgd_tp_lf_corner.svg"
         )),
         background_rect(ui.max_rect(), egui::Align2::LEFT_TOP),
     );
 }
 
-pub(super) fn show_bottom_left(size: egui::Vec2) -> bool {
+pub(crate) fn show_bottom_left(size: egui::Vec2) -> bool {
     size.x / size.y >= BOTTOM_LEFT_MIN_ASPECT_RATIO
 }
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-pub(super) enum BottomCorner {
+pub(crate) enum BottomCorner {
     Left,
     Right,
 }
 
 #[cfg(test)]
-pub(super) fn paint_bottom_corner(ui: &egui::Ui, corner: BottomCorner) {
+pub(crate) fn paint_bottom_corner(ui: &egui::Ui, corner: BottomCorner) {
     let image = match corner {
         BottomCorner::Left => egui::Image::new(egui::include_image!(
-            "../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
+            "../../../../../assets/landing/nanoplan_bkgd_bt_lf_corner.svg"
         )),
         BottomCorner::Right => egui::Image::new(egui::include_image!(
-            "../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
+            "../../../../../assets/landing/nanoplan_bkgd_bt_rt_corner.svg"
         )),
     };
     paint_svg(ui, image, background_rect(ui.max_rect(), egui::Align2::LEFT_TOP));
 }
 
-pub(super) fn title_rect(screen: egui::Rect) -> egui::Rect {
+pub(crate) fn title_rect(screen: egui::Rect) -> egui::Rect {
     let width = normalized_size(screen, 0.395_833_34, 0.0).x;
     egui::Rect::from_min_size(
         normalized_pos(screen, 0.041_666_668, 0.148_148_15),
@@ -216,7 +199,7 @@ fn normalized_size(screen: egui::Rect, x: f32, y: f32) -> egui::Vec2 {
 fn title_graphic(ui: &egui::Ui) {
     paint_svg(
         ui,
-        egui::Image::new(egui::include_image!("../../../assets/landing/nanoplan_title.svg")),
+        egui::Image::new(egui::include_image!("../../../../../assets/landing/nanoplan_title.svg")),
         title_rect(ui.max_rect()),
     );
 }
@@ -237,7 +220,7 @@ fn paint_svg(ui: &egui::Ui, image: egui::Image<'_>, rect: egui::Rect) {
     }
 }
 
-pub(super) fn background_raster_size(
+pub(crate) fn background_raster_size(
     display_size: egui::Vec2,
     pixels_per_point: f32,
     max_texture_side: usize,

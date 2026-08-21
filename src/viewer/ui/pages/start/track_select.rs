@@ -2,12 +2,15 @@ use std::sync::OnceLock;
 
 use bevy_egui::egui;
 
-use super::super::UiState;
-use super::super::colors::{CONTROL, DIM_TEXT, FAINT, ORANGE, PANEL, SURFACE, TEXT, WHITE};
-use super::super::live::Live;
-use super::style::{caps_font, scroll_area};
-use super::widgets::minimap;
 use crate::track::{TRACK_CATALOG, TRACK_PRESETS, Track};
+use crate::viewer::UiState;
+use crate::viewer::colors::{CONTROL, DIM_TEXT, FAINT, ORANGE, PANEL, SURFACE, TEXT, WHITE};
+use crate::viewer::live::Live;
+use crate::viewer::ui::pages::Route;
+use crate::viewer::ui::style::{caps_font, scroll_area};
+use crate::viewer::ui::widgets::minimap;
+
+use super::StartView;
 
 const GALLERY_FRACTION: f32 = 0.2;
 const STATS_STEP_M: f64 = 5.0;
@@ -25,7 +28,7 @@ struct TrackPreview {
 
 static PREVIEWS: OnceLock<Vec<TrackPreview>> = OnceLock::new();
 
-pub(super) fn show(root: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
+pub(super) fn show(root: &mut egui::Ui, view: &mut StartView, state: &mut UiState, live: &mut Live) -> Option<Route> {
     root.style_mut().visuals.window_shadow = egui::epaint::Shadow::NONE;
     root.style_mut().visuals.popup_shadow = egui::epaint::Shadow::NONE;
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
@@ -41,7 +44,7 @@ pub(super) fn show(root: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
                 state.track = (state.track + previews.len() - 1) % previews.len();
             }
             if input.key_pressed(egui::Key::Escape) {
-                state.selecting_track = false;
+                *view = StartView::Menu;
             }
         });
     }
@@ -50,23 +53,23 @@ pub(super) fn show(root: &mut egui::Ui, state: &mut UiState, live: &mut Live) {
     let gallery_height = screen.height() * GALLERY_FRACTION;
     let top = egui::Rect::from_min_max(screen.min, egui::pos2(screen.right(), screen.bottom() - gallery_height));
     let gallery = egui::Rect::from_min_max(egui::pos2(screen.left(), top.bottom()), screen.max);
-    let start = top_section(root, top, state, &previews[state.track], state.track);
+    let start = top_section(root, top, view, &previews[state.track], state.track);
     let double_clicked = gallery_section(root, gallery, state, previews, state.track != previous_track);
 
     let keyboard_start = !root.ctx().egui_wants_keyboard_input()
         && root.input(|input| input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space));
     if start || double_clicked || keyboard_start {
         live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
-        state.started = true;
-        state.selecting_track = false;
+        return Some(Route::Driving);
     }
     root.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+    None
 }
 
 fn top_section(
     root: &mut egui::Ui,
     rect: egui::Rect,
-    state: &mut UiState,
+    view: &mut StartView,
     preview: &TrackPreview,
     track_index: usize,
 ) -> bool {
@@ -93,7 +96,7 @@ fn top_section(
         )
         .clicked()
     {
-        state.selecting_track = false;
+        *view = StartView::Menu;
     }
 
     let drive_size = egui::vec2(

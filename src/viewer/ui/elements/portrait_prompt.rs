@@ -1,10 +1,10 @@
 use crate::common::math::smoothstep;
 use bevy_egui::egui;
 
-use super::super::ViewportConstraints;
-use super::super::colors::{DIM_TEXT, FAINT, ORANGE, PANEL, SURFACE, TEXT};
-use super::super::{MIN_VIEWPORT_ASPECT_HEIGHT, MIN_VIEWPORT_ASPECT_WIDTH, MIN_VIEWPORT_WIDTH};
-use super::style::caps_font;
+use crate::viewer::ViewportConstraints;
+use crate::viewer::colors::{DIM_TEXT, FAINT, ORANGE, PANEL, SURFACE, TEXT};
+use crate::viewer::ui::style::caps_font;
+use crate::viewer::{MIN_VIEWPORT_ASPECT_HEIGHT, MIN_VIEWPORT_ASPECT_WIDTH, MIN_VIEWPORT_WIDTH};
 
 // Below a conventional 320 px phone width, tighten the card for narrow windows and foldables.
 const COMPACT_BREAKPOINT: f32 = 320.0;
@@ -39,7 +39,7 @@ const ARC_SEGMENTS: usize = 48;
 const ROTATION_HEAD_HALF_WIDTH: f32 = 22.0;
 const MIN_MITER_DOT: f32 = 0.25;
 
-pub(super) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportConstraints) {
+pub(crate) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportConstraints) {
     root.painter().rect_filled(root.max_rect(), 0.0, PANEL);
     let compact = root.max_rect().width() < COMPACT_BREAKPOINT;
     let mobile_portrait = is_mobile && root.max_rect().height() > root.max_rect().width();
@@ -90,7 +90,7 @@ pub(super) fn show(root: &mut egui::Ui, is_mobile: bool, constraints: ViewportCo
         });
 }
 
-pub(super) fn prompt_copy(constraints: ViewportConstraints, mobile_portrait: bool) -> (&'static str, String) {
+pub(crate) fn prompt_copy(constraints: ViewportConstraints, mobile_portrait: bool) -> (&'static str, String) {
     if mobile_portrait {
         (
             "TURN YOUR DEVICE SIDEWAYS",

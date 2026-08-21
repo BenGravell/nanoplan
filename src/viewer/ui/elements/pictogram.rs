@@ -1,9 +1,9 @@
 use bevy_egui::egui;
 
-use super::super::colors::ORANGE;
+use crate::viewer::colors::ORANGE;
 
 #[derive(Clone, Copy)]
-pub(super) enum Pictogram {
+pub(crate) enum Pictogram {
     Track,
     Planner,
     Preview,
@@ -12,7 +12,7 @@ pub(super) enum Pictogram {
     Zoom,
 }
 
-pub(super) fn pictogram(ui: &mut egui::Ui, icon: Pictogram, size: f32) {
+pub(crate) fn pictogram(ui: &mut egui::Ui, icon: Pictogram, size: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     let center = rect.center();
     let radius = size * 0.34;
