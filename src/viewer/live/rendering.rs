@@ -22,6 +22,15 @@ pub(super) struct RenderSnapshot {
     pub(super) actors: Vec<(usize, State)>,
 }
 
+pub(super) fn rendered_ego(live: &Live) -> State {
+    let alpha = if live.paused {
+        1.0
+    } else {
+        (live.acc as f64 / DT).clamp(0.0, 1.0)
+    };
+    lerp_state(live.previous.ego, live.world.ego(), alpha)
+}
+
 impl RenderSnapshot {
     pub(super) fn capture(world: &LiveWorld) -> Self {
         Self {
@@ -56,7 +65,7 @@ pub(crate) fn draw(
     } else {
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
-    let ego = lerp_state(live.previous.ego, live.world.ego(), render_alpha);
+    let ego = rendered_ego(&live);
     let target_center = live.camera.follow.then_some(px(&ego));
     let target_rotation = live
         .camera
@@ -64,7 +73,11 @@ pub(crate) fn draw(
         .then_some(ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = camera_blend(live.paused, live.camera.smooth, time.delta_secs());
     if let Some(target) = target_center {
-        live.camera.center = live.camera.center.lerp(target, blend);
+        live.camera.center = if live.camera.gesture_active {
+            target
+        } else {
+            live.camera.center.lerp(target, blend)
+        };
     }
     if let Some(target) = target_rotation {
         live.camera.rotation = smooth_angle(live.camera.rotation, target, blend);
@@ -80,7 +93,9 @@ pub(crate) fn draw(
 
     let grid_started = Instant::now();
     if state.show_grid {
-        grid::draw(&mut meshes, &mut grid_mesh, live.camera, &window);
+        let mut rendered_camera = live.camera;
+        rendered_camera.center = camera_center;
+        grid::draw(&mut meshes, &mut grid_mesh, rendered_camera, &window);
     } else {
         grid::clear(&mut meshes, &mut grid_mesh);
     }

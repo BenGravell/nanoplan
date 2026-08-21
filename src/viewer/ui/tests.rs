@@ -234,7 +234,7 @@ fn landing_tutorial_opens_the_introduction_and_camera_keymap_and_returns() {
     for label in [
         "TUTORIAL",
         "02 / 02  ·  CONTROLS",
-        "MMB / WASD",
+        "LMB / WASD",
         "PAN",
         "RMB / Q E",
         "ROTATE",
@@ -292,7 +292,7 @@ fn tutorial_pages_fit_supported_phone_viewports() {
 
         harness.get_by_label("CONTROLS  →").click();
         harness.run_steps(2);
-        for label in ["TUTORIAL", "MMB / WASD", "RESET", "BACK", "←  INTRODUCTION"] {
+        for label in ["TUTORIAL", "LMB / WASD", "RESET", "BACK", "←  INTRODUCTION"] {
             let rect = harness.get_by_label(label).rect();
             assert!(
                 screen.contains_rect(rect),

@@ -6,7 +6,7 @@ use crate::viewer::ui::elements::pictogram::{Pictogram, pictogram};
 use crate::viewer::ui::style::caps_font;
 
 const CAMERA_CONTROLS: [(&str, &str); 7] = [
-    ("MMB / WASD", "PAN"),
+    ("LMB / WASD", "PAN"),
     ("RMB / Q E", "ROTATE"),
     ("WHEEL", "ZOOM"),
     ("F", "FOLLOW"),

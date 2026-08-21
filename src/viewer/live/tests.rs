@@ -1,5 +1,4 @@
 use crate::common::interp::lerp_state;
-use crate::geometry::CAR_FOOTPRINT;
 use crate::planning::PlannerKind;
 use crate::simulation::State;
 use crate::viewer::{DrivingCanvas, RESIZE_DEBOUNCE_SECONDS, ResizeDebounce, VIEW_MSAA, recover_failed_resize};
@@ -7,11 +6,11 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use super::camera::{
-    CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, cursor_over_driving_canvas,
-    followed_camera_center, pinch_scale, screen_drag, smooth_angle, twist_angle,
+    CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, MouseGesture, MouseGestureKind,
+    apply_mouse_gesture, cursor_over_driving_canvas, followed_camera_center, pinch_scale, screen_drag, smooth_angle,
+    twist_angle, world_under_cursor,
 };
 use super::rendering::camera_blend;
-use super::screen::PX_PER_M;
 use super::*;
 
 #[test]
@@ -82,6 +81,8 @@ fn frame_rate_smooths_whole_frame_time_and_ignores_invalid_samples() {
 fn camera_reset_restores_the_smooth_ego_follow_view() {
     let mut camera = CameraState {
         center: Vec2::splat(99.0),
+        follow_offset: Vec2::splat(12.0),
+        gesture_active: true,
         zoom: 2.0,
         rotation: 1.0,
         follow: false,
@@ -96,6 +97,8 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
     camera.reset(ego);
 
     assert_eq!(camera.center, screen::px(&ego));
+    assert_eq!(camera.follow_offset, Vec2::ZERO);
+    assert!(!camera.gesture_active);
     assert_eq!(camera.zoom, DEFAULT_ZOOM);
     assert_eq!(camera.rotation, ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
     assert!(camera.follow);
@@ -105,7 +108,7 @@ fn camera_reset_restores_the_smooth_ego_follow_view() {
 
 #[test]
 fn paused_camera_ignores_input() {
-    use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+    use bevy::input::mouse::AccumulatedMouseScroll;
     use bevy_egui::input::EguiWantsInput;
 
     let mut app = App::new();
@@ -123,13 +126,13 @@ fn paused_camera_ignores_input() {
         .insert_resource(keys)
         .insert_resource(mouse)
         .insert_resource(Touches::default())
-        .insert_resource(AccumulatedMouseMotion { delta: Vec2::X })
         .insert_resource(AccumulatedMouseScroll::default())
         .insert_resource(EguiWantsInput::default())
         .insert_resource(DrivingCanvas::default())
         .insert_resource(Time::<()>::default())
         .add_systems(Update, camera_input);
     app.world_mut().spawn(Window::default());
+    app.world_mut().spawn((Camera2d, Transform::default()));
 
     app.update();
 
@@ -166,6 +169,123 @@ fn touch_drag_uses_camera_rotation_and_zoom() {
 }
 
 #[test]
+fn camera_pan_keeps_the_grabbed_world_point_under_the_cursor() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let previous_cursor = Vec2::new(600.0, 300.0);
+    let mut camera = CameraState {
+        center: Vec2::new(20.0, 40.0),
+        zoom: 2.0,
+        rotation: 0.3,
+        ..Default::default()
+    };
+    let grabbed = world_under_cursor(camera, previous_cursor, viewport);
+
+    camera.follow = false;
+    let mut gesture = MouseGesture {
+        kind: MouseGestureKind::Pan,
+        anchor: grabbed,
+        follows_ego: false,
+        previous_cursor,
+    };
+    for cursor in [Vec2::new(625.0, 315.0), Vec2::new(670.0, 280.0)] {
+        apply_mouse_gesture(&mut camera, &mut gesture, cursor, viewport, State::default());
+        assert!((world_under_cursor(camera, cursor, viewport) - grabbed).length() < 1e-4);
+    }
+}
+
+#[test]
+fn free_camera_rotates_around_the_world_at_screen_center() {
+    let previous_cursor = Vec2::new(680.0, 250.0);
+    let viewport = Vec2::new(1280.0, 720.0);
+    let mut camera = CameraState {
+        center: Vec2::new(20.0, 40.0),
+        zoom: 2.0,
+        ..Default::default()
+    };
+    camera.follow = false;
+    let anchor = camera.center;
+    let mut gesture = MouseGesture {
+        kind: MouseGestureKind::Rotate,
+        anchor,
+        follows_ego: false,
+        previous_cursor,
+    };
+    for cursor in [Vec2::new(700.0, 250.0), Vec2::new(735.0, 270.0)] {
+        apply_mouse_gesture(&mut camera, &mut gesture, cursor, viewport, State::default());
+        assert!((world_under_cursor(camera, viewport / 2.0, viewport) - anchor).length() < 1e-4);
+    }
+}
+
+#[test]
+fn following_camera_rotates_around_the_bottom_centered_ego() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let ego_state = State::new(
+        crate::simulation::Pose::new(crate::simulation::Position::new(14.0, 30.0), 0.4),
+        0.0,
+    );
+    let mut camera = CameraState {
+        center: screen::px(&ego_state),
+        follow_offset: Vec2::new(35.0, -20.0),
+        follow: true,
+        align_heading: false,
+        ..Default::default()
+    };
+    let previous_cursor = Vec2::new(600.0, 300.0);
+    let mut gesture = MouseGesture {
+        kind: MouseGestureKind::Rotate,
+        anchor: screen::px(&ego_state),
+        follows_ego: true,
+        previous_cursor,
+    };
+    let before = followed_camera_center(camera, ego_state, viewport.y);
+    apply_mouse_gesture(&mut camera, &mut gesture, Vec2::new(650.0, 300.0), viewport, ego_state);
+    let after = followed_camera_center(camera, ego_state, viewport.y);
+    let ego_screen = |center: Vec2, rotation: f32| {
+        let offset = Rot2::radians(-rotation) * (screen::px(&ego_state) - center) * camera.zoom;
+        viewport / 2.0 + Vec2::new(offset.x, -offset.y)
+    };
+
+    assert!(camera.follow);
+    assert!((ego_screen(before, 0.0) - ego_screen(after, camera.rotation)).length() < 1e-4);
+    assert!(ego_screen(after, camera.rotation).y > viewport.y / 2.0);
+}
+
+#[test]
+fn following_camera_pan_changes_ego_relative_offset_without_disengaging() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let ego = State::new(
+        crate::simulation::Pose::new(crate::simulation::Position::new(14.0, 30.0), 0.4),
+        0.0,
+    );
+    let previous_cursor = Vec2::new(600.0, 300.0);
+    let cursor = Vec2::new(640.0, 325.0);
+    let mut camera = CameraState {
+        center: screen::px(&ego),
+        follow: true,
+        align_heading: false,
+        ..Default::default()
+    };
+    let displayed_center = followed_camera_center(camera, ego, viewport.y);
+    let mut displayed_camera = camera;
+    displayed_camera.center = displayed_center;
+    let anchor = world_under_cursor(displayed_camera, previous_cursor, viewport);
+    let mut gesture = MouseGesture {
+        kind: MouseGestureKind::Pan,
+        anchor: anchor - screen::px(&ego),
+        follows_ego: true,
+        previous_cursor,
+    };
+
+    apply_mouse_gesture(&mut camera, &mut gesture, cursor, viewport, ego);
+    displayed_camera = camera;
+    displayed_camera.center = followed_camera_center(camera, ego, viewport.y);
+
+    assert!(camera.follow);
+    assert_ne!(camera.follow_offset, Vec2::ZERO);
+    assert!((world_under_cursor(displayed_camera, cursor, viewport) - anchor).length() < 1e-4);
+}
+
+#[test]
 fn two_finger_twist_controls_rotation_without_degenerate_angles() {
     assert!((twist_angle(Vec2::X, Vec2::Y) - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
     assert!((twist_angle(Vec2::Y, Vec2::X) + std::f32::consts::FRAC_PI_2).abs() < 1e-5);
@@ -187,7 +307,7 @@ fn mouse_wheel_zoom_requires_the_cursor_to_be_over_the_driving_canvas() {
 }
 
 #[test]
-fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
+fn followed_camera_keeps_ego_bottom_centered_at_every_zoom_and_angle() {
     let viewport_height = 720.0;
     for (zoom, ego_yaw) in [(MIN_ZOOM, -0.4), (DEFAULT_ZOOM, 0.7), (MAX_ZOOM, 1.2)] {
         let camera = CameraState {
@@ -201,12 +321,11 @@ fn followed_camera_keeps_fixed_padding_behind_ego_at_every_zoom() {
             0.0,
         );
         let center = followed_camera_center(camera, ego, viewport_height);
-        let up = Rot2::radians(camera.rotation) * Vec2::Y;
-        let ego_in_view = (screen::px(&ego) - center).dot(up);
-        let rear_extent = CAR_FOOTPRINT.support(ego.pose.yaw, [-up.x as f64, -up.y as f64]) as f32 * PX_PER_M;
-        let rear_screen_y = (ego_in_view - rear_extent) * zoom;
+        let camera_space = Rot2::radians(-camera.rotation) * (screen::px(&ego) - center) * zoom;
+        let ego_screen_y = viewport_height / 2.0 - camera_space.y;
 
-        assert!((rear_screen_y + viewport_height / 2.0 - CAMERA_BOTTOM_PADDING_PX).abs() < 1e-3);
+        assert!(camera_space.x.abs() < 1e-3);
+        assert!((ego_screen_y - (viewport_height - CAMERA_BOTTOM_PADDING_PX)).abs() < 1e-3);
     }
 }
 
@@ -278,6 +397,8 @@ fn changing_actor_count_preserves_world_progress_and_camera() {
     live.lap_stats.current_s = 12.0;
     live.camera = CameraState {
         center: Vec2::new(123.0, 456.0),
+        follow_offset: Vec2::new(12.0, 34.0),
+        gesture_active: false,
         zoom: 2.0,
         rotation: 0.7,
         follow: false,

@@ -41,6 +41,7 @@ impl Footprint {
     }
 
     /// Furthest extent from the rear reference point along a world-space axis.
+    #[cfg(test)]
     pub(crate) fn support(self, yaw: f64, axis: [f64; 2]) -> f64 {
         let n = axis[0].hypot(axis[1]).max(1e-9);
         let axis = [axis[0] / n, axis[1] / n];

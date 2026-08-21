@@ -152,8 +152,8 @@ pub(crate) fn run() {
     .add_systems(
         Update,
         (
-            live::camera_input,
             live::update,
+            live::camera_input,
             live::configure_diagnostics,
             live::configure_plan,
             live::draw,
