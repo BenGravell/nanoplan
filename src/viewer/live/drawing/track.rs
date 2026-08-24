@@ -61,25 +61,42 @@ pub(in crate::viewer::live) fn draw(
         );
     }
 
-    let polygon = track
-        .road_polygon(
-            progress - VISIBLE_TRACK_BEHIND_M,
-            progress + VISIBLE_TRACK_AHEAD_M,
-            ROAD_SAMPLE_STEP_M,
-            false,
-        )
-        .expect("visible track must form a valid road polygon");
+    let polygon = visible_polygon(track, progress);
 
     if track.lap_length().is_none() {
         update_surface(meshes, surface, &polygon);
     }
-    draw_lines(gizmos, &polygon, false, show_centerline, TRACK_EDGE, TRACK_CENTERLINE);
+    draw_lines(
+        gizmos,
+        &polygon,
+        polygon.is_closed(),
+        show_centerline,
+        TRACK_EDGE,
+        TRACK_CENTERLINE,
+    );
 
     if show_stations {
         for (&right, &left) in polygon.right_boundary().iter().zip(polygon.left_boundary()) {
             gizmos.line_2d(ppx(right), ppx(left), TRACK_STATION);
         }
     }
+}
+
+fn visible_polygon(track: &Track, progress: f64) -> RoadPolygon {
+    let visible_length = VISIBLE_TRACK_BEHIND_M + VISIBLE_TRACK_AHEAD_M;
+    if let Some(length) = track.lap_length().filter(|&length| length <= visible_length) {
+        return track
+            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
+            .expect("visible track must form a valid road polygon");
+    }
+    track
+        .road_polygon(
+            progress - VISIBLE_TRACK_BEHIND_M,
+            progress + VISIBLE_TRACK_AHEAD_M,
+            ROAD_SAMPLE_STEP_M,
+            false,
+        )
+        .expect("visible track must form a valid road polygon")
 }
 
 fn surface_polygon(track: &Track, progress: f64) -> RoadPolygon {
@@ -204,5 +221,18 @@ mod tests {
 
         assert!(!surface_needs_update(&surface, &polygon));
         assert!(surface_needs_update(&surface, &changed));
+    }
+
+    #[test]
+    fn short_track_visible_window_is_drawn_once() {
+        let track = Track::from_catalog(1);
+        let polygon = visible_polygon(&track, 500.0);
+
+        assert!(track.lap_length().unwrap() < VISIBLE_TRACK_BEHIND_M + VISIBLE_TRACK_AHEAD_M);
+        assert!(polygon.is_closed());
+        assert_eq!(
+            polygon.centerline().len(),
+            (track.lap_length().unwrap() / ROAD_SAMPLE_STEP_M).ceil() as usize
+        );
     }
 }

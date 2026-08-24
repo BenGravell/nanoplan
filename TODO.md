@@ -39,8 +39,6 @@ myopic and failing to reason about and anticipate corners and overtake maneuvers
 
 ## UX
 
--- road window seems to draw over itself on short tracks [Test Track (small)] results in weird doubled up station lines
-
 -- Show the predicted future poses of actors in the viewer.
 Re-use the ego carpet element.
 Must stay lightweight on compute and rendering side.
