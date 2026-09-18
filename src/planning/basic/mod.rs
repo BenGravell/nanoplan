@@ -84,10 +84,11 @@ fn candidate(
         } else {
             target_s
         };
+        let (position, yaw) = path.pose_at(goal_s);
         append_segment(
             &mut controls,
             &mut x,
-            path_state(path, goal_s, cruise_speed),
+            State::from((position, yaw, cruise_speed)),
             duration,
             ctx,
         );
@@ -165,11 +166,6 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
         diag.record_trajectory(trajectory);
     }
     feasible.then_some(total)
-}
-
-fn path_state(path: &Path, s: f64, speed: f64) -> State {
-    let (position, yaw) = path.pose_at(s);
-    (position, yaw, speed).into()
 }
 
 #[cfg(test)]
@@ -252,8 +248,8 @@ mod tests {
     #[test]
     fn route_goal_state_has_full_stop_boundary() {
         let path = Path::new(&[Position::new(-5.0, 0.0), Position::new(20.0, 5.0)]);
-        let goal = path_state(&path, path.length(), 0.0);
         let (position, yaw) = path.pose_at(path.length());
+        let goal = State::from((position, yaw, 0.0));
         assert_eq!(
             (goal.position().x, goal.position().y, goal.pose.yaw),
             (position.x, position.y, yaw)
