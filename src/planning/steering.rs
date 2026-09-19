@@ -135,7 +135,7 @@ fn state_velocity(x: &State) -> [f64; 2] {
     [x.speed * tangent.x, x.speed * tangent.y]
 }
 
-fn cubic_coeffs(p0: f64, v0: f64, p1: f64, v1: f64, t: f64) -> [f64; 4] {
+pub(crate) fn cubic_coeffs(p0: f64, v0: f64, p1: f64, v1: f64, t: f64) -> [f64; 4] {
     let (t2, t3) = (t * t, t * t * t);
     [
         p0,

@@ -10,6 +10,11 @@
 
 Future preview - only use integer options 0s,1s,2s,...,max
 
+## ux sliders
+
+opponents slider should use tick marks.
+same for all discrete valued sliders with less than 12 detents.
+
 ## Actor planning
 
 -- Fix the actors.

@@ -6,11 +6,12 @@ use crate::planning::{Latency, LatencyStats, PlannerKind};
 use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use crate::world::{EgoStart, LiveWorld};
 
-const PLANNERS: [(&str, PlannerKind); 12] = [
+const PLANNERS: [(&str, PlannerKind); 13] = [
     ("straight", PlannerKind::Straight),
     ("basic", PlannerKind::Basic),
     ("bezier-toppra", PlannerKind::BezierToppra),
     ("lattice", PlannerKind::Lattice),
+    ("frenetix", PlannerKind::Frenetix),
     ("pi2-ddp", PlannerKind::Pi2Ddp),
     ("rrt-star", PlannerKind::RrtStar),
     ("predictive-sampling", PlannerKind::PredictiveSampling),

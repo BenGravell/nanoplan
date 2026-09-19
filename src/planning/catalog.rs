@@ -1,5 +1,5 @@
 use super::{
-    BasicPlanner, BezierToppraPlanner, Cem, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
+    BasicPlanner, BezierToppraPlanner, Cem, FrenetixPlanner, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
     PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner, TreetopPlanner,
 };
 
@@ -13,6 +13,7 @@ pub(crate) enum PlannerKind {
     Basic,
     BezierToppra,
     Lattice,
+    Frenetix,
     Pi2Ddp,
     RrtStar,
     PredictiveSampling,
@@ -30,7 +31,7 @@ struct PlannerSpec {
     has_diagnostics: bool,
 }
 
-const SPECS: [PlannerSpec; 12] = [
+const SPECS: [PlannerSpec; 13] = [
     PlannerSpec {
         kind: PlannerKind::Straight,
         name: "straight (strawman)",
@@ -53,6 +54,12 @@ const SPECS: [PlannerSpec; 12] = [
         kind: PlannerKind::Lattice,
         name: "frenet lattice",
         build: || Box::new(LatticePlanner),
+        has_diagnostics: true,
+    },
+    PlannerSpec {
+        kind: PlannerKind::Frenetix,
+        name: "FRENETIX",
+        build: || Box::new(FrenetixPlanner),
         has_diagnostics: true,
     },
     PlannerSpec {
@@ -106,11 +113,12 @@ const SPECS: [PlannerSpec; 12] = [
 ];
 
 impl PlannerKind {
-    pub(crate) const ALL: [PlannerKind; 12] = [
+    pub(crate) const ALL: [PlannerKind; 13] = [
         PlannerKind::Straight,
         PlannerKind::Basic,
         PlannerKind::BezierToppra,
         PlannerKind::Lattice,
+        PlannerKind::Frenetix,
         PlannerKind::Pi2Ddp,
         PlannerKind::RrtStar,
         PlannerKind::PredictiveSampling,

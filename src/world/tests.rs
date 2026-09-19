@@ -43,6 +43,66 @@ fn ego_can_start_from_a_frenet_state() {
 }
 
 #[test]
+fn frenetix_accelerates_from_rest_on_empty_small_track() {
+    let small_track = crate::track::TRACK_PRESETS.len() - 1;
+    let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::Frenetix, 0, 0.1);
+    world.tick_with_latency(None);
+    assert!(
+        world.actuation().acceleration > 1.0,
+        "initial acceleration was {}",
+        world.actuation().acceleration
+    );
+    for _ in 1..20 {
+        world.tick_with_latency(None);
+    }
+    assert!(
+        world.ego().speed > 5.0,
+        "speed after two seconds: {}",
+        world.ego().speed
+    );
+    assert_eq!(world.ego_collision_count, 0);
+}
+
+#[test]
+fn frenetix_accelerates_on_empty_large_track_at_speed() {
+    let controls: Vec<_> = [10.0, 40.0]
+        .into_iter()
+        .map(|speed| {
+            let mut world = LiveWorld::with_track_at(
+                0,
+                1,
+                PlannerKind::Frenetix,
+                0,
+                0.1,
+                EgoStart {
+                    speed,
+                    ..Default::default()
+                },
+            );
+            world.tick_with_latency(None);
+            let first = world.actuation();
+            for _ in 1..20 {
+                world.tick_with_latency(None);
+            }
+            let attainable = crate::simulation::speed_after_max_accel(speed, 20, world.dt());
+            assert!(
+                world.ego().speed > attainable - 1.0,
+                "started at {speed}, reached {} vs attainable {attainable}",
+                world.ego().speed
+            );
+            assert_eq!(world.ego_collision_count, 0);
+            (speed, first)
+        })
+        .collect();
+    assert!(
+        controls
+            .iter()
+            .all(|(_, control)| control.acceleration > 0.8 * MAX_LON_ACCEL),
+        "empty-track first controls: {controls:?}"
+    );
+}
+
+#[test]
 fn lattice_small_track_accelerates_and_previews_stay_on_road() {
     let small_track = crate::track::TRACK_PRESETS.len() - 1;
     let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::Lattice, 0, 0.1);

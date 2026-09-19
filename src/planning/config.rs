@@ -1,4 +1,4 @@
-/// How far ahead planners with a genuine receding-horizon cost model (lattice, PI²-DDP, RRT*)
+/// How far ahead planners with a genuine receding-horizon cost model
 /// look when predicting collisions and optimizing a trajectory.
 /// Not `Context::horizon`, which is just the requested length of the returned control trajectory.
 pub(crate) const PLANNING_HORIZON_S: f64 = 10.0;

@@ -14,6 +14,7 @@ planning/
 ├── straight/      strawman: zero control, always
 ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
+├── frenetix/      lateral cubics × longitudinal cubics, shared horizon and cost
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
 ├── rrt_star/      RRT*, cubic differential-flatness steering
 ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
