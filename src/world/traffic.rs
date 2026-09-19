@@ -5,7 +5,7 @@ use crate::simulation::{Position, State};
 use crate::track::Track;
 use crate::vehicle::{MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL};
 
-pub(super) const MAX_ACTORS: usize = 15;
+pub(crate) const MAX_ACTORS: usize = 15;
 pub(super) const ACTOR_MARGIN_M: f64 = 25.0;
 pub(super) const ACTOR_SPACING_BEHIND_M: f64 = 45.0;
 pub(super) const ACTOR_SPACING_AHEAD_M: f64 = 55.0;

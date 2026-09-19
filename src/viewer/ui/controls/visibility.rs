@@ -70,7 +70,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, compact: bool, conten
     }
 }
 
-const PREVIEW_STEP_S: f32 = 0.5;
+const PREVIEW_STEP_S: f32 = 1.0;
 const PREVIEW_BREAKPOINTS: [f32; inclusive_step_count(PLANNING_HORIZON_S as f32, PREVIEW_STEP_S)] =
     multiples(PREVIEW_STEP_S);
 

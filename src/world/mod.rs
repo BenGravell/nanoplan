@@ -13,8 +13,8 @@ use crate::track::{Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
 
 use road::{full_circuit_road, road_window};
-pub(crate) use traffic::SmartActor;
-use traffic::{ACTOR_MARGIN_M, ACTOR_SPACING_AHEAD_M, ACTOR_SPACING_BEHIND_M, MAX_ACTORS, Personality};
+use traffic::{ACTOR_MARGIN_M, ACTOR_SPACING_AHEAD_M, ACTOR_SPACING_BEHIND_M, Personality};
+pub(crate) use traffic::{MAX_ACTORS, SmartActor};
 
 const DEFAULT_PREVIEW_TICKS: usize = 30;
 
