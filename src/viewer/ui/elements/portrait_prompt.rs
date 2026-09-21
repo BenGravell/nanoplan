@@ -260,3 +260,7 @@ fn add_outline_antialiasing(
         mesh.add_triangle(fringe + 2 * next, fringe + 2 * index + 1, fringe + 2 * next + 1);
     }
 }
+
+#[cfg(test)]
+#[path = "portrait_prompt_tests.rs"]
+mod tests;

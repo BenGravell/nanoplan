@@ -228,3 +228,7 @@ pub(crate) fn background_raster_size(
     let max_side_in_points = max_texture_side as f32 / pixels_per_point;
     display_size * (max_side_in_points / display_size.max_elem()).min(1.0)
 }
+
+#[cfg(test)]
+#[path = "landing_tests.rs"]
+mod tests;

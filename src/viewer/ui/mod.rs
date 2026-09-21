@@ -11,8 +11,6 @@ mod style;
 mod widgets;
 
 pub(crate) use controls::ControlTab;
-#[cfg(test)]
-use pages::Pages;
 pub(crate) use pages::{Navigator, Page};
 use style::{configure, scale_to_viewport};
 pub(crate) use widgets::friction_box::FrictionBox;
@@ -80,8 +78,6 @@ fn is_mobile_device() -> bool {
 }
 
 #[cfg(test)]
-use pages::driving::{center_rail_rect, compact_layout, side_panel_margin, side_rail_widths};
-#[cfg(test)]
 fn viewer_layout(
     root: &mut egui::Ui,
     navigator: &mut Navigator,
@@ -103,3 +99,6 @@ fn viewer_layout(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod test_support;

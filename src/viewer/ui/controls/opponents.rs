@@ -22,3 +22,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &mut UiState, live: &mut Live, cont
         live.set_actor_count(state.opponents);
     }
 }
+
+#[cfg(test)]
+#[path = "opponents_tests.rs"]
+mod tests;

@@ -51,3 +51,7 @@ pub(crate) fn preview_metrics_for_trajectory(live: &Live, trajectory: &Trajector
         .collect();
     evaluate(trajectory, &actors, &live.world.road)
 }
+
+#[cfg(test)]
+#[path = "metrics_tests.rs"]
+mod tests;

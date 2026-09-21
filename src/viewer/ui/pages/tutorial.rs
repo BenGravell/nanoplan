@@ -182,3 +182,7 @@ fn controls(ui: &mut egui::Ui, compact: bool) {
             }
         });
 }
+
+#[cfg(test)]
+#[path = "tutorial_tests.rs"]
+mod tests;

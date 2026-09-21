@@ -243,3 +243,7 @@ pub(crate) fn side_panel_margin(viewport: egui::Vec2) -> i8 {
 pub(crate) fn compact_layout(viewport: egui::Vec2) -> bool {
     viewport.x < 900.0 || viewport.y < 600.0
 }
+
+#[cfg(test)]
+#[path = "driving_tests.rs"]
+mod tests;

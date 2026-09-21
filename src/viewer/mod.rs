@@ -313,3 +313,6 @@ pub(crate) fn viewport_constraints(width: f32, height: f32) -> ViewportConstrain
         has_minimum_aspect_ratio: width / height >= MIN_VIEWPORT_ASPECT_RATIO,
     }
 }
+
+#[cfg(test)]
+mod tests;

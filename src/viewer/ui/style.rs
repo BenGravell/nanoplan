@@ -135,3 +135,7 @@ pub(super) fn scroll_area<R>(
     ui.visuals_mut().widgets.inactive.bg_fill = inactive_fill;
     output
 }
+
+#[cfg(test)]
+#[path = "style_tests.rs"]
+mod tests;

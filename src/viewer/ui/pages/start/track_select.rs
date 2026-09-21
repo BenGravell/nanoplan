@@ -388,14 +388,5 @@ fn format_radius(radius_m: f64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn corner_count_groups_bends_and_splits_direction_changes() {
-        let mut curvatures = vec![0.0; 40];
-        curvatures[5..13].fill(0.02);
-        curvatures[18..26].fill(-0.02);
-
-        assert_eq!(super::count_corners(&curvatures, 5.0), 2);
-        assert_eq!(super::count_corners(&[0.0; 40], 5.0), 0);
-    }
-}
+#[path = "track_select_tests.rs"]
+mod tests;

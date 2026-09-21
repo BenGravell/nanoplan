@@ -99,3 +99,7 @@ fn option_label(visualization: CarpetVisualization) -> &'static str {
         CarpetVisualization::Overall => "Overall",
     }
 }
+
+#[cfg(test)]
+#[path = "visibility_tests.rs"]
+mod tests;

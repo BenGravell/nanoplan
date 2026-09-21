@@ -29,3 +29,7 @@ pub(crate) fn chevron_animation(time: f64) -> (f32, f32) {
 fn normalized_pos(screen: egui::Rect, x: f32, y: f32) -> egui::Pos2 {
     screen.left_top() + egui::vec2(screen.height() * BACKGROUND_ASPECT_RATIO * x, screen.height() * y)
 }
+
+#[cfg(test)]
+#[path = "chevron_tests.rs"]
+mod tests;
