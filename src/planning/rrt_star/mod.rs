@@ -30,9 +30,7 @@ use crate::common::differencing::forward_difference;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::sampling::{self, Halton};
-use crate::planning::search_tree::{
-    RoadFrame, brake_controls, dist, parent_chain, path_to_controls, record_diagnostics, signed_max,
-};
+use crate::planning::search_tree::{RoadFrame, brake_controls, dist, parent_chain, path_to_controls, signed_max};
 use crate::planning::steering::CubicSteer;
 use crate::planning::{Context, Planner};
 use crate::prediction::predict;
@@ -553,7 +551,11 @@ impl Planner for RrtStarPlanner {
         });
 
         if let Some(diag) = ctx.diagnostics {
-            record_diagnostics(diag, nodes.iter().skip(1).map(|node| (node.pos, node.segment.clone())));
+            for node in nodes.iter().skip(1) {
+                diag.record_point(node.pos);
+                let times = node.segment.iter().map(|&p| (path.project(p).0 - s0) / v).collect();
+                diag.record_timed_trajectory(node.segment.clone(), times);
+            }
         }
 
         // Goal selection. The simulator executes only the *first* segment of

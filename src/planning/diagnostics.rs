@@ -21,6 +21,8 @@ pub(crate) struct DiagnosticsData {
     pub(crate) points: Vec<Position>,
     /// Polylines, e.g. lattice DP edges or PI²-DDP sampled rollouts.
     pub(crate) trajectories: Vec<Vec<Position>>,
+    /// Seconds from the planning start, matching each trajectory point.
+    pub(crate) trajectory_times: Vec<Vec<f64>>,
 }
 
 /// Per-call recorder. Interior mutability so it can sit behind the shared
@@ -35,8 +37,17 @@ impl Diagnostics {
         self.data.borrow_mut().points.push(p);
     }
 
+    /// Record a rollout starting at the ego state, sampled at the planning timestep.
     pub(crate) fn record_trajectory(&self, traj: Vec<Position>) {
-        self.data.borrow_mut().trajectories.push(traj);
+        let times = (0..traj.len()).map(|tick| tick as f64 * super::PLANNING_DT_S).collect();
+        self.record_timed_trajectory(traj, times);
+    }
+
+    pub(crate) fn record_timed_trajectory(&self, traj: Vec<Position>, times: Vec<f64>) {
+        assert_eq!(traj.len(), times.len());
+        let mut data = self.data.borrow_mut();
+        data.trajectories.push(traj);
+        data.trajectory_times.push(times);
     }
 
     /// Drain the data recorded since the last take.
@@ -60,6 +71,8 @@ mod tests {
             data.trajectories,
             vec![vec![Position::new(0.0, 0.0), Position::new(1.0, 1.0)]]
         );
+        assert_eq!(data.trajectory_times, vec![vec![0.0, super::super::PLANNING_DT_S]]);
+        assert!(diag.take().trajectory_times.is_empty());
         assert!(diag.take().points.is_empty());
         assert!(diag.take().trajectories.is_empty());
     }

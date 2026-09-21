@@ -401,9 +401,12 @@ impl Planner for LatticePlanner {
                                 pending_states.borrow_mut()[successor] = Some(segment.end);
                                 if let Some(diag) = ctx.diagnostics {
                                     diag.record_point(segment.end.into());
-                                    diag.record_trajectory(
+                                    diag.record_timed_trajectory(
                                         std::iter::once(start.position())
                                             .chain(segment.points.iter().copied())
+                                            .collect(),
+                                        (0..=TICKS_PER_EDGE)
+                                            .map(|tick| (next_layer * TICKS_PER_EDGE + tick) as f64 * ctx.road.dt)
                                             .collect(),
                                     );
                                 }

@@ -55,7 +55,7 @@ use crate::common::math::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
-use crate::planning::search_tree::{parent_chain, record_diagnostics, repeat_last_controls, rollout_constrained};
+use crate::planning::search_tree::{parent_chain, repeat_last_controls, rollout_constrained};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::take_warm;
 use crate::planning::{Context, Planner};
@@ -387,13 +387,18 @@ impl Tree {
     }
 
     pub(crate) fn record_diagnostics(&self, diag: &crate::planning::Diagnostics) {
-        record_diagnostics(
-            diag,
-            self.nodes
-                .iter()
-                .skip(1)
-                .map(|node| (node.state.position(), node.states.iter().map(Into::into).collect())),
-        );
+        for (layer, nodes) in self.layers.iter().enumerate().skip(1) {
+            for &index in nodes {
+                let node = &self.nodes[index];
+                diag.record_point(node.state.position());
+                diag.record_timed_trajectory(
+                    node.states.iter().map(Into::into).collect(),
+                    (0..node.states.len())
+                        .map(|tick| ((layer - 1) * STEER_TICKS + tick) as f64 * crate::planning::PLANNING_DT_S)
+                        .collect(),
+                );
+            }
+        }
     }
 }
 

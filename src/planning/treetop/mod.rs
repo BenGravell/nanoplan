@@ -234,9 +234,12 @@ impl Planner for TreetopPlanner {
         if let Some(diag) = ctx.diagnostics {
             tree.record_diagnostics(diag);
             // the winning candidate before optimization…
-            let pre: Vec<crate::simulation::Position> = candidates[cand_ix]
-                .iter()
-                .flat_map(|&n| tree.nodes[n].states.iter().map(Into::into))
+            let pre = std::iter::once(ego.position())
+                .chain(
+                    candidates[cand_ix]
+                        .iter()
+                        .flat_map(|&n| tree.nodes[n].states.iter().skip(1).map(Into::into)),
+                )
                 .collect();
             diag.record_trajectory(pre);
             // …and after

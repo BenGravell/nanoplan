@@ -11,7 +11,7 @@ use std::collections::BinaryHeap;
 
 use crate::common::differencing::forward_difference;
 use crate::planning::policy::centerline_feedback;
-use crate::planning::{Context, Diagnostics, PLANNING_HORIZON_S};
+use crate::planning::{Context, PLANNING_HORIZON_S};
 use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
 use crate::vehicle::MIN_LON_ACCEL;
@@ -141,16 +141,6 @@ pub(crate) fn best_first(
         .filter(|&node| node != start && dist[node].is_finite())
         .max_by(|&a, &b| depth(a).cmp(&depth(b)).then_with(|| dist[b].total_cmp(&dist[a])))?;
     Some(BestFirstResult { goal, parent })
-}
-
-pub(crate) fn record_diagnostics(
-    diag: &Diagnostics,
-    nodes: impl IntoIterator<Item = (crate::simulation::Position, Vec<crate::simulation::Position>)>,
-) {
-    for (point, trajectory) in nodes {
-        diag.record_point(point);
-        diag.record_trajectory(trajectory);
-    }
 }
 
 pub(crate) fn repeat_last_controls(controls: &[Control], horizon: usize) -> Vec<Control> {

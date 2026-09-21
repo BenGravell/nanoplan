@@ -196,11 +196,10 @@ pub(crate) fn camera_input(
         }
     }
     if pan != Vec2::ZERO {
-        let camera = live.camera;
-        live.camera.center +=
-            Rot2::radians(camera.rotation) * pan.normalize() * KEYBOARD_PAN_SPEED_PX_PER_SECOND * time.delta_secs()
-                / camera.zoom;
-        live.camera.follow = false;
+        pan_camera(
+            &mut live.camera,
+            pan.normalize() * KEYBOARD_PAN_SPEED_PX_PER_SECOND * time.delta_secs(),
+        );
     }
     let rotation_input = keys.pressed(KeyCode::KeyE) as i8 - keys.pressed(KeyCode::KeyQ) as i8;
     if rotation_input != NO_ROTATION_INPUT {
@@ -211,7 +210,7 @@ pub(crate) fn camera_input(
 fn apply_touch_controls(camera: &mut CameraState, touches: &Touches) {
     let touches: Vec<_> = touches.iter().take(MAX_GESTURE_TOUCHES).collect();
     match touches.as_slice() {
-        [touch] if touch.delta() != Vec2::ZERO => pan_camera(camera, touch.delta()),
+        [touch] if touch.delta() != Vec2::ZERO => pan_camera(camera, Vec2::new(-touch.delta().x, touch.delta().y)),
         [first, second] => {
             let previous = second.previous_position() - first.previous_position();
             let current = second.position() - first.position();
@@ -222,9 +221,13 @@ fn apply_touch_controls(camera: &mut CameraState, touches: &Touches) {
     }
 }
 
-fn pan_camera(camera: &mut CameraState, screen_delta: Vec2) {
-    camera.center -= screen_drag(screen_delta, camera.rotation, camera.zoom);
-    camera.follow = false;
+pub(super) fn pan_camera(camera: &mut CameraState, camera_delta: Vec2) {
+    let offset = camera_delta / camera.zoom;
+    if camera.follow {
+        camera.follow_offset += offset;
+    } else {
+        camera.center += Rot2::radians(camera.rotation) * offset;
+    }
 }
 
 fn zoom_camera(camera: &mut CameraState, scale: f32) {

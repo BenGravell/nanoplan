@@ -155,6 +155,7 @@ pub(crate) fn draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,
         &world.diagnostics,
+        state.preview_s as f64,
         state.show_diag_trajectories && state.planner.has_diagnostics(),
         state.show_diag_points && state.planner.has_diagnostics(),
     );

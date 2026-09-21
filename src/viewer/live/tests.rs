@@ -7,8 +7,8 @@ use bevy::window::PrimaryWindow;
 
 use super::camera::{
     CAMERA_BOTTOM_PADDING_PX, CameraState, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, MouseGesture, MouseGestureKind,
-    apply_mouse_gesture, cursor_over_driving_canvas, followed_camera_center, pinch_scale, screen_drag, smooth_angle,
-    twist_angle, world_under_cursor,
+    apply_mouse_gesture, cursor_over_driving_canvas, followed_camera_center, pan_camera, pinch_scale, screen_drag,
+    smooth_angle, twist_angle, world_under_cursor,
 };
 use super::rendering::camera_blend;
 use super::*;
@@ -166,6 +166,32 @@ fn pinch_distance_controls_zoom_without_dividing_by_zero() {
 fn touch_drag_uses_camera_rotation_and_zoom() {
     let drag = screen_drag(Vec2::new(20.0, 10.0), std::f32::consts::FRAC_PI_2, 2.0);
     assert!((drag - Vec2::new(5.0, 10.0)).length() < 1e-5);
+}
+
+#[test]
+fn camera_pan_preserves_follow_and_moves_with_ego() {
+    let mut camera = CameraState {
+        zoom: 2.0,
+        rotation: std::f32::consts::FRAC_PI_2,
+        ..Default::default()
+    };
+    pan_camera(&mut camera, Vec2::new(20.0, 10.0));
+    assert!(camera.follow);
+    assert_eq!(camera.follow_offset, Vec2::new(10.0, 5.0));
+    assert_eq!(camera.center, Vec2::ZERO);
+
+    let ego = State::default();
+    let mut moved_ego = ego;
+    moved_ego.pose.position.x += 3.0;
+    let before = followed_camera_center(camera, ego, 720.0);
+    let after = followed_camera_center(camera, moved_ego, 720.0);
+    assert!((after - before - (screen::px(&moved_ego) - screen::px(&ego))).length() < 1e-4);
+
+    camera.follow = false;
+    pan_camera(&mut camera, Vec2::new(20.0, 10.0));
+    assert!(!camera.follow);
+    assert!((camera.center - Vec2::new(-5.0, 10.0)).length() < 1e-5);
+    assert_eq!(camera.follow_offset, Vec2::new(10.0, 5.0));
 }
 
 #[test]

@@ -165,10 +165,12 @@ geometry a planner considered, not timing it.
 [`src/viewer/README.md`](../viewer/README.md#introspection-diagnostics)) — everywhere else, including `simulate()`'s
 closed-loop tick loop, it's `None` and planners record nothing, so there's no cost outside that one on-demand replan.
 
-`DiagnosticsData` has two plain fields planners push into as they see fit:
+`DiagnosticsData` stores the recorded geometry and its timing:
 
 - `points: Vec<[f64; 2]>` — standalone samples (the lattice's grid nodes, PI²-DDP's rollout states).
 - `trajectories: Vec<Vec<[f64; 2]>>` — polylines (the lattice's DP edges, PI²-DDP's sampled rollouts).
+- `trajectory_times: Vec<Vec<f64>>` — seconds from planning start for each polyline point, used to clip candidate
+  trajectories to the future preview slider.
 
 Every search planner records something — `PlannerKind::has_diagnostics()` reports which — while the strawman and
 Bezier+TOPP-RA planners have no receding-horizon search to show and record nothing.
