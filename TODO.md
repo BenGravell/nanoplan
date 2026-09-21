@@ -15,15 +15,17 @@ They should run a basic planner instead of using magic unphysical motion.
 
 1. Planner to use for opponents.
 1. Personality characteristics.
-
-- Assertiveness - progress weight
-- Recklessness - safety weight
+   - Assertiveness - progress weight
+   - Recklessness - safety weight
 
 ## guidance mode
 
 Add guidance mode, human steers target for planner
 
 ## planning horizon
+
+planning horizon should remain long enough to plan a max decel stop to standstill.
+this is for coming down from top speed on a long straight to low speed for a sharp corner.
 
 planning horizon might be too long, seems to cause bad behaviors like flickering and slowdown.
 
