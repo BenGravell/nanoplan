@@ -7,10 +7,7 @@ use crate::viewer::live::{Live, MAX_ZOOM, MIN_ZOOM};
 
 pub(super) fn show(ui: &mut egui::Ui, live: &mut Live, compact: bool, content_width: f32) {
     ui.label(egui::RichText::new("FOLLOW").font(caps_font(11.0)).color(DIM_TEXT));
-    ui.checkbox(
-        &mut live.camera.follow,
-        if compact { "Follow" } else { "Follow camera" },
-    );
+    ui.checkbox(&mut live.camera.follow, if compact { "Follow" } else { "Follow ego" });
     ui.checkbox(
         &mut live.camera.align_heading,
         if compact {

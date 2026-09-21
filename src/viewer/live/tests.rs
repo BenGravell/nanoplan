@@ -169,6 +169,31 @@ fn touch_drag_uses_camera_rotation_and_zoom() {
 }
 
 #[test]
+fn disabling_camera_follow_preserves_displayed_position_and_rotation() {
+    for blend in [0.0, 0.2, 1.0] {
+        let mut camera = CameraState {
+            follow_offset: Vec2::new(35.0, -20.0),
+            zoom: 2.0,
+            rotation: 0.7,
+            ..Default::default()
+        };
+        let mut ego = State::default();
+        camera.update_follow(ego, 720.0, blend);
+        let displayed_center = followed_camera_center(camera, ego, 720.0);
+        let displayed_rotation = camera.rotation;
+
+        camera.follow = false;
+        ego.pose.position.x += 3.0;
+        ego.pose.yaw += 0.5;
+        for _ in 0..3 {
+            camera.update_follow(ego, 720.0, blend);
+            assert_eq!(camera.center, displayed_center);
+            assert_eq!(camera.rotation, displayed_rotation);
+        }
+    }
+}
+
+#[test]
 fn camera_pan_preserves_follow_and_moves_with_ego() {
     let mut camera = CameraState {
         zoom: 2.0,

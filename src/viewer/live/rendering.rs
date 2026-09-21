@@ -3,12 +3,10 @@ use crate::world::LiveWorld;
 use bevy::prelude::*;
 
 use super::Live;
-use super::camera::{followed_camera_center, smooth_angle};
 use super::drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh, PlannedTrajectoryGizmos,
     RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
 };
-use super::screen::px;
 use crate::common::interp::lerp_state;
 use crate::common::math::smooth_exp_step;
 use crate::viewer::ui::controls::metrics::preview_metrics_for_trajectory;
@@ -66,27 +64,9 @@ pub(crate) fn draw(
         (live.acc as f64 / DT).clamp(0.0, 1.0)
     };
     let ego = rendered_ego(&live);
-    let target_center = live.camera.follow.then_some(px(&ego));
-    let target_rotation = live
-        .camera
-        .align_heading
-        .then_some(ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2);
     let blend = camera_blend(live.paused, live.camera.smooth, time.delta_secs());
-    if let Some(target) = target_center {
-        live.camera.center = if live.camera.gesture_active {
-            target
-        } else {
-            live.camera.center.lerp(target, blend)
-        };
-    }
-    if let Some(target) = target_rotation {
-        live.camera.rotation = smooth_angle(live.camera.rotation, target, blend);
-    }
-    let camera_center = if target_center.is_some() {
-        followed_camera_center(live.camera, ego, window.height())
-    } else {
-        live.camera.center
-    };
+    live.camera.update_follow(ego, window.height(), blend);
+    let camera_center = live.camera.center;
     camera.translation = camera_center.extend(camera.translation.z);
     camera.rotation = Quat::from_rotation_z(live.camera.rotation);
     camera.scale = Vec3::splat(1.0 / live.camera.zoom);

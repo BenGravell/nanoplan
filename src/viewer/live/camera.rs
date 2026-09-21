@@ -49,6 +49,17 @@ pub(crate) struct CameraState {
 }
 
 impl CameraState {
+    pub(super) fn update_follow(&mut self, ego: State, viewport_height: f32, blend: f32) {
+        if self.follow {
+            if self.align_heading {
+                let target = ego.pose.yaw as f32 - std::f32::consts::FRAC_PI_2;
+                self.rotation = smooth_angle(self.rotation, target, blend);
+            }
+            // Keep the displayed center so disabling follow preserves the view.
+            self.center = followed_camera_center(*self, ego, viewport_height);
+        }
+    }
+
     pub(super) fn reset(&mut self, ego: State) {
         *self = Self {
             center: px(&ego),

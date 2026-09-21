@@ -1102,7 +1102,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         } else {
             [
                 "FOLLOW",
-                "Follow camera",
+                "Follow ego",
                 "Align to ego heading",
                 "Smooth motion",
                 "ZOOM",
