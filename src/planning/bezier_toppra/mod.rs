@@ -1,7 +1,7 @@
-//! Two-segment cubic Bezier candidates, each timed with scalar TOPP-RA.
+//! Road-following cubic Bezier candidates, each timed with scalar TOPP-RA.
 
 use crate::common::kinematics::{lateral_acceleration, longitudinal_resistance_accel, net_longitudinal_accel};
-use crate::common::math::wrap_angle;
+use crate::common::math::{smoothstep, wrap_angle};
 use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::geometry::{
     CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, footprints_overlap,
@@ -122,34 +122,61 @@ fn lateral_offsets((right, left): (f64, f64), count: usize) -> Vec<f64> {
 }
 
 struct BezierPath {
-    segments: [[Position; 4]; 2],
-    /// Arc length at equal parameter steps, including the segment join.
+    segments: Vec<[Position; 4]>,
+    /// Approximate arc length at each short cubic's endpoints.
     distance: Vec<f64>,
     reference: Path,
 }
 
 impl BezierPath {
     fn new(ego: State, path: &Path, stations: [f64; 2], offsets: [f64; 2]) -> Self {
-        let middle = Pose::new(
-            path.frenet_to_position(stations[0], offsets[0]),
-            path.pose_at(stations[0]).1,
-        );
-        let end = Pose::new(
-            path.frenet_to_position(stations[1], offsets[1]),
-            path.pose_at(stations[1]).1,
-        );
-        let first_length = ego.position().distance(middle.position);
-        let second_length = middle.position.distance(end.position);
-        // Equal handles on either side of the join give matching tangents.
-        let join_handle = first_length.min(second_length) / 3.0;
-        let segments = [
-            fit_bezier(ego.pose(), middle, first_length / 3.0, join_handle),
-            fit_bezier(middle, end, join_handle, second_length / 3.0),
-        ];
+        let (s0, d0) = path.project(ego.position());
+        let heading = wrap_angle(ego.pose().yaw - path.pose_at(s0).1);
+        // The two search stations control lateral motion, not road geometry.
+        // Fit short cubics along the route so a distant endpoint cannot cut
+        // across intervening bends and create an artificial braking obstacle.
         let points: Vec<_> = (0..=GRID_STEPS)
             .map(|i| {
-                let (segment, t) = segment_parameter(i as f64);
-                bezier_point(&segments[segment], t)
+                if i == 0 {
+                    return ego.position();
+                }
+                let (layer, t) = segment_parameter(i as f64);
+                let (start, d, slope) = if layer == 0 {
+                    (s0, d0, heading.sin() / heading.cos().max(0.1))
+                } else {
+                    (stations[0], offsets[0], 0.0)
+                };
+                let span = stations[layer] - start;
+                let blend = smoothstep(t);
+                let offset = d + (offsets[layer] - d) * blend + span * slope * t * (1.0 - t).powi(2);
+                path.frenet_to_position(start + span * t, offset)
+            })
+            .collect();
+        let lengths: Vec<_> = points.windows(2).map(|p| p[0].distance(p[1])).collect();
+        let poses: Vec<_> = points
+            .iter()
+            .enumerate()
+            .map(|(i, &position)| {
+                let yaw = if i == 0 {
+                    ego.pose().yaw
+                } else if i == GRID_STEPS {
+                    path.pose_at(stations[1]).1
+                } else {
+                    let before = (position - points[i - 1]) * (1.0 / lengths[i - 1].max(1e-9));
+                    let after = (points[i + 1] - position) * (1.0 / lengths[i].max(1e-9));
+                    // Weight secants by the opposite interval: the two station
+                    // spans can have very different sample spacing at their join.
+                    let tangent = before * lengths[i] + after * lengths[i - 1];
+                    tangent.y.atan2(tangent.x)
+                };
+                Pose::new(position, yaw)
+            })
+            .collect();
+        let segments = (0..GRID_STEPS)
+            .map(|i| {
+                // Tangents share a direction; scale each handle by its own
+                // interval so unequal spacing cannot amplify join curvature.
+                fit_bezier(poses[i], poses[i + 1], lengths[i] / 3.0, lengths[i] / 3.0)
             })
             .collect();
         // ponytail: fixed-grid chord lengths approximate arc length; use
@@ -167,9 +194,8 @@ impl BezierPath {
 
     fn at(&self, distance: f64) -> (Pose, f64) {
         let i = self.index(distance);
-        let fraction = ((distance - self.distance[i]) / self.ds(i)).clamp(0.0, 1.0);
-        let (segment, t) = segment_parameter(i as f64 + fraction);
-        let b = &self.segments[segment];
+        let t = ((distance - self.distance[i]) / self.ds(i)).clamp(0.0, 1.0);
+        let b = &self.segments[i];
         let tangent = bezier_d1(b, t);
         (
             Pose::new(bezier_point(b, t), tangent[1].atan2(tangent[0])),
@@ -455,20 +481,86 @@ mod tests {
     use crate::planning::{COMPUTE_BUDGET_BREAKPOINTS, Diagnostics, test_ctx, test_road, test_run_on};
 
     #[test]
-    fn two_segments_interpolate_independent_offsets_with_a_shared_tangent() {
+    fn small_track_curves_follow_bends_and_previews_keep_moving() {
+        use crate::planning::PlannerKind;
+        use crate::world::{EgoStart, LiveWorld};
+        let lap = crate::track::Track::from_catalog(1).lap_length().unwrap();
+        for progress in (0..20).map(|i| lap * i as f64 / 20.0) {
+            for speed in [0.0, 5.0, 20.0] {
+                let world = LiveWorld::with_track_at(
+                    1,
+                    1,
+                    PlannerKind::BezierToppra,
+                    0,
+                    0.1,
+                    EgoStart {
+                        progress,
+                        speed,
+                        ..Default::default()
+                    },
+                );
+                let ego = world.ego();
+                let ctx = Context::new(&world.road, &[], 100, ComputeBudget::NOMINAL, None, None);
+                let path = ctx.path();
+                let s0 = path.project(ego.position()).0;
+                let targets = stations(speed, s0, path.length(), 0.1).unwrap();
+                let curve = BezierPath::new(ego, path, targets, [0.0; 2]);
+                let samples: Vec<_> = (0..=400)
+                    .map(|i| curve.at(curve.distance[GRID_STEPS] * i as f64 / 400.0))
+                    .collect();
+                let max_d = samples
+                    .iter()
+                    .map(|(pose, _)| path.project(pose.position).1.abs())
+                    .fold(0.0, f64::max);
+                let max_k = samples.iter().map(|(_, k)| k.abs()).fold(0.0, f64::max);
+                assert!(max_d < 1.0, "progress {progress}, speed {speed}: deviation {max_d}");
+                assert!(
+                    max_k < MAX_ABS_CURVATURE,
+                    "progress {progress}, speed {speed}: curvature {max_k}"
+                );
+                assert!(
+                    samples[320..].iter().all(|(_, k)| k.abs() < 0.1),
+                    "progress {progress}, speed {speed}: terminal curvature spike"
+                );
+                let controls = BezierToppraPlanner.plan(ego, &ctx);
+                let mut state = ego;
+                let mut distance = 0.0;
+                for u in controls {
+                    distance += state.speed * 0.1;
+                    state = world_step(state, u, 0.1);
+                    assert!(!collides_with_road_barrier(state, &world.road));
+                }
+                assert!(distance > 100.0, "progress {progress}, speed {speed}: reach {distance}");
+                assert!(
+                    state.speed > 5.0,
+                    "progress {progress}, speed {speed}: stopped prematurely"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn road_following_segments_interpolate_offsets_with_shared_tangent_directions() {
         let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let path = Path::new(road.centerline());
         let ego = State::from((Position::new(0.0, 1.0), 0.1, 8.0));
         let curve = BezierPath::new(ego, &path, [40.0, 80.0], [3.0, -2.0]);
 
         assert_eq!(curve.segments[0][0], ego.position());
-        assert_eq!(curve.segments[0][3], path.frenet_to_position(40.0, 3.0));
+        assert_eq!(
+            curve.segments[GRID_STEPS / 2 - 1][3],
+            path.frenet_to_position(40.0, 3.0)
+        );
         assert_eq!(curve.segments[1][0], curve.segments[0][3]);
-        assert_eq!(curve.segments[1][3], path.frenet_to_position(80.0, -2.0));
-        assert_eq!(bezier_d1(&curve.segments[0], 1.0), bezier_d1(&curve.segments[1], 0.0));
+        assert_eq!(curve.segments[GRID_STEPS - 1][3], path.frenet_to_position(80.0, -2.0));
+        for pair in curve.segments.windows(2) {
+            let a = bezier_d1(&pair[0], 1.0);
+            let b = bezier_d1(&pair[1], 0.0);
+            assert!(wrap_angle(a[1].atan2(a[0]) - b[1].atan2(b[0])).abs() < 1e-10);
+        }
         assert_eq!(
             curve.at(curve.distance[GRID_STEPS / 2]).0.position,
-            curve.segments[1][0]
+            curve.segments[GRID_STEPS / 2][0]
         );
         assert!(curve.distance.windows(2).all(|w| w[1] > w[0]));
         assert!(curve.distance[GRID_STEPS] > 60.0);

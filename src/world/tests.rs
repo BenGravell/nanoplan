@@ -189,22 +189,23 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
         ticks += 1;
     }
 
-    assert_eq!(ticks, 327);
+    assert_eq!(world.ego_collision_count, 0);
+    assert_eq!(ticks, 291);
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 327, 327, 1),
-        ("simulation.actors", 327, 1_635, 5),
-        ("simulation.actor_culling", 327, 1_635, 5),
-        ("route", 327, 182_843, 706),
-        ("bezier_fit", 327, 297_243, 909),
-        ("optimize", 327, 7_173_579, 47_082),
-        ("extract", 327, 1_363_197, 7_272),
-        ("cost", 327, 929_344, 5_409),
-        ("planner.total", 327, 8_583_009, 51_227),
-        ("simulation.preview", 327, 9_810, 30),
-        ("simulation.ego", 327, 327, 1),
-        ("simulation.collisions", 327, 1_962, 6),
-        ("simulation.total", 327, 57_431, 753),
-        ("simulation.roads", 73, 41_735, 705),
+        ("simulation.progress", 291, 291, 1),
+        ("simulation.actors", 291, 1_455, 5),
+        ("simulation.actor_culling", 291, 1_455, 5),
+        ("route", 291, 169_559, 744),
+        ("bezier_fit", 291, 264_519, 909),
+        ("optimize", 291, 4_728_303, 48_330),
+        ("extract", 291, 523_887, 5_454),
+        ("cost", 291, 1_243_079, 5_409),
+        ("planner.total", 291, 6_405_460, 55_143),
+        ("simulation.preview", 291, 8_730, 30),
+        ("simulation.ego", 291, 291, 1),
+        ("simulation.collisions", 291, 1_746, 6),
+        ("simulation.total", 291, 59_382, 791),
+        ("simulation.roads", 76, 45_414, 743),
     ] {
         let seam = latency
             .seams
