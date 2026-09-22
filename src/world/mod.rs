@@ -72,13 +72,7 @@ impl LiveWorld {
             centerline_yaw + start.yaw_offset,
             start.speed,
         ));
-        let road = road_window(
-            &track,
-            start.progress,
-            ego.speed,
-            dt,
-            matches!(planner, PlannerKind::Lattice | PlannerKind::Frenetix),
-        );
+        let road = road_window(&track, start.progress, ego.speed, dt);
         let collision_road = full_circuit_road(&track, dt);
         let actor_count = max_actors.min(MAX_ACTORS);
         let behind = if actor_count > 1 { (actor_count / 3).max(1) } else { 0 };
@@ -130,13 +124,7 @@ impl LiveWorld {
             self.planner = PlannerEngine::new(kind);
             self.plan.clear();
             self.planner_slow = false;
-            self.road = road_window(
-                &self.track,
-                self.road_anchor_x,
-                self.ego().speed,
-                self.dt(),
-                matches!(kind, PlannerKind::Lattice | PlannerKind::Frenetix),
-            );
+            self.road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
         }
     }
 
@@ -235,16 +223,10 @@ impl LiveWorld {
             work(latency, 1);
             progress
         });
-        if (self.track_progress - self.road_anchor_x).abs() >= 20.0 {
+        if road::needs_road_window_update(&self.road, self.track_progress - self.road_anchor_x, self.ego().speed) {
             self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
             self.road = timed(latency, "simulation.roads", || {
-                let road = road_window(
-                    &self.track,
-                    self.road_anchor_x,
-                    self.ego().speed,
-                    self.dt(),
-                    matches!(self.planner_kind, PlannerKind::Lattice | PlannerKind::Frenetix),
-                );
+                let road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
                 work(latency, road.centerline().len() as u64);
                 road
             });

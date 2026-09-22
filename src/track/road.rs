@@ -52,6 +52,10 @@ impl Road {
         self.polygon.centerline()
     }
 
+    pub(crate) fn length(&self) -> f64 {
+        *self.stations.last().unwrap()
+    }
+
     pub(crate) fn polygon(&self) -> &RoadPolygon {
         &self.polygon
     }

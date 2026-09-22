@@ -5,7 +5,6 @@ use crate::track::{ROAD_SAMPLE_STEP_M, Road, Track};
 use crate::vehicle::MAX_LON_ACCEL;
 
 const ROAD_BEHIND_M: f64 = 50.0;
-pub(super) const ROAD_AHEAD_M: f64 = 250.0;
 const ROAD_LOOKAHEAD_MARGIN_M: f64 = 25.0;
 
 fn planning_lookahead_m(mut speed: f64, dt: f64) -> f64 {
@@ -22,16 +21,17 @@ fn planning_lookahead_m(mut speed: f64, dt: f64) -> f64 {
     reachable + ROAD_LOOKAHEAD_MARGIN_M
 }
 
-pub(super) fn road_window(track: &Track, x: f64, speed: f64, dt: f64, reachability_sized: bool) -> Road {
-    let ahead = if reachability_sized {
-        planning_lookahead_m(speed, dt)
-    } else {
-        ROAD_AHEAD_M
-    };
+pub(super) fn road_window(track: &Track, x: f64, speed: f64, dt: f64) -> Road {
+    let ahead = planning_lookahead_m(speed, dt);
     let polygon = track
         .road_polygon(x - ROAD_BEHIND_M, x + ahead, ROAD_SAMPLE_STEP_M, false)
         .expect("track road window must form a valid polygon");
     Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt)
+}
+
+pub(super) fn needs_road_window_update(road: &Road, distance_from_anchor: f64, speed: f64) -> bool {
+    let remaining = road.length() - ROAD_BEHIND_M - distance_from_anchor;
+    distance_from_anchor.abs() >= 20.0 || remaining < planning_lookahead_m(speed, road.dt) - ROAD_LOOKAHEAD_MARGIN_M
 }
 
 pub(super) fn full_circuit_road(track: &Track, dt: f64) -> Road {

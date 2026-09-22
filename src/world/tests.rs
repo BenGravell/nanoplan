@@ -1,4 +1,3 @@
-use super::road::ROAD_AHEAD_M;
 use super::traffic::lateral_target;
 use super::*;
 use crate::geometry::barrier::collides_with_road_barrier;
@@ -118,7 +117,7 @@ fn lattice_small_track_accelerates_and_previews_stay_on_road() {
     world.simulator.state = State::from((position, yaw, 34.0));
     world.track_progress = approach_progress;
     world.road_anchor_x = approach_progress;
-    world.road = road_window(&world.track, approach_progress, world.ego().speed, world.dt(), true);
+    world.road = road_window(&world.track, approach_progress, world.ego().speed, world.dt());
     world.tick_with_latency(None);
 
     assert!(
@@ -130,6 +129,49 @@ fn lattice_small_track_accelerates_and_previews_stay_on_road() {
         "corner preview left the road: {:?}",
         world.trajectory.states
     );
+}
+
+#[test]
+fn every_planner_gets_a_reachable_road_window_on_creation_and_switch() {
+    let mut world = LiveWorld::with_track_at(
+        0,
+        1,
+        PlannerKind::Straight,
+        0,
+        0.1,
+        EgoStart {
+            speed: 40.0,
+            ..Default::default()
+        },
+    );
+    let expected = world.road.centerline().to_vec();
+    assert!(world.road.length() > 500.0);
+    for kind in PlannerKind::ALL {
+        let other = LiveWorld::with_track_at(
+            0,
+            1,
+            kind,
+            0,
+            0.1,
+            EgoStart {
+                speed: 40.0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(other.road.centerline(), expected);
+        world.set_planner(kind);
+        assert_eq!(world.road.centerline(), expected);
+    }
+}
+
+#[test]
+fn growing_reach_refreshes_the_road_before_twenty_metres_of_progress() {
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
+    let initial_length = world.road.length();
+    world.simulator.state.speed = 40.0;
+    world.tick_with_latency(None);
+    assert!(world.track_progress < 20.0);
+    assert!(world.road.length() > initial_length + 100.0);
 }
 
 #[test]
@@ -147,21 +189,21 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
         ticks += 1;
     }
 
-    assert_eq!(ticks, 297);
+    assert_eq!(ticks, 298);
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 297, 297, 1),
-        ("simulation.actors", 297, 1_485, 5),
-        ("simulation.actor_culling", 297, 1_485, 5),
-        ("route", 297, 89_694, 302),
-        ("bezier_fit", 297, 594, 2),
-        ("optimize", 297, 635_683, 16_329),
-        ("extract", 297, 9_207, 31),
-        ("planner.total", 297, 735_178, 16_664),
-        ("simulation.preview", 297, 8_910, 30),
-        ("simulation.ego", 297, 297, 1),
-        ("simulation.collisions", 297, 1_782, 6),
-        ("simulation.total", 297, 25_092, 349),
-        ("simulation.roads", 36, 10_836, 301),
+        ("simulation.progress", 298, 298, 1),
+        ("simulation.actors", 298, 1_490, 5),
+        ("simulation.actor_culling", 298, 1_490, 5),
+        ("route", 298, 171_739, 751),
+        ("bezier_fit", 298, 596, 2),
+        ("optimize", 298, 489_207, 3_534),
+        ("extract", 298, 9_238, 31),
+        ("planner.total", 298, 670_780, 4_308),
+        ("simulation.preview", 298, 8_940, 30),
+        ("simulation.ego", 298, 298, 1),
+        ("simulation.collisions", 298, 1_788, 6),
+        ("simulation.total", 298, 52_205, 798),
+        ("simulation.roads", 65, 37_901, 750),
     ] {
         let seam = latency
             .seams
@@ -418,7 +460,10 @@ fn traffic_bounces_off_static_road_barriers() {
 #[test]
 fn traffic_continues_past_the_rolling_road_window_end() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
-    let progress = world.road_anchor_x + ROAD_AHEAD_M + 2.0 * ROAD_SAMPLE_STEP_M;
+    let progress = world
+        .track
+        .project_progress(*world.road.centerline().last().unwrap(), world.road_anchor_x)
+        + 2.0 * ROAD_SAMPLE_STEP_M;
     let (p, yaw) = world.track.pose(progress);
     let actor = State::from((p, yaw, 10.0));
     world.actors[0].track_x = progress;

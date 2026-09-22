@@ -80,6 +80,8 @@ Notably:
 - **`road` is the current planning window** — the `track::Road` parameter object bundling the track centerline, the
   desired cruise speed, and the tick length of the returned controls.
   Planners read `ctx.road.centerline()`, `ctx.road.target_speed`, and `ctx.road.dt`.
+  The live world sizes this window for maximum-acceleration reach over the shared planning horizon for every planner, and
+  refreshes it when speed increases beyond the existing window's coverage.
 - **`actors` is current-tick only.** Planners see no future information about other vehicles — if they want a prediction,
   they compute one themselves.
   They all go through the shared `prediction::predict`: an actor driving along the route is rolled forward following the
