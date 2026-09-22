@@ -174,8 +174,9 @@ closed-loop tick loop, it's `None` and planners record nothing, so there's no co
 - `trajectory_times: Vec<Vec<f64>>` — seconds from planning start for each polyline point, used to clip candidate
   trajectories to the future preview slider.
 
-Every search planner records something — `PlannerKind::has_diagnostics()` reports which — while the strawman and
-Bezier+TOPP-RA planners have no receding-horizon search to show and record nothing.
+Every search planner records something — `PlannerKind::has_diagnostics()` reports which — including one timed rollout
+per Bezier+TOPP-RA path candidate.
+The straight strawman records nothing.
 See each planner's README for exactly what it records.
 
 ## Test harness

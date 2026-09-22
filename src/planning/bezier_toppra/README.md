@@ -2,19 +2,49 @@
 
 `bezier_toppra/mod.rs` — `BezierToppraPlanner`
 
-Steers back to the lane by fitting a cubic Bezier curve from the ego's current pose to a lookahead point on the
-centerline.
-Speed uses the scalar special case of [TOPP-RA](https://arxiv.org/abs/1707.07239): squared path speed is propagated over
-a station grid by a backward controllable-set pass and a maximum-acceleration forward pass.
-Commanded longitudinal acceleration, geometric curvature, lateral grip, target speed, and predicted actor clearance are
-hard bounds.
-Extraction adds the shared centerline feedback to the geometric curvature, then rolls out the full vehicle footprint and
-tightens the speed envelope until it stays between the road barriers.
+Searches paths made from exactly two cubic Bezier segments: ego to an intermediate station, then to a terminal station.
+The segments share their joining position and tangent.
+Each station independently samples lateral offsets inside the local road bounds, with vehicle-width clearance.
+Zero offset is always included at both stations, and the centerline candidate is evaluated first.
 
-**Seams**: `route` (build the `Path`, project the ego), `bezier_fit` (compute the four Bezier control points),
-`optimize` (TOPP-RA backward/forward passes and collision-bound tightening), and `extract` (convert the path profile to
-controls).
+The intermediate station uses the midpoint of the braking/acceleration reachable interval at 5 seconds.
+The terminal station covers maximum acceleration over the full 10-second horizon, plus one control step of integration
+margin.
+Both bounds include rolling resistance and drag.
+Stations are clipped to the available road window while retaining two distinct segments.
+Every live planner now receives a road window sized to full acceleration reach; it also grows when increasing speed
+would exhaust that window before the next normal road update.
 
-Because path parameterization cannot steer around an obstacle, predicted collision occupancy imposes a zero-speed
-station and the backward pass builds the braking profile needed to stop before it.
-The collision bound uses the shared lane-aware actor prediction and therefore also covers crossing traffic.
+The compute-budget slider scales the lateral grid's total path allowance.
+The largest odd number of offsets whose Cartesian product fits that allowance is used: 1 path at minimum budget, 9 at
+nominal, and 25 at maximum, on a road wide enough for offsets on both sides.
+
+Each path gets its own scalar [TOPP-RA](https://arxiv.org/abs/1707.07239) speed profile: squared speed is propagated
+backward through controllable intervals and forward under maximum acceleration.
+Grid spacing uses sampled arc length along both curves.
+Curvature, lateral grip, target speed, acceleration and braking limits bound the profile.
+The preview endpoint permits nonzero speed; it does not introduce an artificial stop into an otherwise clear
+acceleration path.
+
+Extraction follows the profile's arrival-time speed ramp, with geometric curvature and the shared lateral/heading
+feedback tracking the path.
+Predicted actor footprints and actual vehicle rollouts tighten the speed envelope to stop before obstacles or road
+barriers.
+Refinement is capped at eight passes per path to bound the latency tail; the final feasibility check still rejects any
+remaining violation.
+Every final trajectory is checked over at least the full 10-second planning horizon, even when fewer controls are
+requested.
+The shared progress/comfort cost ranks feasible trajectories; rectangular actor collisions and road-barrier contact
+reject a candidate.
+If none is feasible, the planner applies a braking fallback that holds at standstill.
+
+**Seams**: `route` (project ego), `bezier_fit` (fit and sample each two-segment path), `optimize` (TOPP-RA and bound
+tightening), `extract` (path profile to controls), and `cost` (full-rollout feasibility and shared objective).
+Diagnostics record one timed trajectory per path, including rejected candidates.
+
+Browser calibration at 100% budget (9 paths), using the optimized `web` profile in a Chrome 153 WebAssembly worker on an
+Intel Xeon 6737P: 1,080 measured calls after warmup gave p99 **66.4 ms**, maximum **68.5 ms**, and no calls above 100
+ms. Worker round-trip p99 was 67.0 ms. The corpus covered straight roads, constant-radius bends and S-bends, ego speeds
+of 0–80 m/s, and 0, 5 or 15 actors, with diagnostics disabled.
+These measurements leave headroom for the 100 ms allowance on that machine; latency depends on browser, hardware and
+workload.
