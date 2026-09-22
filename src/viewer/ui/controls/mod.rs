@@ -31,18 +31,32 @@ pub(super) fn control_deck(
     content_width: f32,
 ) {
     ui.set_max_width(content_width);
-    let selector = egui::ComboBox::from_id_salt("control_tab")
-        .selected_text(active_tab.label())
-        .width(content_width)
-        .height(ui.available_height())
-        .show_ui(ui, |ui| {
-            for tab in ControlTab::ALL {
-                ui.selectable_value(active_tab, tab, tab.label());
+    let selector = ui.horizontal(|ui| {
+        let gap = if compact { 2.0 } else { 4.0 };
+        let side = (content_width - gap * 5.0) / 6.0;
+        ui.spacing_mut().item_spacing.x = gap;
+        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
+        ui.spacing_mut().interact_size = egui::Vec2::splat(side);
+        for tab in ControlTab::ALL {
+            let selected = *active_tab == tab;
+            let image = egui::Image::new(tab.icon()).fit_to_exact_size(egui::Vec2::splat((side * 0.6).min(24.0)));
+            let response = ui.add_sized(
+                [side, side],
+                egui::Button::image(image)
+                    .image_tint_follows_text_color(true)
+                    .selected(selected),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, format!("{} tab", tab.label()))
+            });
+            if response.on_hover_text(tab.label()).clicked() {
+                *active_tab = tab;
             }
-        });
+        }
+    });
     selector
         .response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "OPTIONS"));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "OPTIONS"));
     ui.add_space(if compact { 6.0 } else { 9.0 });
 
     scroll_area(ui, egui::ScrollArea::vertical().max_width(content_width), |ui| {
@@ -67,6 +81,17 @@ impl ControlTab {
         Self::Metrics,
         Self::Timing,
     ];
+
+    fn icon(self) -> egui::ImageSource<'static> {
+        match self {
+            Self::Planner => egui::include_image!("../../../../assets/icons/lucide/route.svg"),
+            Self::Opponents => egui::include_image!("../../../../assets/icons/lucide/car.svg"),
+            Self::Camera => egui::include_image!("../../../../assets/icons/lucide/camera.svg"),
+            Self::Visibility => egui::include_image!("../../../../assets/icons/lucide/eye.svg"),
+            Self::Metrics => egui::include_image!("../../../../assets/icons/lucide/chart-no-axes-combined.svg"),
+            Self::Timing => egui::include_image!("../../../../assets/icons/lucide/timer.svg"),
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {

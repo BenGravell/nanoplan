@@ -116,9 +116,24 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             "HUD sections lost top/middle/bottom alignment at {name}: {sections:?}"
         );
 
-        let selector = harness
-            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "OPTIONS")
-            .rect();
+        let selector = harness.get_by_label("OPTIONS").rect();
+        let mut previous_right = selector.left();
+        for label in ["PLANNER", "OPPONENTS", "CAMERA", "VIZ", "METRICS", "TIMING"] {
+            let rect = harness.get_by_label(&format!("{label} tab")).rect();
+            assert!(
+                selector.contains_rect(rect),
+                "{label} tab spills outside selector at {name}"
+            );
+            assert!(
+                (rect.width() - rect.height()).abs() < 1.0,
+                "{label} tab is not square at {name}"
+            );
+            assert!(
+                rect.left() >= previous_right - 1.0,
+                "{label} tab overlaps its neighbor at {name}"
+            );
+            previous_right = rect.right();
+        }
         let pause = harness.get_by_label("PAUSE").rect();
         assert!(
             pause.left() >= control_width * pixels_per_point

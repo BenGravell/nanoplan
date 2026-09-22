@@ -29,8 +29,9 @@ fn opponents_menu_controls_the_opponent_count_from_zero_to_fifteen() {
     harness.run_steps(2);
     harness.state_mut().live.camera.zoom = 2.0;
     let ego = harness.state().live.world.ego();
-    harness.state_mut().tab = ControlTab::Opponents;
+    harness.get_by_label("OPPONENTS tab").click();
     harness.run();
+    assert!(harness.state().tab == ControlTab::Opponents);
 
     assert!(harness.query_by_label("OPPONENTS").is_some());
     assert_eq!(harness.state().live.world.ego(), ego);
