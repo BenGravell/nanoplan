@@ -91,6 +91,13 @@ impl<'a> Context<'a> {
         self.path.get_or_init(|| Path::new(self.road.centerline()))
     }
 
+    pub(crate) fn project_ego(&self, ego: State) -> (f64, f64) {
+        match self.road.ego_projection_window {
+            Some((hint, radius)) => self.path().project_near(ego.position(), hint, radius),
+            None => self.path().project(ego.position()),
+        }
+    }
+
     /// Time `f` under the seam `name` when diagnostics are on; otherwise
     /// just run it. See [`latency`] for the standardized seam names.
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {

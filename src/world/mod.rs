@@ -224,7 +224,8 @@ impl LiveWorld {
             progress
         });
         if road::needs_road_window_update(&self.road, self.track_progress - self.road_anchor_x, self.ego().speed) {
-            self.road_anchor_x = (self.track_progress / 20.0).floor() * 20.0;
+            self.road_anchor_x =
+                (self.track_progress / road::ROAD_REFRESH_DISTANCE_M).floor() * road::ROAD_REFRESH_DISTANCE_M;
             self.road = timed(latency, "simulation.roads", || {
                 let road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
                 work(latency, road.centerline().len() as u64);

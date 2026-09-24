@@ -119,6 +119,11 @@ impl<'a> HardConstraints<'a> {
         }
     }
 
+    /// Reject a sample without assigning a quality cost.
+    pub(crate) fn is_violated(&self, sample: &Sample) -> bool {
+        self.drivable.is_violated(sample) || self.collision.is_violated(sample)
+    }
+
     /// Progress cost for a feasible sample; hard violations return infinity.
     pub(crate) fn point_cost(&self, sample: &Sample) -> f64 {
         self.point_cost_with_actor_time(sample, sample.t)

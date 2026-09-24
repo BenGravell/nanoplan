@@ -168,10 +168,12 @@ fn every_planner_gets_a_reachable_road_window_on_creation_and_switch() {
 fn growing_reach_refreshes_the_road_before_twenty_metres_of_progress() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
     let initial_length = world.road.length();
+    let initial_projection = world.road.ego_projection_window;
     world.simulator.state.speed = 40.0;
     world.tick_with_latency(None);
     assert!(world.track_progress < 20.0);
     assert!(world.road.length() > initial_length + 100.0);
+    assert_eq!(world.road.ego_projection_window, initial_projection);
 }
 
 #[test]
@@ -185,27 +187,34 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
 
     while world.track_progress < lap_length && ticks < 2_000 {
         world.tick_recording_latency(&recorder);
+        assert_eq!(
+            world.ego_collision_count,
+            0,
+            "first collision tick {ticks}, progress {}, ego {:?}",
+            world.track_progress,
+            world.ego()
+        );
         latency.absorb(recorder.take());
         ticks += 1;
     }
 
     assert_eq!(world.ego_collision_count, 0);
-    assert_eq!(ticks, 291);
+    assert_eq!(ticks, 290);
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 291, 291, 1),
-        ("simulation.actors", 291, 1_455, 5),
-        ("simulation.actor_culling", 291, 1_455, 5),
-        ("route", 291, 169_559, 744),
-        ("bezier_fit", 291, 264_519, 909),
-        ("optimize", 291, 4_728_303, 48_330),
-        ("extract", 291, 523_887, 5_454),
-        ("cost", 291, 1_243_079, 5_409),
-        ("planner.total", 291, 6_405_460, 55_143),
-        ("simulation.preview", 291, 8_730, 30),
-        ("simulation.ego", 291, 291, 1),
-        ("simulation.collisions", 291, 1_746, 6),
-        ("simulation.total", 291, 59_382, 791),
-        ("simulation.roads", 76, 45_414, 743),
+        ("simulation.progress", 290, 290, 1),
+        ("simulation.actors", 290, 1_450, 5),
+        ("simulation.actor_culling", 290, 1_450, 5),
+        ("route", 290, 169_104, 736),
+        ("bezier_fit", 290, 263_610, 909),
+        ("optimize", 290, 6_510_312, 57_054),
+        ("extract", 290, 711_646, 7_272),
+        ("cost", 290, 1_394_668, 5_409),
+        ("planner.total", 290, 8_337_694, 63_952),
+        ("simulation.preview", 290, 8_700, 30),
+        ("simulation.ego", 290, 290, 1),
+        ("simulation.collisions", 290, 1_740, 6),
+        ("simulation.total", 290, 60_296, 783),
+        ("simulation.roads", 78, 46_376, 735),
     ] {
         let seam = latency
             .seams
@@ -386,6 +395,31 @@ fn unblocked_traffic_accelerates() {
 }
 
 #[test]
+fn traffic_brakes_for_ego_including_on_another_lap() {
+    for lap_offset in [-1.0, 0.0, 1.0] {
+        let mut world = LiveWorld::with_track_at(
+            0,
+            1,
+            PlannerKind::Straight,
+            1,
+            0.1,
+            EgoStart {
+                progress: 100.0,
+                ..Default::default()
+            },
+        );
+        let actor_progress = 80.0 + lap_offset * world.track.lap_length().unwrap();
+        let (position, yaw) = world.track.pose(actor_progress);
+        world.actors[0].track_x = actor_progress;
+        world.actors[0].state = State::from((position, yaw, 20.0));
+
+        world.step_traffic();
+
+        assert!(world.actors[0].state.speed < 20.0, "lap offset {lap_offset}");
+    }
+}
+
+#[test]
 fn traffic_keeps_rebound_velocity_on_the_next_tick() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
     let (p, lane_yaw) = world.track.pose(0.0);
@@ -492,4 +526,35 @@ fn preview_horizon_and_diagnostics_are_live_configurable() {
     world.tick_with_latency(None);
     assert_eq!(world.trajectory.len(), 1);
     assert!(world.diagnostics.points.is_empty());
+}
+
+#[test]
+fn ego_projection_metadata_is_rebuilt_after_progress_refresh() {
+    let mut world = LiveWorld::with_track_at(
+        1,
+        1,
+        PlannerKind::Straight,
+        0,
+        0.1,
+        EgoStart {
+            progress: 3.37,
+            ..Default::default()
+        },
+    );
+    for progress in [24.5, 45.25, 67.75] {
+        world.simulator.state = State::from((world.track.point(progress), world.track.pose(progress).1, 0.0));
+        world.tick_with_latency(None);
+        let expected = road_window(&world.track, world.road_anchor_x, 0.0, world.dt());
+        assert_eq!(world.road.ego_projection_window, expected.ego_projection_window);
+        assert!(
+            (world.road_anchor_x - (progress / road::ROAD_REFRESH_DISTANCE_M).floor() * road::ROAD_REFRESH_DISTANCE_M)
+                .abs()
+                < 1e-6
+        );
+        let ctx = crate::planning::test_ctx(&world.road, &[]);
+        let (station, lateral) = ctx.project_ego(world.ego());
+        let (hint, radius) = world.road.ego_projection_window.unwrap();
+        assert!((station - hint).abs() < radius);
+        assert!(lateral.abs() < 0.1);
+    }
 }

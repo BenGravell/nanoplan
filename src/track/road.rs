@@ -14,6 +14,9 @@ pub(crate) struct Road {
     pub(crate) half_width: f64,
     barriers: Vec<Barrier>,
     pub(crate) dt: f64,
+    /// Anchor station and search radius for ego in a rolling road window.
+    /// Ordinary finite roads do not restrict ego projection.
+    pub(crate) ego_projection_window: Option<(f64, f64)>,
 }
 
 impl Road {
@@ -45,6 +48,7 @@ impl Road {
             half_width,
             barriers,
             dt,
+            ego_projection_window: None,
         }
     }
 

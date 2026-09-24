@@ -88,13 +88,26 @@ impl super::LiveWorld {
                 (a.track_x, forward_speed)
             })
             .collect();
+        let lap_length = self.track.lap_length().expect("traffic requires a closed circuit");
+        let ego = self.ego();
+        let (_, ego_lane_yaw) = self.track.pose(self.track_progress);
+        let ego_speed = ego.speed * (ego.pose.yaw - ego_lane_yaw).cos();
         for (i, actor) in self.actors.iter_mut().enumerate() {
             let (_, lane_yaw) = self.track.pose(actor.track_x);
             let mut forward_speed = actor.state.speed * (actor.state.pose.yaw - lane_yaw).cos();
             let mut lateral_speed = actor.state.speed * (actor.state.pose.yaw - lane_yaw).sin();
-            let lead = snapshot
+            let mut lead = snapshot
                 .get(i + 1)
                 .map(|next| (next.0 - actor.track_x - CAR_FOOTPRINT.length, next.1));
+            // A car on another lap can still be immediately ahead on the circuit.
+            let ego_gap = (self.track_progress - actor.track_x).rem_euclid(lap_length) - CAR_FOOTPRINT.length;
+            // React within braking range, with one tick and one car length of clearance.
+            let stopping_distance = forward_speed.max(0.0).powi(2) / (2.0 * -crate::vehicle::MIN_LON_ACCEL);
+            if ego_gap < stopping_distance + forward_speed.max(0.0) * dt + CAR_FOOTPRINT.length
+                && lead.is_none_or(|(gap, _)| ego_gap < gap)
+            {
+                lead = Some((ego_gap, ego_speed));
+            }
             let accel = lead.map_or(MAX_LON_ACCEL, |(gap, lead_speed)| {
                 ((lead_speed * lead_speed - forward_speed * forward_speed) / (2.0 * gap.max(1.0)))
                     .clamp(crate::vehicle::MIN_LON_ACCEL, MAX_LON_ACCEL)
