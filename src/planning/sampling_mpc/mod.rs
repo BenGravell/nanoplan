@@ -61,8 +61,6 @@ pub(crate) use cem::Cem;
 pub(crate) use mppi::Mppi;
 pub(crate) use ps::PredictiveSampling;
 
-use crate::common::differencing::forward_difference;
-use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::policy::centerline_feedback;
@@ -281,8 +279,8 @@ impl<O: Optimizer> SamplingPlanner<O> {
     }
 
     /// Cost of being at `x` at tick `t` having just applied `u` — the
-    /// production composite metric with hard violations made finite.
-    fn state_cost(path: &Path, x: &State, jerk: (f64, f64), t: usize, initial_speed: f64, ctx: &Context) -> f64 {
+    /// progress objective with hard violations made finite.
+    fn state_cost(path: &Path, x: &State, t: usize, initial_speed: f64, ctx: &Context) -> f64 {
         let (s, d) = path.project(x.position());
         let (_, lane_yaw) = path.pose_at(s);
         let sample = Sample {
@@ -292,8 +290,6 @@ impl<O: Optimizer> SamplingPlanner<O> {
             heading_err: wrap_angle(x.pose.yaw - lane_yaw),
             speed: x.speed,
             station_speed: None,
-            lon_jerk: jerk.0,
-            lat_jerk: jerk.1,
             t: t as f64 * ctx.road.dt,
         };
         let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, initial_speed, ctx.road.dt);
@@ -315,22 +311,12 @@ impl<O: Optimizer> SamplingPlanner<O> {
         let mut x = ego;
         let mut xs = vec![ego];
         let mut total = 0.0;
-        let mut previous_accel: Option<(f64, f64)> = None;
+
         for t in 0..HORIZON {
             let dev = control_at(knots, t, HORIZON);
             let u = Self::command(path, &x, dev, ctx);
             x = world_step(x, u, ctx.road.dt);
-            let accel = (u.acceleration, lateral_acceleration(x.speed, u.curvature));
-            let jerk = previous_accel
-                .map(|previous| {
-                    (
-                        forward_difference(previous.0, accel.0, ctx.road.dt),
-                        forward_difference(previous.1, accel.1, ctx.road.dt),
-                    )
-                })
-                .unwrap_or_default();
-            previous_accel = Some(accel);
-            total += Self::state_cost(path, &x, jerk, t + 1, ego.speed, ctx);
+            total += Self::state_cost(path, &x, t + 1, ego.speed, ctx);
             xs.push(x);
         }
         (xs, -total)

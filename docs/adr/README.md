@@ -14,7 +14,6 @@ editing history.
 
 | ADR                                           | Decision                                                                                          | Pattern                         | Status   |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------- | -------- |
-| [0002](0002-metric-strategy-table.md)         | Replace metric magic indices with a `METRICS` spec table                                          | Strategy (table-driven)         | Accepted |
 | [0003](0003-planner-spec-registry.md)         | Collapse `PlannerKind`'s parallel `match`es into one `PlannerSpec` table                          | Factory Method (table-driven)   | Accepted |
 | [0005](0005-shared-qmc-sampling-interface.md) | Share RRT\*'s road-frame QMC sampling with the judo optimizers behind one `QuasiMonteCarlo` trait | Strategy / dependency inversion | Accepted |
 

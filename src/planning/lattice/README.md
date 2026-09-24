@@ -18,7 +18,7 @@ Reachable station and speed bounds use the same rolling resistance and air drag 
 Lateral samples use interpolated local left/right road widths rather than the road window's minimum width.
 
 The layered graph is searched lazily with A\* / best-first search.
-Edge costs are the nonnegative complement of the production composite metric.
+Edge costs are the nonnegative complement of the progress metric.
 The lattice supplies its directly tracked Frenet station rate so progress reflects the shorter/longer path induced by
 corner offsets.
 If the edge budget is reached before a ten-second goal is settled, the cheapest feasible root segment remains a safe

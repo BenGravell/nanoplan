@@ -1,6 +1,6 @@
 //! Road-following cubic Bezier candidates, each timed with scalar TOPP-RA.
 
-use crate::common::kinematics::{lateral_acceleration, longitudinal_resistance_accel, net_longitudinal_accel};
+use crate::common::kinematics::{longitudinal_resistance_accel, net_longitudinal_accel};
 use crate::common::math::{smoothstep, wrap_angle};
 use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::geometry::{
@@ -386,7 +386,7 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
     let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
     let mut state = ego;
     let mut total = 0.0;
-    let mut previous_accel: Option<(f64, f64)> = None;
+
     let mut points = ctx.diagnostics.map(|_| vec![ego.position()]);
     for (tick, &u) in controls.iter().enumerate() {
         let previous = state;
@@ -394,12 +394,6 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
         let time = (tick + 1) as f64 * ctx.road.dt;
         let (s, mut sample) = state_sample(path, &state, time, None);
         sample.road_bounds = Some(ctx.road.lateral_bounds_at(s));
-        let accel = (u.acceleration, lateral_acceleration(previous.speed, u.curvature));
-        if let Some(previous) = previous_accel {
-            sample.lon_jerk = (accel.0 - previous.0) / ctx.road.dt;
-            sample.lat_jerk = (accel.1 - previous.1) / ctx.road.dt;
-        }
-        previous_accel = Some(accel);
         if !u.acceleration.is_finite()
             || !u.curvature.is_finite()
             || state.speed < -1e-9

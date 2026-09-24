@@ -280,7 +280,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
 
         harness.state_mut().tab = ControlTab::Metrics;
         harness.run();
-        for label in ["PLANNER METRICS", "SAFETY", "PROGRESS", "COMFORT", "OVERALL"] {
+        for label in ["PLANNER METRICS", "PROGRESS"] {
             let rect = harness.get_by_label(label).rect();
             assert!(
                 rect.left() >= control_rail.left() && rect.right() <= control_rail.right() && rect.width() > 0.0,

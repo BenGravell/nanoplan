@@ -135,7 +135,7 @@ const CONTINUITY_WEIGHT: f64 = 0.15;
 // within a few ticks, low enough to smooth over single-tick sampling jitter.
 const COMMIT_SMOOTHING: f64 = 0.5;
 // How far inside the road's own drivable half-width ([`Road::half_width`],
-// the bound the safety metric and planner objective use)
+// the bound the planner constraints use)
 // RRT* holds its detours, so a bypass never scores a "successful" avoidance
 // by driving right up against the true edge. Subtracted from the road's
 // actual half-width per plan (see `drivable_bound`) rather than a fixed
@@ -206,7 +206,7 @@ struct Node {
 /// `COLLISION_MARGIN_M` headroom on top of the metric objective's hard-collision
 /// check), stays on the drivable
 /// road, and keeps the curve's curvature within what's actually drivable.
-/// The edge cost is the composite-metric objective sampled along the curve
+/// The edge cost is the progress objective sampled along the curve
 /// (timed under the `cost` seam). Curvature
 /// comes from the steering curve's own closed-form derivative — a geometric
 /// fact about this already-fixed candidate, not a search gradient. `s0`/`v`

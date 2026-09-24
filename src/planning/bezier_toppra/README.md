@@ -38,8 +38,8 @@ Refinement is capped at eight passes per path to bound the latency tail; the fin
 remaining violation.
 Every final trajectory is checked over at least the full 10-second planning horizon, even when fewer controls are
 requested.
-The shared progress/comfort cost ranks feasible trajectories; rectangular actor collisions and road-barrier contact
-reject a candidate.
+The shared progress cost ranks feasible trajectories; rectangular actor collisions and road-barrier contact reject a
+candidate.
 If none is feasible, the planner applies a braking fallback that holds at standstill.
 
 **Seams**: `route` (project ego), `bezier_fit` (fit each road-following curve chain), `optimize` (TOPP-RA and bound

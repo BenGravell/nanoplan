@@ -173,10 +173,7 @@ fn visualization_values(
 ) -> Vec<f64> {
     if let Some(metrics) = metrics {
         let values = match visualization {
-            CarpetVisualization::Safety => metrics.per_tick.iter().map(|v| v[0]).collect(),
-            CarpetVisualization::Progress => metrics.per_tick.iter().map(|v| v[1]).collect(),
-            CarpetVisualization::Comfort => metrics.per_tick.iter().map(|v| v[2]).collect(),
-            CarpetVisualization::Overall => metrics.score_per_tick.clone(),
+            CarpetVisualization::Progress => metrics.score_per_tick.clone(),
             _ => vec![],
         };
         if !values.is_empty() {

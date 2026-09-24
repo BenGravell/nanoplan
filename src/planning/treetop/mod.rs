@@ -43,7 +43,7 @@
 //!   state is checked and priced through
 //!   [`HardConstraints`](crate::planning::constraints::HardConstraints) at
 //!   the absolute time the state is reached, which folds in the same
-//!   actor prediction, drivable-area bound, and production composite every
+//!   actor prediction, drivable-area bound, and progress objective every
 //!   other search planner uses.
 //! - **Determinism.** treetop samples its tree with `std::mt19937` and
 //!   jitters actions with pseudo-random noise. The port draws every sample

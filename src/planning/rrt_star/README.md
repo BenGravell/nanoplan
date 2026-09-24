@@ -92,8 +92,8 @@ own tighter margins before ever calling it — `drivable_bound` (the road's own 
 `COLLISION_MARGIN_M` (3.0 m, ahead of the shared car-width point proxy) — headroom for the fact that a curve is only
 checked at `STEER_SAMPLES` discrete points, so the true closest approach between samples can dip a little further than
 what gets tested.
-`edge_cost` sums the composite-metric cost at its sampled points; curvature comes from `CubicSteer::curvature`, a
-closed-form fact about the already-fixed candidate curve, not a search gradient.
+`edge_cost` sums the progress cost at its sampled points; curvature comes from `CubicSteer::curvature`, a closed-form
+fact about the already-fixed candidate curve, not a search gradient.
 
 **Effective progress — not raw distance, and biased toward the side already committed to — decides the goal.** Ranking
 on raw station bucketed to `PROGRESS_TOLERANCE_M` (rather than compared exactly) is most of it: without bucketing, a
@@ -110,7 +110,7 @@ A path on the wrong side loses a double-digit-metre chunk of effective progress 
 reaching marginally further, while on an open or gently curved lane every path has `peak_lateral ≈ 0` and the term is
 inert.
 `CONTINUITY_WEIGHT` is only a tie-stability bias for the receding-horizon search; candidate cost still comes exclusively
-from the metric composite.
+from the progress metric.
 
 **Seams**: `route` (build the `Path`), `warm_start` (custom — replaying the previous winning path), `optimize` (the
 grid-plus-Halton tree-growing loop; the deterministic bypass seeding and the final extract step aren't timed separately

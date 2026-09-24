@@ -35,7 +35,7 @@
 //!
 //! ## The optimal control problem ([`Ocp`])
 //!
-//! The running cost is the production composite-metric objective used by
+//! The running cost is the production progress objective used by
 //! every search planner. One adaptation makes it usable
 //! under an optimizer that *differentiates* it rather than compares it:
 //!
@@ -88,7 +88,7 @@ const FFGS_DECREASE: f64 = 0.2;
 
 // ---- The optimal control problem ------------------------------------------
 
-/// One trajectory-optimization problem: minimize composite-metric cost from
+/// One trajectory-optimization problem: minimize progress cost from
 /// a fixed start.
 pub(crate) struct Ocp<'a, 'b> {
     pub(crate) path: &'a Path,
@@ -609,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_derivs_include_composite_comfort() {
+    fn stage_derivs_are_finite_for_progress_cost() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(road.centerline());

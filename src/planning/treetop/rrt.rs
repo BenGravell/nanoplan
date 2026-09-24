@@ -49,8 +49,6 @@
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
 use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, state_distance, zero_action_point};
-use crate::common::differencing::forward_difference;
-use crate::common::kinematics::lateral_acceleration;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
@@ -438,14 +436,14 @@ impl Grower<'_, '_> {
         (us, xs, ee)
     }
 
-    /// Price one edge with the composite-metric objective. `layer` fixes the
+    /// Price one edge with the progress objective. `layer` fixes the
     /// absolute time of each stage, so actors are priced where they'll be.
     fn edge_eval(&self, xs: &[State], us: &[Control], layer: usize) -> EdgeEval {
         let dt = self.ctx.road.dt;
         let t0 = (layer - 1) as f64 * STEER_TICKS as f64 * dt;
         let mut total = 0.0;
         let mut collides = false;
-        let mut previous_accel: Option<(f64, f64)> = None;
+
         let constraints = HardConstraints::new(
             self.ctx.road.half_width,
             self.ctx.actors,
@@ -455,13 +453,7 @@ impl Grower<'_, '_> {
         );
         for i in 0..us.len() {
             let x = &xs[i + 1];
-            let (_, mut sample) = planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
-            let accel = (us[i].acceleration, lateral_acceleration(x.speed, us[i].curvature));
-            if let Some(previous) = previous_accel {
-                sample.lon_jerk = forward_difference(previous.0, accel.0, dt);
-                sample.lat_jerk = forward_difference(previous.1, accel.1, dt);
-            }
-            previous_accel = Some(accel);
+            let (_, sample) = planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
             let shared = self.ctx.time("cost", || constraints.point_cost(&sample));
             if shared.is_finite() {
                 total += shared;

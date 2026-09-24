@@ -1,14 +1,14 @@
 //! Hard trajectory constraints shared by planners.
 
-use crate::metrics::{COLLISION_CLEARANCE_M, METRICS, aggregation, comfort, progress};
+use crate::metrics::progress;
 use crate::prediction::predict;
 use crate::simulation::{Position, State};
 use crate::track::Path;
 
 /// Center-to-center clearance below which point-sample planners treat two
-/// cars as collided. Physics and metrics use the real rectangular footprint;
+/// cars as collided. Physics uses the real rectangular footprint;
 /// this is the narrow proxy for planners that only carry a point sample.
-pub(crate) const COLLISION_DIAMETER_M: f64 = COLLISION_CLEARANCE_M;
+pub(crate) const COLLISION_DIAMETER_M: f64 = crate::geometry::CAR_FOOTPRINT.width;
 
 /// Finite stand-in for a hard violation, for numeric optimizers that cannot
 /// propagate infinity through statistics or finite differences.
@@ -32,8 +32,6 @@ pub(crate) struct Sample {
     /// Frenet station rate when the planner tracks it directly. Geometry-only
     /// planners leave this unset and use the heading-projected speed.
     pub(crate) station_speed: Option<f64>,
-    pub(crate) lon_jerk: f64,
-    pub(crate) lat_jerk: f64,
     /// Seconds from now this sample is reached, for actor prediction.
     pub(crate) t: f64,
 }
@@ -121,8 +119,7 @@ impl<'a> HardConstraints<'a> {
         }
     }
 
-    /// Per-sample complement of the production composite metric, or infinity
-    /// when its safety multiplier is zero.
+    /// Progress cost for a feasible sample; hard violations return infinity.
     pub(crate) fn point_cost(&self, sample: &Sample) -> f64 {
         self.point_cost_with_actor_time(sample, sample.t)
     }
@@ -133,12 +130,7 @@ impl<'a> HardConstraints<'a> {
         }
         let forward_speed = sample.station_speed.unwrap_or(sample.speed * sample.heading_err.cos());
         let tick = (sample.t / self.dt).round().max(0.0) as usize;
-        let scores = [
-            1.0,
-            progress::speed_score(forward_speed, self.initial_speed, tick, self.dt),
-            comfort::jerk_score(sample.lon_jerk, sample.lat_jerk),
-        ];
-        1.0 - aggregation::composite(&METRICS, &scores)
+        1.0 - progress::speed_score(forward_speed, self.initial_speed, tick, self.dt)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.
@@ -188,23 +180,16 @@ mod tests {
     }
 
     #[test]
-    fn planner_cost_is_the_composite_complement() {
-        let sample = Sample {
-            speed: 12.0,
-            lon_jerk: 20.0,
-            lat_jerk: 15.0,
+    fn feasible_cost_only_rewards_progress() {
+        let mut sample = Sample {
+            speed: 10.0,
             t: 1.0,
             ..Default::default()
         };
-        let scores = [
-            1.0,
-            progress::speed_score(sample.speed, INITIAL_SPEED, (sample.t / DT).round() as usize, DT),
-            comfort::jerk_score(sample.lon_jerk, sample.lat_jerk),
-        ];
-        assert_eq!(
-            point_cost(&sample, &[]),
-            1.0 - aggregation::composite(&METRICS, &scores)
-        );
+        let cost = point_cost(&sample, &[]);
+        assert_eq!(cost, 1.0 - progress::speed_score(10.0, INITIAL_SPEED, 10, DT));
+        sample.speed = 12.0;
+        assert!(point_cost(&sample, &[]) < cost);
     }
 
     #[test]

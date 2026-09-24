@@ -1,7 +1,7 @@
 //! Section III.B polynomial sampling from https://arxiv.org/abs/2402.01443.
 //! Reduced-degree variant: longitudinal cubics crossed with lateral cubics.
 
-use crate::common::kinematics::{commanded_accel_for_net, lateral_acceleration};
+use crate::common::kinematics::commanded_accel_for_net;
 use crate::common::math::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::search_tree::stop_controls;
@@ -153,7 +153,7 @@ fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<
     let mut controls = Vec::with_capacity(ticks);
     let mut points = ctx.diagnostics.map(|_| vec![ego.position()]);
     let mut cost = 0.0;
-    let mut previous_accel: Option<(f64, f64)> = None;
+
     for tick in 0..ticks {
         let time = (tick + 1) as f64 * dt;
         let control_time = ((tick as f64 + 0.5) * dt).min(PLANNING_HORIZON_S);
@@ -168,15 +168,6 @@ fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<
             Some(motion.longitudinal.at(time.min(PLANNING_HORIZON_S))[0]),
         );
         sample.road_bounds = Some(ctx.road.lateral_bounds_at(s));
-        let accel = (
-            control.acceleration,
-            lateral_acceleration(actual.speed, control.curvature),
-        );
-        if let Some(previous) = previous_accel {
-            sample.lon_jerk = (accel.0 - previous.0) / dt;
-            sample.lat_jerk = (accel.1 - previous.1) / dt;
-        }
-        previous_accel = Some(accel);
         cost += ctx.time("cost", || constraints.point_cost(&sample));
         ctx.work(1);
         if !cost.is_finite() {

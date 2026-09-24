@@ -9,7 +9,7 @@ use std::cell::{Cell, RefCell};
 
 use crate::common::differencing::forward_difference;
 use crate::common::kinematics::{
-    LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, lateral_acceleration, net_longitudinal_accel,
+    LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
 use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
@@ -196,7 +196,6 @@ fn segment(
     let mut samples = Vec::with_capacity(TICKS_PER_EDGE);
     let mut points = Vec::with_capacity(TICKS_PER_EDGE);
     let mut actual = start;
-    let mut previous_dynamics: Option<(Control, f64)> = None;
 
     // Kinematic feasibility is completed for the whole edge before any
     // metric call is made.
@@ -249,17 +248,10 @@ fn segment(
         }
         let (s, d) = (actual_s, actual_d);
         let position = actual.position();
-        let lat_accel = lateral_acceleration(actual.speed, control.curvature);
         let (_, lane_yaw) = path.pose_at(s);
         let lane_curvature = path_curvature(path, s);
         let heading_err = wrap_angle(actual.pose.yaw - lane_yaw);
         let station_speed = actual.speed * heading_err.cos() / (1.0 - lane_curvature * d).max(0.1);
-        let (lon_jerk, lat_jerk) = previous_dynamics.map_or((0.0, 0.0), |(previous, lat)| {
-            (
-                forward_difference(previous.acceleration, acceleration, dt),
-                forward_difference(lat, lat_accel, dt),
-            )
-        });
         samples.push(Sample {
             position,
             lateral: d,
@@ -267,13 +259,10 @@ fn segment(
             heading_err,
             speed: actual.speed,
             station_speed: Some(station_speed),
-            lon_jerk,
-            lat_jerk,
             t: start_time + (tick + 1) as f64 * dt,
         });
         points.push(position);
         controls.push(control);
-        previous_dynamics = Some((control, lat_accel));
     }
 
     if (actual.speed - v1).abs() > CONTROL_FEASIBILITY_TOLERANCE {

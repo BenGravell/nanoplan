@@ -1,8 +1,5 @@
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::metrics::{Metrics, evaluate};
-use crate::prediction::predict;
-use crate::simulation::State;
-use crate::track::Path;
 use bevy_egui::egui;
 
 use super::super::super::colors::{DIM_TEXT, TEXT};
@@ -12,12 +9,7 @@ use crate::viewer::live::Live;
 pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     let metrics = preview_metrics(live);
     section_heading(ui, "PLANNER METRICS");
-    for (label, score) in ["SAFETY", "PROGRESS", "COMFORT", "OVERALL"]
-        .into_iter()
-        .zip(metrics.aggregate.into_iter().chain([metrics.score]))
-    {
-        metric(ui, label, format!("{:.1}%", score * 100.0));
-    }
+    metric(ui, "PROGRESS", format!("{:.1}%", metrics.score * 100.0));
 }
 
 pub(super) fn metric(ui: &mut egui::Ui, label: &str, value: String) {
@@ -36,20 +28,7 @@ pub(crate) fn preview_metrics(live: &Live) -> Metrics {
 }
 
 pub(crate) fn preview_metrics_for_trajectory(live: &Live, trajectory: &TrajectoryKinematics) -> Metrics {
-    let track = Path::new(live.world.road.centerline());
-    let actors: Vec<Vec<State>> = live
-        .world
-        .actors
-        .iter()
-        .map(|actor| {
-            trajectory
-                .time
-                .iter()
-                .map(|&time| predict(&actor.state, &track, time))
-                .collect()
-        })
-        .collect();
-    evaluate(trajectory, &actors, &live.world.road)
+    evaluate(trajectory, &live.world.road)
 }
 
 #[cfg(test)]

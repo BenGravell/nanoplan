@@ -74,16 +74,13 @@ const PREVIEW_STEP_S: f32 = 1.0;
 const PREVIEW_BREAKPOINTS: [f32; inclusive_step_count(PLANNING_HORIZON_S as f32, PREVIEW_STEP_S)] =
     multiples(PREVIEW_STEP_S);
 
-const ALL_VISUALIZATIONS: [CarpetVisualization; 9] = [
+const ALL_VISUALIZATIONS: [CarpetVisualization; 6] = [
     CarpetVisualization::Time,
     CarpetVisualization::Speed,
     CarpetVisualization::LongitudinalAcceleration,
     CarpetVisualization::LateralAcceleration,
     CarpetVisualization::Curvature,
-    CarpetVisualization::Safety,
     CarpetVisualization::Progress,
-    CarpetVisualization::Comfort,
-    CarpetVisualization::Overall,
 ];
 
 fn option_label(visualization: CarpetVisualization) -> &'static str {
@@ -93,10 +90,7 @@ fn option_label(visualization: CarpetVisualization) -> &'static str {
         CarpetVisualization::LongitudinalAcceleration => "Longitudinal acceleration",
         CarpetVisualization::LateralAcceleration => "Lateral acceleration",
         CarpetVisualization::Curvature => "Curvature",
-        CarpetVisualization::Safety => "Safety",
         CarpetVisualization::Progress => "Progress",
-        CarpetVisualization::Comfort => "Comfort",
-        CarpetVisualization::Overall => "Overall",
     }
 }
 

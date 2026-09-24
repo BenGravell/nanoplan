@@ -8,7 +8,7 @@ planning/
 ├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
 ├── engine.rs      asynchronous planner execution for native threads and Web Workers
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
-├── constraints.rs hard rules and the shared composite-metric objective
+├── constraints.rs hard rules and the shared progress objective
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── basic/         cubic path planner
 ├── straight/      strawman: zero control, always
