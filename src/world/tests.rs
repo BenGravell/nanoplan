@@ -6,21 +6,6 @@ use crate::simulation::Position;
 use crate::track::ROAD_SAMPLE_STEP_M;
 
 #[test]
-fn stale_plan_advances_then_holds_its_last_control() {
-    let plan: Vec<_> = [1.0, 2.0, 3.0]
-        .map(|acceleration| Control {
-            acceleration,
-            curvature: 0.0,
-        })
-        .into();
-
-    assert_eq!(remaining_plan(&plan, 10, 10)[0].acceleration, 1.0);
-    assert_eq!(remaining_plan(&plan, 10, 11)[0].acceleration, 2.0);
-    assert_eq!(remaining_plan(&plan, 10, 99)[0].acceleration, 3.0);
-    assert!(remaining_plan(&[], 10, 99).is_empty());
-}
-
-#[test]
 fn ego_can_start_from_a_frenet_state() {
     let start = EgoStart {
         progress: 123.0,
@@ -199,22 +184,22 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
     }
 
     assert_eq!(world.ego_collision_count, 0);
-    assert_eq!(ticks, 290);
+    assert_eq!(ticks, 293);
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 290, 290, 1),
-        ("simulation.actors", 290, 1_450, 5),
-        ("simulation.actor_culling", 290, 1_450, 5),
-        ("route", 290, 169_104, 736),
-        ("bezier_fit", 290, 263_610, 909),
-        ("optimize", 290, 6_510_312, 57_054),
-        ("extract", 290, 711_646, 7_272),
-        ("cost", 290, 1_394_668, 5_409),
-        ("planner.total", 290, 8_337_694, 63_952),
-        ("simulation.preview", 290, 8_700, 30),
-        ("simulation.ego", 290, 290, 1),
-        ("simulation.collisions", 290, 1_740, 6),
-        ("simulation.total", 290, 60_296, 783),
-        ("simulation.roads", 78, 46_376, 735),
+        ("simulation.progress", 293, 293, 1),
+        ("simulation.actors", 293, 1_465, 5),
+        ("simulation.actor_culling", 293, 1_465, 5),
+        ("route", 293, 170_106, 734),
+        ("bezier_fit", 293, 266_337, 909),
+        ("optimize", 293, 8_854_365, 65_299),
+        ("extract", 293, 1_008_081, 7_272),
+        ("cost", 293, 1_404_084, 5_585),
+        ("planner.total", 293, 10_723_092, 72_303),
+        ("simulation.preview", 293, 8_790, 30),
+        ("simulation.ego", 293, 293, 1),
+        ("simulation.collisions", 293, 1_758, 6),
+        ("simulation.total", 293, 59_077, 781),
+        ("simulation.roads", 76, 45_013, 733),
     ] {
         let seam = latency
             .seams
@@ -557,4 +542,60 @@ fn ego_projection_metadata_is_rebuilt_after_progress_refresh() {
         assert!((station - hint).abs() < radius);
         assert!(lateral.abs() < 0.1);
     }
+}
+
+#[test]
+fn lockstep_waits_for_matching_plan_without_advancing_ego_or_traffic() {
+    use crate::planning::{Context, Planner};
+    use crate::simulation::Control;
+    use std::sync::mpsc;
+
+    struct GatedPlanner(mpsc::Receiver<()>, mpsc::Sender<()>);
+    impl Planner for GatedPlanner {
+        fn plan(&mut self, _: State, _: &Context) -> Vec<Control> {
+            self.1.send(()).unwrap();
+            self.0.recv().unwrap();
+            vec![
+                Control {
+                    acceleration: 1.0,
+                    curvature: 0.0
+                };
+                100
+            ]
+        }
+    }
+    let mut world = LiveWorld::with_track(1, 1, PlannerKind::Straight, 3, 0.1);
+    let (release, gate) = mpsc::channel();
+    let (started, planning) = mpsc::channel();
+    world.planner = PlannerEngine::with_planner(Box::new(GatedPlanner(gate, started)));
+    let ego = world.ego();
+    let actors: Vec<_> = world.actors.iter().map(|a| a.state).collect();
+    world.prepare_tick(None);
+    planning.recv().unwrap();
+    for _ in 0..3 {
+        assert!(!world.tick_with_latency_inner(None, false));
+        assert_eq!(world.tick, 0);
+        assert_eq!(world.ego(), ego);
+        assert_eq!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
+    }
+    release.send(()).unwrap();
+    assert!(world.tick_with_latency_inner(None, true));
+    assert_eq!(world.tick, 1);
+    assert_eq!(world.plan_tick, 0);
+    assert!(world.ego().speed > ego.speed);
+    assert_ne!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
+    assert!(world.pending_actors.is_none());
+
+    // Changing traffic while a request is in flight must discard its staged
+    // actors and result, rather than restoring the old traffic on completion.
+    assert!(!world.tick_with_latency_inner(None, false));
+    planning.recv().unwrap();
+    world.set_actor_count(1, 0);
+    assert!(world.pending_actors.is_none());
+    release.send(()).unwrap();
+    assert!(world.tick_with_latency_inner(None, true));
+    assert_eq!(world.tick, 2);
+    assert_eq!(world.plan_tick, 1);
+    assert_eq!(world.last_planner_actors, 0);
+    assert!(world.actors.is_empty());
 }

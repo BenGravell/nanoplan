@@ -4,13 +4,13 @@ use crate::common::kinematics::{TrajectoryKinematics, longitudinal_resistance_ac
 use crate::common::math::{smoothstep, wrap_angle};
 use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::geometry::{
-    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, footprints_overlap,
+    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
 };
 use crate::metrics;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math::state_sample;
 use crate::planning::policy::centerline_feedback;
-use crate::planning::{ComputeBudget, Context, PLANNING_HORIZON_S, Planner};
+use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
 use crate::simulation::{Control, Pose, Position, State, curvature_limit, world_step};
 use crate::track::Path;
@@ -20,11 +20,17 @@ use crate::vehicle::{
 };
 
 const GRID_STEPS: usize = 100;
-// Browser-worker calibration leaves headroom below the 100 ms p99 allowance.
+// Bound full TOPP-RA rollouts, independently of the number of search dimensions.
 const NOMINAL_PATHS: usize = 9;
 const MAX_REFINEMENTS: usize = 8;
+// Rolling road windows and the closed circuit sample lap seams differently.
+// Keep 10 cm of side clearance rather than accepting a grazing trajectory.
+const ROAD_FOOTPRINT: Footprint = Footprint::new(EGO_FOOTPRINT.length + 0.1, EGO_FOOTPRINT.width + 0.2);
 
-pub(crate) struct BezierToppraPlanner;
+#[derive(Default)]
+pub(crate) struct BezierToppraPlanner {
+    previous: Vec<(State, Control)>,
+}
 
 impl Planner for BezierToppraPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
@@ -40,24 +46,46 @@ impl Planner for BezierToppraPlanner {
         let Some(stations) = stations(ego.speed, start.0, path.length(), ctx.road.dt) else {
             return brake(ego, ctx);
         };
-        let count = lateral_count(ctx.compute_budget);
-        let laterals = stations.map(|s| lateral_offsets(ctx.road.lateral_bounds_at(s), count));
         let ticks = ctx.horizon.max((PLANNING_HORIZON_S / ctx.road.dt).ceil() as usize);
         let mut best: Option<(f64, Vec<Control>)> = None;
-        for &d1 in &laterals[0] {
-            for &d2 in &laterals[1] {
-                let curve = ctx.time("bezier_fit", || {
-                    ctx.work(GRID_STEPS as u64);
-                    BezierPath::new(ego, path, start, stations, [d1, d2])
-                });
-                let controls = ctx.time("optimize", || parameterize(ego, ctx, &curve, ticks));
+        for (stations, offsets) in path_targets(ctx, start.0, stations) {
+            let curve = ctx.time("bezier_fit", || {
+                ctx.work(GRID_STEPS as u64);
+                BezierPath::new(ego, path, start, stations, offsets)
+            });
+            let controls = ctx.time("optimize", || parameterize(ego, ctx, &curve, ticks));
+            let cost = ctx.time("cost", || candidate_cost(ego, ctx, &controls));
+            if cost.is_finite() && best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
+                best = Some((cost, controls));
+            }
+        }
+        if best.is_none() {
+            // Align by predicted state, not call count: live requests can skip ticks.
+            // Revalidate from the actual ego against today's road and actor forecasts.
+            if let Some((index, _)) = self.previous.iter().enumerate().min_by(|(_, (a, _)), (_, (b, _))| {
+                let error = |x: &State| {
+                    x.position().distance(ego.position())
+                        + (x.speed - ego.speed).abs() * ctx.road.dt
+                        + wrap_angle(x.pose.yaw - ego.pose.yaw).abs() * EGO_FOOTPRINT.length
+                };
+                error(a).total_cmp(&error(b))
+            }) {
+                let mut controls: Vec<_> = self.previous[index..].iter().map(|&(_, u)| u).collect();
+                controls.resize(ticks, *controls.last().unwrap());
                 let cost = ctx.time("cost", || candidate_cost(ego, ctx, &controls));
-                if cost.is_finite() && best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
+                if cost.is_finite() {
                     best = Some((cost, controls));
                 }
             }
         }
+        self.previous.clear();
         best.map(|(_, mut controls)| {
+            let mut state = ego;
+            for &u in &controls {
+                self.previous.push((state, u));
+                state = world_step(state, u, ctx.road.dt);
+                ctx.work(1);
+            }
             controls.truncate(ctx.horizon);
             controls
         })
@@ -98,28 +126,47 @@ fn stations(speed: f64, s0: f64, end: f64, dt: f64) -> Option<[f64; 2]> {
     Some(targets.map(|distance| s0 + distance))
 }
 
-fn lateral_count(budget: ComputeBudget) -> usize {
-    // Two independently sampled lateral axes: keep the product within budget.
-    let count = (budget.scale(NOMINAL_PATHS, 1) as f64).sqrt() as usize;
-    count.saturating_sub(1) / 2 * 2 + 1
-}
-
-fn lateral_offsets((right, left): (f64, f64), count: usize) -> Vec<f64> {
-    // Leave room for the front corners while the rollout settles onto an
-    // offset lane; rear-point width clearance alone hugs the barriers.
-    let margin = EGO_FOOTPRINT.width / 2.0 + 0.5;
-    let lo = (right + margin).min(0.0);
-    let hi = (left - margin).max(0.0);
-    let mut offsets = vec![0.0];
-    for i in 1..=count / 2 {
-        let fraction = i as f64 / (count / 2) as f64;
-        for offset in [lo * fraction, hi * fraction] {
-            if offset != 0.0 {
-                offsets.push(offset);
-            }
-        }
-    }
-    offsets
+/// A nested maneuver grid: centerline recovery, coarse lateral targets, then
+/// half-width refinement and crossing paths. Every side is followed by its mirror.
+fn path_targets(ctx: &Context, s0: f64, stations: [f64; 2]) -> Vec<([f64; 2], [f64; 2])> {
+    let lateral_grid = [
+        [1.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.5],
+        [0.5, 0.0],
+        [0.0, 0.5],
+        [1.0, -1.0],
+    ];
+    let grid = lateral_grid.chunks(3).flat_map(|level| {
+        [0.5, 0.25, 1.0].into_iter().flat_map(move |reach| {
+            level.iter().flat_map(move |lateral| {
+                [-1.0, 1.0]
+                    .into_iter()
+                    .map(move |sign| (reach, lateral.map(|d| sign * d)))
+            })
+        })
+    });
+    [1.0, 0.5, 0.25]
+        .into_iter()
+        .map(|reach| (reach, [0.0; 2]))
+        .chain(grid)
+        .take(ctx.compute_budget.scale(NOMINAL_PATHS, 5))
+        .map(|(reach, lateral)| {
+            let targets = [s0 + reach * (stations[0] - s0), stations[1]];
+            let offsets = std::array::from_fn(|j| {
+                let (right, left) = ctx.road.lateral_bounds_at(targets[j]);
+                // Preserve the existing front-corner clearance at each target.
+                let margin = EGO_FOOTPRINT.width / 2.0 + 0.5;
+                if lateral[j] < 0.0 {
+                    -lateral[j] * (right + margin).min(0.0)
+                } else {
+                    lateral[j] * (left - margin).max(0.0)
+                }
+            });
+            (targets, offsets)
+        })
+        .collect()
 }
 
 struct BezierPath {
@@ -292,12 +339,21 @@ fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> 
             distance += state.speed.max(0.0) * ctx.road.dt;
             state = world_step(state, u, ctx.road.dt);
             ctx.work(1);
-            if collide_with_road_barriers(previous, state, EGO_FOOTPRINT, ctx.road) != state
-                || actor_collision(state.pose(), (tick + 1) as f64 * ctx.road.dt, ctx)
-            {
+            let barrier = collide_with_road_barriers(previous, state, ROAD_FOOTPRINT, ctx.road) != state;
+            let actor = actor_collision(state.pose(), (tick + 1) as f64 * ctx.road.dt, ctx);
+            if barrier || actor {
                 let index = curve.index(distance).saturating_sub(1);
-                if let Some(stop) = (0..=index).rev().find(|&i| limits[i] != 0.0) {
-                    limits[stop..].fill(0.0);
+                if let Some(bound) = (0..=index).rev().find(|&i| limits[i] != 0.0) {
+                    // A tracking error at a bend calls for a slower traversal,
+                    // not an artificial destination. Actors may require a stop.
+                    let cap = if actor {
+                        0.0
+                    } else {
+                        limits[bound].min(state.speed.powi(2)) * 0.5
+                    };
+                    for limit in &mut limits[bound..] {
+                        *limit = limit.min(cap);
+                    }
                     changed = true;
                 }
                 break;
@@ -398,7 +454,7 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
             || !u.curvature.is_finite()
             || state.speed < -1e-9
             || collides_with_road_barrier(state, ctx.road)
-            || collide_with_road_barriers(previous, state, EGO_FOOTPRINT, ctx.road) != state
+            || collide_with_road_barriers(previous, state, ROAD_FOOTPRINT, ctx.road) != state
             || actor_collision(state.pose(), time, ctx)
             || constraints.is_violated(&sample)
         {
@@ -481,7 +537,48 @@ fn bezier_curvature(p: &[Position; 4], t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning::{COMPUTE_BUDGET_BREAKPOINTS, Diagnostics, test_ctx, test_road, test_run_on};
+    use crate::planning::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, Diagnostics, test_ctx, test_road, test_run_on};
+
+    fn check_small_track_full_laps(percent: f32) {
+        use crate::planning::{Latency, PlannerKind};
+        use crate::world::LiveWorld;
+        let mut world = LiveWorld::with_track(1, 1, PlannerKind::BezierToppra, 0, 0.1);
+        world.preview_ticks = 100;
+        world.compute_budget = ComputeBudget::from_percent(percent);
+        let lap = world.track.lap_length().unwrap();
+        for tick in 0..600 {
+            world.tick_recording_latency(&Latency::default());
+            assert_eq!(world.ego_collision_count, 0, "budget {percent}, tick {tick}");
+            let end = world.trajectory.states.last().unwrap();
+            assert!(
+                end.speed > 0.5,
+                "budget {percent}, tick {tick}, ego {:?}, preview end {end:?}",
+                world.ego()
+            );
+            if world.track_progress > 2.0 * lap {
+                break;
+            }
+        }
+        assert!(
+            world.track_progress > 2.0 * lap,
+            "budget {percent}: failed to complete two laps"
+        );
+    }
+
+    #[test]
+    fn small_track_full_laps_minimum_budget() {
+        check_small_track_full_laps(5.0);
+    }
+
+    #[test]
+    fn small_track_full_laps_nominal_budget() {
+        check_small_track_full_laps(100.0);
+    }
+
+    #[test]
+    fn small_track_full_laps_maximum_budget() {
+        check_small_track_full_laps(500.0);
+    }
 
     #[test]
     fn small_track_curves_follow_bends_and_previews_keep_moving() {
@@ -526,7 +623,7 @@ mod tests {
                     samples[320..].iter().all(|(_, k)| k.abs() < 0.1),
                     "progress {progress}, speed {speed}: terminal curvature spike"
                 );
-                let controls = BezierToppraPlanner.plan(ego, &ctx);
+                let controls = BezierToppraPlanner::default().plan(ego, &ctx);
                 let mut state = ego;
                 let mut distance = 0.0;
                 for u in controls {
@@ -628,30 +725,58 @@ mod tests {
     #[test]
     fn budget_scales_candidate_count_and_always_includes_centerline() {
         let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let mut previous = 0;
+        let mut previous = Vec::new();
         for percent in COMPUTE_BUDGET_BREAKPOINTS {
             let budget = ComputeBudget::from_percent(percent);
-            let count = lateral_count(budget);
-            let offsets = lateral_offsets((-3.0, 5.0), count);
-            assert_eq!(offsets[0], 0.0);
-            assert_eq!(offsets.len(), count);
-            assert!(count * count >= previous && count * count <= budget.scale(NOMINAL_PATHS, 1));
-            assert!(
-                offsets
-                    .iter()
-                    .all(|d| (-3.0 + EGO_FOOTPRINT.width / 2.0..=5.0 - EGO_FOOTPRINT.width / 2.0).contains(d))
-            );
             let diagnostics = Diagnostics::default();
             let ctx = Context::new(&road, &[], 10, budget, None, Some(&diagnostics));
-            let controls = BezierToppraPlanner.plan(State::default(), &ctx);
+            let targets = path_targets(&ctx, 20.0, [80.0, 300.0]);
+            assert_eq!(targets.len(), budget.scale(NOMINAL_PATHS, 5));
+            assert!(targets.starts_with(&previous));
+            assert_eq!(
+                &targets[..3],
+                &[
+                    ([80.0, 300.0], [0.0; 2]),
+                    ([50.0, 300.0], [0.0; 2]),
+                    ([35.0, 300.0], [0.0; 2])
+                ]
+            );
+            // Grid prefixes retain bilateral coverage without duplicate rollouts.
+            for (i, target) in targets.iter().enumerate() {
+                assert!(!targets[..i].contains(target));
+            }
+            for pair in targets[3..].chunks_exact(2) {
+                assert_eq!(pair[0].0, pair[1].0);
+                assert_eq!(pair[0].1, pair[1].1.map(|d| -d));
+            }
+            for (stations, offsets) in &targets {
+                assert!(20.0 < stations[0] && stations[0] <= 80.0);
+                assert_eq!(stations[1], 300.0);
+                for j in 0..2 {
+                    let (right, left) = road.lateral_bounds_at(stations[j]);
+                    assert!(
+                        (right + EGO_FOOTPRINT.width / 2.0..=left - EGO_FOOTPRINT.width / 2.0).contains(&offsets[j])
+                    );
+                }
+            }
+            let controls = BezierToppraPlanner::default().plan(State::default(), &ctx);
             let data = diagnostics.take();
             assert_eq!(controls.len(), ctx.horizon);
-            assert_eq!(data.trajectories.len(), count * count);
+            assert_eq!(data.trajectories.len(), targets.len());
             assert!(data.trajectories.iter().all(|points| points.len() == 101));
-            assert!(data.trajectories[0].iter().all(|point| point.y.abs() < 1e-9));
-            previous = count * count;
+            assert!(
+                data.trajectories[..3]
+                    .iter()
+                    .flatten()
+                    .all(|point| point.y.abs() < 1e-9)
+            );
+            previous = targets;
         }
-        assert!(previous > NOMINAL_PATHS);
+        assert_eq!(previous.len(), 45);
+        // Three station distances, with coarse, half-width and crossing maneuvers.
+        for station in [35.0, 50.0, 80.0] {
+            assert_eq!(previous.iter().filter(|(s, _)| s[0] == station).count(), 15);
+        }
     }
 
     #[test]
@@ -673,7 +798,7 @@ mod tests {
                 ..Default::default()
             };
             let ctx = Context::new(&road, &[], 100, ComputeBudget::NOMINAL, None, None);
-            let controls = BezierToppraPlanner.plan(ego, &ctx);
+            let controls = BezierToppraPlanner::default().plan(ego, &ctx);
             for (tick, control) in controls.iter().enumerate() {
                 assert!(
                     control.acceleration > MAX_LON_ACCEL - 0.05,
@@ -692,7 +817,10 @@ mod tests {
         let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
         let ctx = Context::new(&road, &[], 10, ComputeBudget::from_percent(5.0), None, None);
         for _ in 0..200 {
-            let controls = BezierToppraPlanner.plan(ego, &ctx);
+            let start = ctx.project_ego(ego);
+            let targets = stations(ego.speed, start.0, ctx.path().length(), road.dt).unwrap();
+            let curve = BezierPath::new(ego, ctx.path(), start, targets, [0.0; 2]);
+            let controls = parameterize(ego, &ctx, &curve, 100);
             ego = world_step(ego, controls[0], road.dt);
         }
         assert!(ego.position().y.abs() < 0.3, "offset {}", ego.position().y);
@@ -710,7 +838,7 @@ mod tests {
             0.0,
         );
         let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 10.0, 1.6, 0.1);
-        let trace = test_run_on(&mut BezierToppraPlanner, &road, ego, &[actor], 300);
+        let trace = test_run_on(&mut BezierToppraPlanner::default(), &road, ego, &[actor], 300);
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
         assert!(
@@ -749,17 +877,11 @@ mod tests {
             ..Default::default()
         };
         let ctx = Context::new(&road, &actors, 100, ComputeBudget::NOMINAL, None, None);
-        let detour = BezierToppraPlanner.plan(ego, &ctx);
-        let centerline = BezierToppraPlanner.plan(
-            ego,
-            &Context {
-                compute_budget: ComputeBudget::from_percent(5.0),
-                ..test_ctx(&road, &actors)
-            },
-        );
-        let center_ctx = Context::new(&road, &actors, 100, ComputeBudget::from_percent(5.0), None, None);
-        let centerline_full = BezierToppraPlanner.plan(ego, &center_ctx);
-        assert_eq!(centerline, centerline_full[..centerline.len()]);
+        let detour = BezierToppraPlanner::default().plan(ego, &ctx);
+        let start = ctx.project_ego(ego);
+        let targets = stations(ego.speed, start.0, ctx.path().length(), road.dt).unwrap();
+        let curve = BezierPath::new(ego, ctx.path(), start, targets, [0.0; 2]);
+        let centerline_full = parameterize(ego, &ctx, &curve, 100);
         let cost = candidate_cost(ego, &ctx, &detour);
         assert!(cost.is_finite() && cost < candidate_cost(ego, &ctx, &centerline_full));
         let end = detour.iter().fold(ego, |state, &u| world_step(state, u, road.dt));
@@ -767,9 +889,34 @@ mod tests {
             end.position().x > actors[0].position().x + CAR_FOOTPRINT.length,
             "end {end:?}"
         );
-        let short = BezierToppraPlanner.plan(ego, &test_ctx(&road, &actors));
+        let short = BezierToppraPlanner::default().plan(ego, &test_ctx(&road, &actors));
         assert_eq!(short, detour[..short.len()]);
         assert!(candidate_cost(ego, &ctx, &vec![Control::default(); 100]).is_infinite());
+    }
+
+    #[test]
+    fn previous_plan_is_revalidated_after_skipped_ticks_and_new_obstacles() {
+        let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 10.0, 1.6, 0.1);
+        let mut planner = BezierToppraPlanner::default();
+        let mut ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let ctx = Context::new(&road, &[], 100, ComputeBudget::NOMINAL, None, None);
+        let clear = planner.plan(ego, &ctx);
+        for &u in &clear[..3] {
+            ego = world_step(ego, u, road.dt);
+        }
+        let actors = [State::from((Position::new(50.0, 0.0), 0.0, 0.0))];
+        let diagnostics = Diagnostics::default();
+        let blocked = Context::new(&road, &actors, 100, ComputeBudget::NOMINAL, None, Some(&diagnostics));
+        assert!(candidate_cost(ego, &blocked, &clear[3..]).is_infinite());
+        diagnostics.take();
+        let controls = planner.plan(ego, &blocked);
+        assert!(diagnostics.take().trajectories.len() <= NOMINAL_PATHS + 1);
+        assert!(candidate_cost(ego, &blocked, &controls).is_finite());
+        let end = controls.iter().fold(ego, |x, &u| world_step(x, u, road.dt));
+        assert!(end.speed < 0.5 && end.position().x < 50.0 - EGO_FOOTPRINT.length);
     }
 
     #[test]
@@ -780,12 +927,16 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        for u in BezierToppraPlanner.plan(ego, &ctx) {
+        for u in BezierToppraPlanner::default().plan(ego, &ctx) {
             ego = world_step(ego, u, road.dt);
             assert!(ego.speed >= -1e-9);
         }
         assert!(ego.speed.abs() < 1e-9);
-        assert!(BezierToppraPlanner.plan(ego, &Context { horizon: 0, ..ctx }).is_empty());
+        assert!(
+            BezierToppraPlanner::default()
+                .plan(ego, &Context { horizon: 0, ..ctx })
+                .is_empty()
+        );
     }
 
     #[test]
@@ -814,7 +965,7 @@ mod tests {
         use crate::simulation::CommandLimiter;
 
         let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
-        let mut planner = BezierToppraPlanner;
+        let mut planner = BezierToppraPlanner::default();
         let mut limiter = CommandLimiter::new();
         let mut ego = State::default();
         let mut lead = State::new(
@@ -856,7 +1007,7 @@ mod tests {
                 let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
                 let path = Path::new(road.centerline());
                 let mut state = ego;
-                for (tick, control) in BezierToppraPlanner.plan(ego, &ctx).into_iter().enumerate() {
+                for (tick, control) in BezierToppraPlanner::default().plan(ego, &ctx).into_iter().enumerate() {
                     state = world_step(state, control, road.dt);
                     let (s, d) = path.project(state.position());
                     assert!(

@@ -48,19 +48,20 @@ serializable request to a Web Worker.
 The simulation remains fixed-step and interacts with either implementation through the same non-blocking `submit`,
 `poll`, and `is_slow` operations.
 
-At each tick, `LiveWorld` first polls for a completed `PlanResult`, then submits a snapshot of the current ego state,
-road, actors, horizon, compute budget, and diagnostic setting.
-Only one request may be in flight, so ticks never build up a queue of stale planning work.
-When no new result is ready, the simulation continues with the remaining controls from the last accepted plan; after
-that plan's horizon is exhausted, its final control is retained.
-Before the first plan arrives, the empty plan produces the normal zero-control fallback.
+Between simulation ticks, `LiveWorld` submits the current ego state, road, next traffic states, horizon, compute budget,
+and diagnostic setting, giving the worker the full 100 ms interval before the next step is due.
+Only one request may be in flight.
+The tick commits only after its matching `PlanResult` arrives: ego and traffic advance together by 100 ms. While
+waiting, the viewer keeps rendering and polling without advancing the world or consuming the accumulated tick.
+Traffic updates are staged so neither positions nor random state advance repeatedly during worker delays.
+Changing the planner or traffic count discards a pending snapshot.
 
+This is nonblocking lockstep: a fast planner supplies one fresh plan per simulation step; if computation exceeds 100 ms,
+simulated time slows rather than executing old controls and repeatedly rejecting stale replacements.
 A planner is considered too slow when either its completed runtime or the age of its outstanding request exceeds one
 simulation timestep.
-`LiveWorld` exposes that state as `planner_slow`, and the viewer displays **PLANNER TOO SLOW · REUSING LAST PLAN** until
-a timely result is accepted.
-Native tests and batch measurement can explicitly wait for a result, but the live viewer never blocks the simulation on
-planning.
+`LiveWorld` exposes that state as `planner_slow`, and the viewer displays **PLANNER TOO SLOW · WAITING FOR PLAN**.
+Native tests and batch measurement can explicitly block for a result; the live viewer never blocks its render thread.
 
 ## `Context`
 
@@ -173,6 +174,10 @@ closed-loop tick loop, it's `None` and planners record nothing, so there's no co
 - `trajectories: Vec<Vec<[f64; 2]>>` — polylines (the lattice's DP edges, PI²-DDP's sampled rollouts).
 - `trajectory_times: Vec<Vec<f64>>` — seconds from planning start for each polyline point, used to clip candidate
   trajectories to the future preview slider.
+
+The viewer clips both ends to a time window starting at the interpolated ego's simulation time.
+Elapsed trajectory prefixes are hidden; candidate geometry stays in its original world coordinates.
+The window follows simulation time through pause/resume and planner waits, rather than wall-clock time.
 
 Every search planner records something — `PlannerKind::has_diagnostics()` reports which — including one timed rollout
 per Bezier+TOPP-RA path candidate.

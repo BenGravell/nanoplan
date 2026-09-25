@@ -85,11 +85,11 @@ fn planner_overrun_warning_is_visible_only_while_slow() {
         ViewerHarnessState::default(),
     );
     harness.run_steps(2);
-    assert!(harness.query_by_label("PLANNER TOO SLOW · REUSING LAST PLAN").is_none());
+    assert!(harness.query_by_label("PLANNER TOO SLOW · WAITING FOR PLAN").is_none());
 
     harness.state_mut().live.world.planner_slow = true;
     harness.run();
-    assert!(harness.query_by_label("PLANNER TOO SLOW · REUSING LAST PLAN").is_some());
+    assert!(harness.query_by_label("PLANNER TOO SLOW · WAITING FOR PLAN").is_some());
 }
 
 #[test]

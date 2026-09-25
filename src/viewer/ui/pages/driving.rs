@@ -94,7 +94,7 @@ fn planner_warning_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, 
             .inner_margin(egui::Margin::symmetric(10, 5))
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new("PLANNER TOO SLOW · REUSING LAST PLAN")
+                    egui::RichText::new("PLANNER TOO SLOW · WAITING FOR PLAN")
                         .color(WHITE)
                         .strong(),
                 );

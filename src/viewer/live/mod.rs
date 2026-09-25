@@ -148,9 +148,12 @@ impl Live {
         }
     }
 
-    fn tick(&mut self) {
-        self.previous = RenderSnapshot::capture(&self.world);
-        self.world.tick_recording_latency(&self.recorder);
+    fn tick(&mut self) -> bool {
+        let previous = RenderSnapshot::capture(&self.world);
+        if !self.world.tick_recording_latency(&self.recorder) {
+            return false;
+        }
+        self.previous = previous;
         self.friction_box
             .record(self.previous.ego, self.world.ego(), self.world.dt());
         let progress = self
@@ -159,6 +162,7 @@ impl Live {
             .project_progress(self.world.ego().position(), self.world.track_progress);
         self.lap_stats
             .tick(self.world.dt(), progress, self.world.track.lap_length());
+        true
     }
 
     fn finish_frame(&mut self) {
@@ -205,10 +209,16 @@ pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<
     live.acc = (live.acc + time.delta_secs()).min(0.3);
     let mut ticks = 0;
     while live.acc >= DT as f32 && ticks < MAX_TICKS_PER_FRAME {
-        live.tick();
+        if !live.tick() {
+            break;
+        }
         live.acc -= DT as f32;
         ticks += 1;
     }
+    // Give the worker the interval between ticks, rather than starting its
+    // computation only when the next step is already due.
+    let Live { world, recorder, .. } = &mut *live;
+    world.prepare_tick(Some(recorder));
 }
 
 #[cfg(test)]

@@ -4,9 +4,11 @@
 `Track` supplies centerline points, headings, and widths at any longitudinal progress by wrapping a checked-in closed
 circuit across laps.
 
-Every tick rebuilds a short, coarse planning window when needed, advances the single-track traffic with gap control,
-passes only actors whose reachable interval can overlap the ego's, calls the selected planner, and applies its first
-control.
+Every tick rebuilds the planning window when needed, stages the single-track traffic with gap control, and sends only
+actors whose reachable interval can overlap the ego's to the selected planner.
+The viewer polls nonblockingly until the matching plan arrives, then commits traffic and applies the first ego control
+together.
+No simulation time is consumed while waiting; rendering remains responsive.
 All planners receive the same road-window policy: maximum-acceleration reach over the 10-second planning horizon,
 including drag, plus 25 m ahead and 50 m behind.
 The window refreshes after 20 m of progress or sooner when increasing speed needs more road.

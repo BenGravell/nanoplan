@@ -17,22 +17,35 @@ const CAMERA_SMOOTH_DURATION_S: f32 = 0.5;
 
 pub(super) struct RenderSnapshot {
     pub(super) ego: State,
+    time_s: f64,
     pub(super) actors: Vec<(usize, State)>,
 }
 
-pub(super) fn rendered_ego(live: &Live) -> State {
-    let alpha = if live.paused {
+fn render_alpha(live: &Live) -> f64 {
+    if live.paused {
         1.0
     } else {
         (live.acc as f64 / DT).clamp(0.0, 1.0)
-    };
-    lerp_state(live.previous.ego, live.world.ego(), alpha)
+    }
+}
+
+pub(super) fn rendered_ego(live: &Live) -> State {
+    lerp_state(live.previous.ego, live.world.ego(), render_alpha(live))
+}
+
+pub(super) fn rendered_plan_age(live: &Live) -> f64 {
+    // Diagnostics start at the planning snapshot, while the ego is rendered
+    // between completed simulation states. Snapshot time also handles snaps
+    // on pause/resume and waiting for an overdue planner without aging by wall time.
+    let render_lag = (live.world.time_s() - live.previous.time_s) * (1.0 - render_alpha(live));
+    (live.world.plan_age_s() - render_lag).max(0.0)
 }
 
 impl RenderSnapshot {
     pub(super) fn capture(world: &LiveWorld) -> Self {
         Self {
             ego: world.ego(),
+            time_s: world.time_s(),
             actors: world.actors.iter().map(|actor| (actor.id, actor.state)).collect(),
         }
     }
@@ -58,11 +71,7 @@ pub(crate) fn draw(
     let mut visualization_clocks = 0;
     // Standard fixed-step interpolation. Rendering stays one simulation tick
     // behind so it can blend completed states without predicting physics.
-    let render_alpha = if live.paused {
-        1.0
-    } else {
-        (live.acc as f64 / DT).clamp(0.0, 1.0)
-    };
+    let render_alpha = render_alpha(&live);
     let ego = rendered_ego(&live);
     let blend = camera_blend(live.paused, live.camera.smooth, time.delta_secs());
     live.camera.update_follow(ego, window.height(), blend);
@@ -131,11 +140,12 @@ pub(crate) fn draw(
     let diagnostics_started = Instant::now();
     let diagnostics_clocks = world.diagnostics.points.len() as u64
         + world.diagnostics.trajectories.iter().map(Vec::len).sum::<usize>() as u64;
+    let diagnostic_age = rendered_plan_age(&live);
     diagnostics::draw(
         &mut diagnostic_trajectories,
         &mut diagnostic_points,
         &world.diagnostics,
-        state.preview_s as f64,
+        diagnostic_age..diagnostic_age + state.preview_s as f64,
         state.show_diag_trajectories && state.planner.has_diagnostics(),
         state.show_diag_points && state.planner.has_diagnostics(),
     );

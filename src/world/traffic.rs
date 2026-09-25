@@ -20,6 +20,7 @@ const TIMID_LATERAL_BIAS: f64 = 0.65;
 const SLOPPY_LATERAL_RANGE: f64 = 0.55;
 
 /// A car following the same single track as the ego.
+#[derive(Clone)]
 pub(crate) struct SmartActor {
     pub(crate) id: usize,
     pub(crate) state: State,

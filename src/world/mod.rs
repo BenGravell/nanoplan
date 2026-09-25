@@ -36,6 +36,7 @@ pub(crate) struct LiveWorld {
     planner_kind: PlannerKind,
     planner: PlannerEngine,
     plan: Vec<Control>,
+    pending_actors: Option<Vec<SmartActor>>,
     plan_tick: u64,
     tick: u64,
     simulator: Simulator,
@@ -110,6 +111,7 @@ impl LiveWorld {
             planner_kind: planner,
             planner: PlannerEngine::new(planner),
             plan: Vec::new(),
+            pending_actors: None,
             plan_tick: 0,
             tick: 0,
             simulator: Simulator::new(ego, dt),
@@ -123,6 +125,7 @@ impl LiveWorld {
             self.planner_kind = kind;
             self.planner = PlannerEngine::new(kind);
             self.plan.clear();
+            self.pending_actors = None;
             self.planner_slow = false;
             self.road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
         }
@@ -130,6 +133,12 @@ impl LiveWorld {
 
     pub(crate) fn set_actor_count(&mut self, seed: u64, actor_count: usize) {
         let actor_count = actor_count.min(MAX_ACTORS);
+        if actor_count != self.actors.len() && self.pending_actors.take().is_some() {
+            // The in-flight snapshot no longer describes this traffic setup.
+            self.planner = PlannerEngine::new(self.planner_kind);
+            self.planner_slow = false;
+        }
+
         while self.actors.len() > actor_count {
             let least_progress = self
                 .actors
@@ -190,6 +199,14 @@ impl LiveWorld {
         self.simulator.dt
     }
 
+    pub(crate) fn time_s(&self) -> f64 {
+        self.tick as f64 * self.dt()
+    }
+
+    pub(crate) fn plan_age_s(&self) -> f64 {
+        self.tick.saturating_sub(self.plan_tick) as f64 * self.dt()
+    }
+
     /// Ego's race position and the total number of racers.
     pub(crate) fn grid_position(&self) -> (usize, usize) {
         let ego_progress = racer_progress(&self.track, self.ego(), EGO_FOOTPRINT, self.track_progress);
@@ -201,10 +218,10 @@ impl LiveWorld {
         (ahead + 1, self.actors.len() + 1)
     }
 
-    pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) {
+    pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) -> bool {
         latency.time("simulation.total", || {
             self.tick_with_latency_inner(Some(latency), cfg!(test))
-        });
+        })
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -217,7 +234,12 @@ impl LiveWorld {
         self.tick_with_latency_inner(latency, cfg!(test));
     }
 
-    fn tick_with_latency_inner(&mut self, latency: Option<&Latency>, wait_for_planner: bool) {
+    /// Start the next tick's computation before its 100 ms deadline.
+    /// Preparing and polling never advance the visible world.
+    pub(crate) fn prepare_tick(&mut self, latency: Option<&Latency>) {
+        if self.pending_actors.is_some() {
+            return;
+        }
         self.track_progress = timed(latency, "simulation.progress", || {
             let progress = self.track.project_progress(self.ego().position(), self.track_progress);
             work(latency, 1);
@@ -233,7 +255,7 @@ impl LiveWorld {
             });
         }
 
-        let previous_actors: Vec<_> = self.actors.iter().map(|a| (a.id, a.state)).collect();
+        let previous_actors = self.actors.clone();
         let actor_count = self.actors.len() as u64;
         timed(latency, "simulation.actors", || {
             self.step_traffic();
@@ -254,8 +276,6 @@ impl LiveWorld {
             work(latency, actor_count);
             states
         });
-        let result = self.planner.poll();
-        self.accept_plan(result, latency);
         let planner_actor_count = actor_states.len();
         let submitted = self.planner.submit(PlanRequest {
             tick: self.tick,
@@ -269,15 +289,31 @@ impl LiveWorld {
         if submitted {
             self.last_planner_actors = planner_actor_count;
         }
+        // Stage traffic for this tick without exposing a partially advanced
+        // world while the worker runs. Commit ego and actors together below.
+        self.pending_actors = Some(std::mem::replace(&mut self.actors, previous_actors));
+    }
+
+    fn tick_with_latency_inner(&mut self, latency: Option<&Latency>, wait_for_planner: bool) -> bool {
+        self.prepare_tick(latency);
+        let result = self.planner.poll();
         #[cfg(not(target_family = "wasm"))]
-        if wait_for_planner && submitted {
-            let result = self.planner.wait();
-            self.accept_plan(Some(result), latency);
-        }
+        let result = if wait_for_planner && result.is_none() {
+            Some(self.planner.wait())
+        } else {
+            result
+        };
         #[cfg(target_family = "wasm")]
         let _ = wait_for_planner;
-        self.planner_slow |= self.planner.is_slow(self.dt());
-        let controls = remaining_plan(&self.plan, self.plan_tick, self.tick);
+        let Some(result) = result else {
+            self.planner_slow = self.planner.is_slow(self.dt());
+            return false;
+        };
+        let previous_actors: Vec<_> = self.actors.iter().map(|a| (a.id, a.state)).collect();
+        self.actors = self.pending_actors.take().expect("a result completes one pending tick");
+        let actor_count = self.actors.len() as u64;
+        self.accept_plan(result, latency);
+        let controls = self.plan.as_slice();
 
         let plan = timed(latency, "simulation.preview", || {
             let plan = self.simulator.preview(controls, self.preview_ticks);
@@ -302,10 +338,11 @@ impl LiveWorld {
         };
         self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
         self.tick += 1;
+        true
     }
 
-    fn accept_plan(&mut self, result: Option<PlanResult>, latency: Option<&Latency>) {
-        let Some(result) = result else { return };
+    fn accept_plan(&mut self, result: PlanResult, latency: Option<&Latency>) {
+        assert_eq!(result.tick, self.tick, "lockstep result must match the waiting tick");
         self.planner_slow = result.elapsed_ms > self.dt() * 1e3;
         self.plan = result.controls;
         self.plan_tick = result.tick;
@@ -370,13 +407,6 @@ impl LiveWorld {
             actor.state = body.state;
         }
     }
-}
-
-fn remaining_plan(plan: &[Control], plan_tick: u64, tick: u64) -> &[Control] {
-    if plan.is_empty() {
-        return plan;
-    }
-    &plan[(tick.saturating_sub(plan_tick) as usize).min(plan.len() - 1)..]
 }
 
 fn racer_progress(track: &Track, state: State, footprint: Footprint, hint: f64) -> f64 {

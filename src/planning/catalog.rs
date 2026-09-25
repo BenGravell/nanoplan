@@ -47,7 +47,7 @@ const SPECS: [PlannerSpec; 13] = [
     PlannerSpec {
         kind: PlannerKind::BezierToppra,
         name: "bezier + TOPP-RA",
-        build: || Box::new(BezierToppraPlanner),
+        build: || Box::new(BezierToppraPlanner::default()),
         has_diagnostics: true,
     },
     PlannerSpec {

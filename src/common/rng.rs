@@ -1,5 +1,6 @@
 /// Deterministic xorshift* RNG with Box-Muller normals; avoids a rand
 /// dependency and keeps batches and tests reproducible.
+#[derive(Clone)]
 pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
