@@ -1,6 +1,6 @@
 //! Hard trajectory constraints shared by planners.
 
-use crate::metrics::progress;
+use crate::metrics::speed_score;
 use crate::prediction::predict;
 use crate::simulation::{Position, State};
 use crate::track::Path;
@@ -135,7 +135,7 @@ impl<'a> HardConstraints<'a> {
         }
         let forward_speed = sample.station_speed.unwrap_or(sample.speed * sample.heading_err.cos());
         let tick = (sample.t / self.dt).round().max(0.0) as usize;
-        1.0 - progress::speed_score(forward_speed, self.initial_speed, tick, self.dt)
+        1.0 - speed_score(forward_speed, self.initial_speed, tick, self.dt)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.
@@ -192,7 +192,7 @@ mod tests {
             ..Default::default()
         };
         let cost = point_cost(&sample, &[]);
-        assert_eq!(cost, 1.0 - progress::speed_score(10.0, INITIAL_SPEED, 10, DT));
+        assert_eq!(cost, 1.0 - speed_score(10.0, INITIAL_SPEED, 10, DT));
         sample.speed = 12.0;
         assert!(point_cost(&sample, &[]) < cost);
     }

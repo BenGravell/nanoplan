@@ -1,17 +1,11 @@
 //! Forward progress is the sole quality metric. Safety is enforced by planner
 //! constraints and the vehicle dynamics, rather than a weighted score.
 
-pub(crate) mod progress;
-
 use crate::common::kinematics::TrajectoryKinematics;
+use crate::simulation::speed_after_max_accel;
 #[cfg(test)]
 use crate::simulation::{Control, Position, State};
 use crate::track::{Path, Road};
-
-pub(crate) struct TickCtx<'a> {
-    pub(crate) trajectory_kinematics: &'a TrajectoryKinematics,
-    pub(crate) station: &'a [f64],
-}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Metrics {
@@ -30,13 +24,37 @@ pub(crate) fn evaluate(trajectory_kinematics: &TrajectoryKinematics, road: &Road
         .iter()
         .map(|s| path.project(s.position()).0)
         .collect();
-    let ctx = TickCtx {
-        trajectory_kinematics,
-        station: &station,
-    };
-    let score_per_tick: Vec<f64> = (0..n).map(|i| progress::score(&ctx, i)).collect();
+    // ponytail: score the sole metric directly, without a per-tick context.
+    let mut score_per_tick: Vec<f64> = station
+        .windows(2)
+        .enumerate()
+        .map(|(tick, pair)| {
+            speed_score(
+                (pair[1] - pair[0]) / trajectory_kinematics.dt,
+                trajectory_kinematics.states[0].speed,
+                tick,
+                trajectory_kinematics.dt,
+            )
+        })
+        .collect();
+    // The final sample reuses the preceding interval and its baseline tick.
+    let last = score_per_tick
+        .last()
+        .copied()
+        .unwrap_or_else(|| speed_score(0.0, trajectory_kinematics.states[0].speed, 0, trajectory_kinematics.dt));
+    score_per_tick.push(last);
     let score = score_per_tick.iter().sum::<f64>() / n as f64;
     Metrics { score_per_tick, score }
+}
+
+/// Normalized speed score.
+pub(crate) fn speed_score(speed: f64, initial_speed: f64, ticks: usize, dt: f64) -> f64 {
+    let baseline = speed_after_max_accel(initial_speed, ticks, dt);
+    if baseline <= 0.0 {
+        f64::from(speed >= baseline)
+    } else {
+        (speed / baseline).clamp(0.0, 1.0)
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +153,38 @@ mod tests {
         let m = evaluate_coasting(&ego, &road());
         assert_eq!(m.score_per_tick[50], 0.0);
         assert_eq!(m.score, 0.0);
+    }
+
+    #[test]
+    fn full_acceleration_is_the_fair_baseline() {
+        let dt = 0.1;
+        let initial = 12.0;
+        let baseline = speed_after_max_accel(initial, 20, dt);
+        assert_eq!(speed_score(baseline, initial, 20, dt), 1.0);
+        assert!(speed_score(initial, initial, 20, dt) < 1.0);
+    }
+
+    #[test]
+    fn faster_forward_progress_scores_higher() {
+        let score = |speed| speed_score(speed, 10.0, 10, 0.1);
+        assert!(score(20.0) > score(10.0));
+    }
+
+    #[test]
+    fn short_traces_keep_tick_aligned_scores() {
+        let road = road();
+        let empty = evaluate_coasting(&[], &road);
+        assert!(empty.score_per_tick.is_empty());
+        assert_eq!(empty.score, 0.0);
+
+        for (speed, expected) in [(0.0, 1.0), (10.0, 0.0)] {
+            let single = evaluate_coasting(&cruise(speed, 0), &road);
+            assert_eq!(single.score_per_tick, [expected]);
+            assert_eq!(single.score, expected);
+        }
+
+        let pair = evaluate_coasting(&cruise(10.0, 1), &road);
+        assert_eq!(pair.score_per_tick, [1.0, 1.0]);
+        assert_eq!(pair.score, 1.0);
     }
 }
