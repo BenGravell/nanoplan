@@ -39,7 +39,7 @@ A quick repeatable circuit for planner and simulation tests.
 
 Offline, raw centerline anchors are first joined by a closed cubic spline and resampled at a fine arc-length spacing.
 The resulting fine polyline plus its interpolated right/left widths is converted into the shared
-`geometry::RoadPolygon`: source stations, continuous mitered boundary polylines, and strip quads.
+`common::geometry::RoadPolygon`: source stations, continuous mitered boundary polylines, and strip quads.
 The viewer triangulates that polygon for the road surface, while simulation barriers use the exact same boundary
 segments.
 

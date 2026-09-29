@@ -3,9 +3,9 @@
 mod road;
 mod traffic;
 
+use crate::common::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::rng::Rng;
-use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::planning::engine::{PlanRequest, PlanResult, PlannerEngine};
 use crate::planning::{ComputeBudget, DiagnosticsData, Latency, PLANNING_HORIZON_S, PlannerKind};
 use crate::simulation::{Control, DynamicBody, Position, Simulator, State, collide_dynamic_bodies};
@@ -357,7 +357,7 @@ impl LiveWorld {
 
     fn resolve_collisions(&mut self, previous_ego: State, previous_actors: &[(usize, State)]) {
         let mut previous = Vec::with_capacity(self.actors.len() + 1);
-        previous.push(DynamicBody::new(previous_ego, crate::geometry::EGO_FOOTPRINT));
+        previous.push(DynamicBody::new(previous_ego, crate::common::geometry::EGO_FOOTPRINT));
         previous.extend(self.actors.iter().map(|actor| {
             let state = previous_actors
                 .iter()
@@ -367,7 +367,10 @@ impl LiveWorld {
         }));
 
         let mut bodies = Vec::with_capacity(self.actors.len() + 1);
-        bodies.push(DynamicBody::new(self.simulator.state, crate::geometry::EGO_FOOTPRINT));
+        bodies.push(DynamicBody::new(
+            self.simulator.state,
+            crate::common::geometry::EGO_FOOTPRINT,
+        ));
         bodies.extend(
             self.actors
                 .iter()
@@ -378,7 +381,7 @@ impl LiveWorld {
         // participates in symmetric vehicle-to-vehicle contacts.
         for (i, (before, body)) in previous.iter().zip(&mut bodies).enumerate() {
             let unconstrained = body.state;
-            body.state = crate::geometry::barrier::collide_with_road_barriers(
+            body.state = crate::common::geometry::barrier::collide_with_road_barriers(
                 before.state,
                 body.state,
                 body.footprint,
@@ -394,7 +397,7 @@ impl LiveWorld {
             self.ego_collision_count += 1;
         }
         for (before, body) in before_dynamic.iter().zip(&mut bodies) {
-            body.state = crate::geometry::barrier::collide_with_road_barriers(
+            body.state = crate::common::geometry::barrier::collide_with_road_barriers(
                 before.state,
                 body.state,
                 body.footprint,

@@ -2,11 +2,11 @@
 
 #[cfg(feature = "track-pregeneration")]
 use super::presets::PresetTrack;
+use crate::common::geometry::distance::dist;
+#[cfg(any(test, feature = "track-pregeneration"))]
+use crate::common::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
 use crate::common::geometry::{menger_curvature, vertex_heading};
 use crate::common::interp::{lerp, lerp_angle};
-use crate::geometry::distance::dist;
-#[cfg(any(test, feature = "track-pregeneration"))]
-use crate::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
 use crate::simulation::Position;
 #[cfg(any(test, feature = "track-pregeneration"))]
 use splinefit::{ClosedCubicSplineFit2D, evaluate::evaluate};

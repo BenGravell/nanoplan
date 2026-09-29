@@ -1,5 +1,5 @@
 use super::{Position, State};
-use crate::geometry::{Footprint, overlap_mtv};
+use crate::common::geometry::{Footprint, overlap_mtv};
 
 /// Restitution shared by every dynamic vehicle collision.
 const VEHICLE_RESTITUTION: f64 = 0.1;
@@ -91,7 +91,7 @@ fn with_velocity(mut state: State, velocity: [f64; 2], footprint: Footprint) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::{CAR_FOOTPRINT, footprints_overlap};
+    use crate::common::geometry::{CAR_FOOTPRINT, footprints_overlap};
 
     fn body(state: State) -> DynamicBody {
         DynamicBody::new(state, CAR_FOOTPRINT)

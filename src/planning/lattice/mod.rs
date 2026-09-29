@@ -8,13 +8,13 @@
 use std::cell::{Cell, RefCell};
 
 use crate::common::differencing::forward_difference;
+use crate::common::geometry::EGO_FOOTPRINT;
+use crate::common::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
 use crate::common::kinematics::{
     LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
-use crate::geometry::EGO_FOOTPRINT;
-use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{RoadFrame, best_first, parent_chain, stop_controls};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
@@ -448,7 +448,7 @@ impl Planner for LatticePlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::barrier::collides_with_road_barrier;
+    use crate::common::geometry::barrier::collides_with_road_barrier;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
     use crate::track::Road;
 

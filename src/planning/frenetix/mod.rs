@@ -84,7 +84,7 @@ impl Planner for FrenetixPlanner {
         let lon = [s0, ego.speed * heading.cos() / scale];
         let lat = [d0, ego.speed * heading.sin()];
 
-        let width = (ctx.road.half_width - crate::geometry::EGO_FOOTPRINT.width / 2.0).max(0.0);
+        let width = (ctx.road.half_width - crate::common::geometry::EGO_FOOTPRINT.width / 2.0).max(0.0);
 
         let duration = PLANNING_HORIZON_S;
         // Include accelerating endpoints; speed * duration alone only covers

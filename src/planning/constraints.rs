@@ -8,7 +8,7 @@ use crate::track::Path;
 /// Center-to-center clearance below which point-sample planners treat two
 /// cars as collided. Physics uses the real rectangular footprint;
 /// this is the narrow proxy for planners that only carry a point sample.
-pub(crate) const COLLISION_DIAMETER_M: f64 = crate::geometry::CAR_FOOTPRINT.width;
+pub(crate) const COLLISION_DIAMETER_M: f64 = crate::common::geometry::CAR_FOOTPRINT.width;
 
 /// Finite stand-in for a hard violation, for numeric optimizers that cannot
 /// propagate infinity through statistics or finite differences.

@@ -1,4 +1,4 @@
-use crate::geometry::RoadPolygon;
+use crate::common::geometry::RoadPolygon;
 use crate::track::{ROAD_SAMPLE_STEP_M, Track};
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;

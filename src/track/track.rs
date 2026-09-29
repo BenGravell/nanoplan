@@ -6,7 +6,7 @@ use super::catalog::{self, PRESET_TRACKS};
 use super::circuit::Circuit;
 use super::path::ReferenceGeometry;
 use super::presets::TRACK_PRESETS;
-use crate::geometry::RoadPolygon;
+use crate::common::geometry::RoadPolygon;
 use crate::simulation::Position;
 
 #[derive(Debug, Clone)]

@@ -23,7 +23,7 @@ pub(crate) const ROAD_SAMPLE_STEP_M: f64 = 1.0;
 mod tests {
     use super::track::TrackGeometry;
     use super::*;
-    use crate::geometry::distance::dist;
+    use crate::common::geometry::distance::dist;
 
     #[test]
     fn baked_track_wraps_and_projects_progress_across_the_finish_line() {

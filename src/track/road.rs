@@ -1,9 +1,9 @@
 //! Finite road windows consumed by planners and simulation.
 
 use super::path::ReferenceGeometry;
+use crate::common::geometry::RoadPolygon;
+use crate::common::geometry::barrier::{Barrier, road_side_barriers};
 use crate::common::interp::lerp;
-use crate::geometry::RoadPolygon;
-use crate::geometry::barrier::{Barrier, road_side_barriers};
 use crate::simulation::Position;
 
 /// The finite planning window sampled from the active track.

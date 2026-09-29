@@ -1,6 +1,6 @@
+use crate::common::geometry::curvature::curvature_between;
+use crate::common::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::common::interp::lerp_state;
-use crate::geometry::curvature::curvature_between;
-use crate::geometry::{CAR_FOOTPRINT, Footprint};
 use crate::simulation::State;
 use crate::vehicle::{
     FRONT_TIRE_DIAMETER_M, FRONT_TIRE_WIDTH_M, FRONT_TRACK_M, MAX_ABS_CURVATURE, REAR_TIRE_DIAMETER_M,

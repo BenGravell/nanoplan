@@ -1,12 +1,12 @@
 //! Road-following cubic Bezier candidates, each timed with scalar TOPP-RA.
 
+use crate::common::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::common::geometry::wrap_angle;
-use crate::common::kinematics::{TrajectoryKinematics, longitudinal_resistance_accel, net_longitudinal_accel};
-use crate::common::math::smoothstep;
-use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
-use crate::geometry::{
+use crate::common::geometry::{
     CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
 };
+use crate::common::kinematics::{TrajectoryKinematics, longitudinal_resistance_accel, net_longitudinal_accel};
+use crate::common::math::smoothstep;
 use crate::metrics;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math::state_sample;
@@ -844,7 +844,7 @@ mod tests {
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
         assert!(
-            end.position().x <= actor.position().x - crate::geometry::EGO_FOOTPRINT.length + 1e-9,
+            end.position().x <= actor.position().x - crate::common::geometry::EGO_FOOTPRINT.length + 1e-9,
             "x {}",
             end.position().x
         );
@@ -962,7 +962,7 @@ mod tests {
 
     #[test]
     fn follows_a_slower_lead_without_contact() {
-        use crate::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, footprints_overlap};
+        use crate::common::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, footprints_overlap};
         use crate::planning::{test_ctx, test_road};
         use crate::simulation::CommandLimiter;
 
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn baked_track_predictions_stay_inside_road_for_full_horizon() {
-        use crate::geometry::barrier::collides_with_road_barrier;
+        use crate::common::geometry::barrier::collides_with_road_barrier;
         use crate::simulation::MAX_TERMINAL_SPEED_MPS;
         use crate::track::{Road, TRACK_PRESETS, Track};
 

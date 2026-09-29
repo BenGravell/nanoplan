@@ -265,7 +265,7 @@ fn segment_projection(a: Position, b: Position, p: Position) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::EGO_FOOTPRINT;
+    use crate::common::geometry::EGO_FOOTPRINT;
 
     #[test]
     fn road_barriers_clamp_and_reflect_outward_motion() {

@@ -5,10 +5,10 @@ use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use colorgrad::Gradient;
 
+use crate::common::geometry::EGO_FOOTPRINT;
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp_state;
 use crate::common::kinematics::TrajectoryKinematics;
-use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, Position, State};
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn carpet_patches_are_disjoint() {
-        use crate::geometry::polygons_overlap;
+        use crate::common::geometry::polygons_overlap;
 
         let plan = [
             State::default(),

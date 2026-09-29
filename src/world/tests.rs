@@ -1,6 +1,6 @@
 use super::traffic::lateral_target;
 use super::*;
-use crate::geometry::barrier::collides_with_road_barrier;
+use crate::common::geometry::barrier::collides_with_road_barrier;
 use crate::planning::LatencyStats;
 use crate::simulation::Position;
 use crate::track::ROAD_SAMPLE_STEP_M;

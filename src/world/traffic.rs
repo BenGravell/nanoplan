@@ -1,5 +1,5 @@
+use crate::common::geometry::CAR_FOOTPRINT;
 use crate::common::rng::Rng;
-use crate::geometry::CAR_FOOTPRINT;
 use crate::simulation::MAX_TERMINAL_SPEED_MPS;
 use crate::simulation::{Position, State};
 use crate::track::Track;

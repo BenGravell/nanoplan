@@ -1,7 +1,7 @@
 //! Small exhaustive search over centerline-following poly-cubic trajectories.
 
+use crate::common::geometry::barrier::collide_with_road_barriers;
 use crate::common::geometry::wrap_angle;
-use crate::geometry::barrier::collide_with_road_barriers;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{brake_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
@@ -124,7 +124,7 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
     for (tick, &u) in controls.iter().enumerate() {
         let prev = x;
         x = world_step(x, u, ctx.road.dt);
-        if collide_with_road_barriers(prev, x, crate::geometry::EGO_FOOTPRINT, ctx.road) != x {
+        if collide_with_road_barriers(prev, x, crate::common::geometry::EGO_FOOTPRINT, ctx.road) != x {
             feasible = false;
         }
         if let Some(points) = &mut trajectory {
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn baked_track_predictions_stay_inside_road_for_full_horizon() {
-        use crate::geometry::barrier::collides_with_road_barrier;
+        use crate::common::geometry::barrier::collides_with_road_barrier;
         use crate::track::{Road, TRACK_PRESETS};
 
         for track_index in 0..TRACK_PRESETS.len() {
