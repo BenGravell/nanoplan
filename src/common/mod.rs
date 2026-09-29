@@ -7,6 +7,7 @@
 )]
 
 pub(crate) mod differencing;
+pub(crate) mod geometry;
 pub(crate) mod interp;
 pub(crate) mod kinematics;
 pub(crate) mod linalg;

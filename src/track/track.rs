@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::catalog::{self, PRESET_TRACKS};
 use super::circuit::Circuit;
+use super::path::ReferenceGeometry;
 use super::presets::TRACK_PRESETS;
 use crate::geometry::RoadPolygon;
 use crate::simulation::Position;
@@ -60,15 +61,31 @@ impl Track {
         (first..=last).map(|i| self.point(i as f64 * step)).collect()
     }
 
-    pub(crate) fn road_polygon(&self, from: f64, to: f64, step: f64, closed: bool) -> Option<RoadPolygon> {
-        let progress = if closed {
+    fn road_stations(from: f64, to: f64, step: f64, closed: bool) -> Vec<f64> {
+        if closed {
             let count = ((to - from) / step).ceil().max(2.0) as usize;
             (0..count).map(|i| from + i as f64 * step).collect::<Vec<_>>()
         } else {
             let first = (from / step).floor() as i64;
             let last = (to / step).ceil() as i64;
             (first..=last).map(|i| i as f64 * step).collect::<Vec<_>>()
-        };
+        }
+    }
+
+    pub(crate) fn reference_geometry(&self, from: f64, to: f64, step: f64, closed: bool) -> Vec<ReferenceGeometry> {
+        Self::road_stations(from, to, step, closed)
+            .into_iter()
+            .map(|s| match &self.geometry {
+                TrackGeometry::Circuit(circuit) => ReferenceGeometry {
+                    heading: circuit.heading(s),
+                    curvature: circuit.curvature(s),
+                },
+            })
+            .collect()
+    }
+
+    pub(crate) fn road_polygon(&self, from: f64, to: f64, step: f64, closed: bool) -> Option<RoadPolygon> {
+        let progress = Self::road_stations(from, to, step, closed);
         let centerline = progress.iter().map(|&s| self.point(s)).collect();
         let (right_widths, left_widths) = progress.iter().map(|&s| self.widths(s)).unzip();
         RoadPolygon::new(centerline, right_widths, left_widths, closed)

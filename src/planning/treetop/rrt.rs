@@ -49,7 +49,7 @@
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
 use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, state_distance, zero_action_point};
-use crate::common::math::wrap_angle;
+use crate::common::geometry::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};

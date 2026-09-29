@@ -8,10 +8,11 @@
 use std::cell::{Cell, RefCell};
 
 use crate::common::differencing::forward_difference;
+use crate::common::geometry::wrap_angle;
+use crate::common::interp::lerp;
 use crate::common::kinematics::{
     LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
-use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::planning::constraints::{HardConstraints, Sample};
@@ -58,7 +59,7 @@ fn level(i: usize, n: usize, lo: f64, hi: f64) -> f64 {
     if n == 1 {
         return 0.5 * (lo + hi);
     }
-    lo + (hi - lo) * i as f64 / (n - 1) as f64
+    lerp(lo, hi, i as f64 / (n - 1) as f64)
 }
 
 fn nearest_level(value: f64, n: usize, lo: f64, hi: f64) -> usize {

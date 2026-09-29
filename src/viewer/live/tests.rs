@@ -396,7 +396,7 @@ fn render_interpolation_blends_pose_and_wraps_yaw() {
     assert_eq!(rendered.position().x, 4.0);
     assert_eq!(rendered.position().y, 1.0);
     assert_eq!(rendered.speed, 6.0);
-    assert!((rendered.pose.yaw - std::f64::consts::PI).abs() < 1e-9);
+    assert!(crate::common::geometry::wrap_angle(rendered.pose.yaw - std::f64::consts::PI).abs() < 1e-9);
 }
 
 #[test]

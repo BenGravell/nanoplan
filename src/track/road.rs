@@ -1,5 +1,7 @@
 //! Finite road windows consumed by planners and simulation.
 
+use super::path::ReferenceGeometry;
+use crate::common::interp::lerp;
 use crate::geometry::RoadPolygon;
 use crate::geometry::barrier::{Barrier, road_side_barriers};
 use crate::simulation::Position;
@@ -10,6 +12,7 @@ use crate::simulation::Position;
 pub(crate) struct Road {
     polygon: RoadPolygon,
     stations: Vec<f64>,
+    reference_geometry: Option<Vec<ReferenceGeometry>>,
     pub(crate) target_speed: f64,
     pub(crate) half_width: f64,
     barriers: Vec<Barrier>,
@@ -44,12 +47,22 @@ impl Road {
         Self {
             polygon,
             stations,
+            reference_geometry: None,
             target_speed,
             half_width,
             barriers,
             dt,
             ego_projection_window: None,
         }
+    }
+
+    pub(crate) fn set_reference_geometry(&mut self, geometry: Vec<ReferenceGeometry>) {
+        assert_eq!(geometry.len(), self.stations.len());
+        self.reference_geometry = Some(geometry);
+    }
+
+    pub(crate) fn reference_geometry(&self) -> Option<&[ReferenceGeometry]> {
+        self.reference_geometry.as_deref()
     }
 
     pub(crate) fn centerline(&self) -> &[Position] {
@@ -79,8 +92,8 @@ impl Road {
             .clamp(1, self.stations.len() - 1);
         let ds = self.stations[i] - self.stations[i - 1];
         let u = (s - self.stations[i - 1]) / ds.max(1e-9);
-        let lerp = |values: &[f64]| values[i - 1] + u * (values[i] - values[i - 1]);
-        (-lerp(self.polygon.right_widths()), lerp(self.polygon.left_widths()))
+        let at = |values: &[f64]| lerp(values[i - 1], values[i], u);
+        (-at(self.polygon.right_widths()), at(self.polygon.left_widths()))
     }
 }
 

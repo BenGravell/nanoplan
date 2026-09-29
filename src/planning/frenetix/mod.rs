@@ -1,8 +1,9 @@
 //! Section III.B polynomial sampling from https://arxiv.org/abs/2402.01443.
 //! Reduced-degree variant: longitudinal cubics crossed with lateral cubics.
 
+use crate::common::geometry::wrap_angle;
+use crate::common::interp::lerp;
 use crate::common::kinematics::commanded_accel_for_net;
-use crate::common::math::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::search_tree::stop_controls;
 use crate::planning::steering::cubic_coeffs;
@@ -31,14 +32,6 @@ impl Polynomial {
     }
 }
 
-fn reference_curvature(path: &Path, s: f64) -> f64 {
-    // ponytail: the shared reference is a polyline; average heading over 4 m.
-    // A differentiable reference path would remove this approximation.
-    let lo = (s - 2.0).max(0.0);
-    let hi = (s + 2.0).min(path.length());
-    wrap_angle(path.pose_at(hi).1 - path.pose_at(lo).1) / (hi - lo).max(1e-9)
-}
-
 struct Motion {
     longitudinal: Polynomial,
     lateral: Polynomial,
@@ -51,10 +44,8 @@ impl Motion {
         if !(0.0..=path.length()).contains(&s) || sv < -1e-8 {
             return None;
         }
-        let k = reference_curvature(path, s);
-        let lo = (s - 1.0).max(0.0);
-        let hi = (s + 1.0).min(path.length());
-        let dk = (reference_curvature(path, hi) - reference_curvature(path, lo)) / (hi - lo).max(1e-9);
+        let k = path.curvature_at(s);
+        let dk = path.sharpness_at(s);
         let scale = 1.0 - k * d;
         if scale <= 0.1 {
             return None;
@@ -83,8 +74,8 @@ impl Planner for FrenetixPlanner {
         }
         let path = ctx.time("route", || ctx.path());
         let (s0, d0) = path.project(ego.position());
-        let heading = wrap_angle(ego.pose.yaw - path.pose_at(s0).1);
-        let scale = 1.0 - reference_curvature(path, s0) * d0;
+        let heading = wrap_angle(ego.pose.yaw - path.heading_at(s0));
+        let scale = 1.0 - path.curvature_at(s0) * d0;
         if scale <= 0.1 || ego.speed < 0.0 || heading.cos() < 0.0 {
             return stop_controls(ego, ctx, ctx.horizon);
         }
@@ -142,7 +133,7 @@ fn grid_samples(budget: ComputeBudget) -> usize {
 }
 
 fn grid(lo: f64, hi: f64, samples: usize) -> impl Iterator<Item = f64> + Clone {
-    (0..samples).map(move |i| lo + (hi - lo) * (i as f64 / (samples - 1) as f64))
+    (0..samples).map(move |i| lerp(lo, hi, i as f64 / (samples - 1) as f64))
 }
 
 fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<(f64, Vec<Control>)> {

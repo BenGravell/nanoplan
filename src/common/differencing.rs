@@ -1,8 +1,8 @@
 //! Shared numerical differencing helpers.
 
-/// First-order forward difference from `previous` to `next` over `dt`.
-pub(crate) fn forward_difference(previous: f64, next: f64, dt: f64) -> f64 {
-    (next - previous) / dt
+/// First-order forward difference from previous to next over step.
+pub(crate) fn forward_difference(previous: f64, next: f64, step: f64) -> f64 {
+    (next - previous) / step
 }
 
 #[cfg(test)]

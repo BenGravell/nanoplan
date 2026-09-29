@@ -1,6 +1,6 @@
 //! Small exhaustive search over centerline-following poly-cubic trajectories.
 
-use crate::common::math::wrap_angle;
+use crate::common::geometry::wrap_angle;
 use crate::geometry::barrier::collide_with_road_barriers;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{brake_controls, stop_controls};

@@ -35,10 +35,9 @@ impl FrameRate {
         if !seconds.is_finite() || seconds <= 0.0 {
             return;
         }
-        self.mean_seconds = Some(
-            self.mean_seconds
-                .map_or(seconds, |mean| mean + FRAME_TIME_SMOOTHING * (seconds - mean)),
-        );
+        self.mean_seconds = Some(self.mean_seconds.map_or(seconds, |mean| {
+            crate::common::interp::lerp(mean, seconds, FRAME_TIME_SMOOTHING)
+        }));
     }
 
     pub(crate) fn fps(self) -> f64 {

@@ -19,7 +19,7 @@ fn point_in_polygon(point: Position, polygon: &[Position]) -> bool {
 }
 
 pub(crate) fn segments_intersect(a: Position, b: Position, c: Position, d: Position) -> bool {
-    let cross = |p: Position, q: Position, r: Position| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let cross = |p: Position, q: Position, r: Position| (q - p).cross(r - p);
     a.x.max(b.x) >= c.x.min(d.x)
         && c.x.max(d.x) >= a.x.min(b.x)
         && a.y.max(b.y) >= c.y.min(d.y)

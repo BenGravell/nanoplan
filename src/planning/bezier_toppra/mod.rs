@@ -1,7 +1,8 @@
 //! Road-following cubic Bezier candidates, each timed with scalar TOPP-RA.
 
+use crate::common::geometry::wrap_angle;
 use crate::common::kinematics::{TrajectoryKinematics, longitudinal_resistance_accel, net_longitudinal_accel};
-use crate::common::math::{smoothstep, wrap_angle};
+use crate::common::math::smoothstep;
 use crate::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::geometry::{
     CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
@@ -153,7 +154,7 @@ fn path_targets(ctx: &Context, s0: f64, stations: [f64; 2]) -> Vec<([f64; 2], [f
         .chain(grid)
         .take(ctx.compute_budget.scale(NOMINAL_PATHS, 5))
         .map(|(reach, lateral)| {
-            let targets = [s0 + reach * (stations[0] - s0), stations[1]];
+            let targets = [crate::common::interp::lerp(s0, stations[0], reach), stations[1]];
             let offsets = std::array::from_fn(|j| {
                 let (right, left) = ctx.road.lateral_bounds_at(targets[j]);
                 // Preserve the existing front-corner clearance at each target.
@@ -195,7 +196,8 @@ impl BezierPath {
                 };
                 let span = stations[layer] - start;
                 let blend = smoothstep(t);
-                let offset = d + (offsets[layer] - d) * blend + span * slope * t * (1.0 - t).powi(2);
+                let offset =
+                    crate::common::interp::lerp(d, offsets[layer], blend) + span * slope * t * (1.0 - t).powi(2);
                 path.frenet_to_position(start + span * t, offset)
             })
             .collect();
@@ -418,10 +420,10 @@ fn extract_controls(
                 .saturating_sub(1)
                 .min(GRID_STEPS - 1);
             let fraction = ((time - times[i]) / (times[i + 1] - times[i])).clamp(0.0, 1.0);
-            let target_speed = speed2[i].sqrt() + fraction * (speed2[i + 1].sqrt() - speed2[i].sqrt());
+            let target_speed = crate::common::interp::lerp(speed2[i].sqrt(), speed2[i + 1].sqrt(), fraction);
             // Track the timed TOPP-RA profile. Comparing speed against the
             // old Euler position cancels acceleration just after launch.
-            let net_accel = (target_speed - state.speed) / ctx.road.dt;
+            let net_accel = crate::common::differencing::forward_difference(state.speed, target_speed, ctx.road.dt);
             let feedback = centerline_feedback(&curve.reference, &state, target_speed);
             let u = Control {
                 acceleration: (net_accel + longitudinal_resistance_accel(state.speed))

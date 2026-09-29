@@ -178,7 +178,7 @@ fn width_arrow(ui: &egui::Ui, rect: egui::Rect) {
     let elapsed = time % LOOP_DURATION_S;
     let progress = (elapsed / EXPANSION_DURATION_S).min(1.0);
     let smooth_progress = smoothstep(f64::from(progress)) as f32;
-    let half_width = ARROW_MIN_HALF_WIDTH + (ARROW_MAX_HALF_WIDTH - ARROW_MIN_HALF_WIDTH) * smooth_progress;
+    let half_width = crate::common::interp::lerp(ARROW_MIN_HALF_WIDTH, ARROW_MAX_HALF_WIDTH, smooth_progress);
     let fade_start = EXPANSION_DURATION_S + EXPANSION_END_PAUSE_S;
     let alpha = arrow_alpha(elapsed, fade_start);
     let color = egui::Color32::from_rgba_unmultiplied(ORANGE.r(), ORANGE.g(), ORANGE.b(), alpha);

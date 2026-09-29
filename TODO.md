@@ -6,6 +6,10 @@
 - Tree search (RRT)
 - Local optimization (iLQR)
 
+## refactor
+
+rename/harmonize track vs circuit ???
+
 ## Actor planning
 
 -- Fix the actors.

@@ -1,7 +1,7 @@
 //! Interpolation helpers.
 
 use super::types::State;
-use crate::common::math::lerp_angle;
+use crate::common::geometry::{angle_delta, wrap_angle};
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Linearly interpolate between a and b with ratio t.
@@ -11,6 +11,11 @@ where
     T: Copy + Add<Output = T> + Sub<Output = T> + Mul<U, Output = T>,
 {
     a + (b - a) * t
+}
+
+/// Interpolate angles along their shortest arc and wrap the result to [-pi, pi).
+pub(crate) fn lerp_angle(from: f64, to: f64, t: f64) -> f64 {
+    wrap_angle(from + angle_delta(from, to) * t)
 }
 
 /// Return the interpolation ratio of `value` between `a` and `b`.
@@ -57,6 +62,13 @@ pub(crate) fn lerp_state(previous: State, current: State, alpha: f64) -> State {
 mod tests {
     use super::*;
     use crate::common::types::Position;
+
+    #[test]
+    fn angle_interpolation_takes_the_short_arc() {
+        let from = std::f64::consts::PI - 0.2;
+        let to = -std::f64::consts::PI + 0.2;
+        assert!((lerp_angle(from, to, 0.5) + std::f64::consts::PI).abs() < 1e-12);
+    }
 
     #[test]
     fn interpolates_between_samples() {

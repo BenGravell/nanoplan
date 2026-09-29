@@ -61,7 +61,7 @@ pub(crate) use cem::Cem;
 pub(crate) use mppi::Mppi;
 pub(crate) use ps::PredictiveSampling;
 
-use crate::common::math::wrap_angle;
+use crate::common::geometry::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::policy::centerline_feedback;
 use crate::planning::sampling::{self, Halton};
@@ -211,8 +211,8 @@ fn control_at(knots: &[Knot], t: usize, span: usize) -> Knot {
     }
     let u = pos - i as f64;
     [
-        knots[i][0] + (knots[i + 1][0] - knots[i][0]) * u,
-        knots[i][1] + (knots[i + 1][1] - knots[i][1]) * u,
+        crate::common::interp::lerp(knots[i][0], knots[i + 1][0], u),
+        crate::common::interp::lerp(knots[i][1], knots[i + 1][1], u),
     ]
 }
 

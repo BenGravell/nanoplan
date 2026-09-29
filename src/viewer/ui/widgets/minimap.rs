@@ -104,7 +104,7 @@ fn point_at(track: &MapTrack, progress: f64) -> Position {
     let a = station.floor() as usize % track.points.len();
     let b = (a + 1) % track.points.len();
     let u = station.fract();
-    track.points[a] + (track.points[b] - track.points[a]) * u
+    crate::common::interp::lerp(track.points[a], track.points[b], u)
 }
 
 fn map_point(track: &MapTrack, rect: egui::Rect, point: Position) -> egui::Pos2 {

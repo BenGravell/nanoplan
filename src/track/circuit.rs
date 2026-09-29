@@ -2,7 +2,8 @@
 
 #[cfg(feature = "track-pregeneration")]
 use super::presets::PresetTrack;
-use crate::common::interp::lerp;
+use crate::common::geometry::{menger_curvature, vertex_heading};
+use crate::common::interp::{lerp, lerp_angle};
 use crate::geometry::distance::dist;
 #[cfg(any(test, feature = "track-pregeneration"))]
 use crate::geometry::{RoadPolygon, polygons_overlap, segments_intersect};
@@ -30,6 +31,8 @@ pub(super) struct Sample {
 pub(super) struct Circuit {
     pub(super) samples: Vec<Sample>,
     distance: Vec<f64>,
+    heading: Vec<f64>,
+    curvature: Vec<f64>,
     pub(super) length: f64,
 }
 
@@ -146,9 +149,20 @@ impl Circuit {
             distance.push(distance.last().unwrap() + dist(pair[0].point, pair[1].point));
         }
         let length = distance.last().unwrap() + dist(samples.last().unwrap().point, samples[0].point);
+        let mut heading = Vec::with_capacity(samples.len());
+        let mut curvature = Vec::with_capacity(samples.len());
+        for i in 0..samples.len() {
+            let a = samples[(i + samples.len() - 1) % samples.len()].point;
+            let b = samples[i].point;
+            let c = samples[(i + 1) % samples.len()].point;
+            heading.push(vertex_heading(a, b, c));
+            curvature.push(menger_curvature(a, b, c));
+        }
         Self {
             samples,
             distance,
+            heading,
+            curvature,
             length,
         }
     }
@@ -170,13 +184,23 @@ impl Circuit {
     pub(super) fn pose(&self, progress: f64) -> (Position, f64) {
         let (a, b, u) = self.segment(progress);
         let (a, b) = (self.samples[a].point, self.samples[b].point);
-        (lerp(a, b, u), (b.y - a.y).atan2(b.x - a.x))
+        (lerp(a, b, u), (b - a).angle())
+    }
+
+    pub(super) fn heading(&self, progress: f64) -> f64 {
+        let (a, b, u) = self.segment(progress);
+        lerp_angle(self.heading[a], self.heading[b], u)
+    }
+
+    pub(super) fn curvature(&self, progress: f64) -> f64 {
+        let (a, b, u) = self.segment(progress);
+        lerp(self.curvature[a], self.curvature[b], u)
     }
 
     pub(super) fn widths(&self, progress: f64) -> (f64, f64) {
         let (a, b, u) = self.segment(progress);
         let (a, b) = (self.samples[a], self.samples[b]);
-        (a.right + (b.right - a.right) * u, a.left + (b.left - a.left) * u)
+        (lerp(a.right, b.right, u), lerp(a.left, b.left, u))
     }
 
     pub(super) fn project(&self, point: Position, hint: f64) -> f64 {
@@ -212,10 +236,7 @@ fn limit_widths_for_curvature(points: &[Position], right: &mut [f64], left: &mut
         let a = points[(i + points.len() - 1) % points.len()];
         let b = points[i];
         let c = points[(i + 1) % points.len()];
-        let ab = dist(a, b);
-        let bc = dist(b, c);
-        let ac = dist(a, c);
-        let curvature = 2.0 * ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) / (ab * bc * ac).max(1e-9);
+        let curvature = menger_curvature(a, b, c);
         let inner_limit = 1.0 / curvature.abs().max(1e-9) - CURVATURE_WIDTH_BUFFER_M;
         if curvature > 0.0 {
             left[i] = left[i].min(inner_limit);
@@ -334,7 +355,7 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             let a = b - 1;
             let span = stations[b].distance - stations[a].distance;
             let fraction = (target - stations[a].distance) / span.max(1e-12);
-            stations[a].parameter + fraction * (stations[b].parameter - stations[a].parameter)
+            lerp(stations[a].parameter, stations[b].parameter, fraction)
         })
         .collect::<Vec<_>>();
     evaluate_points(&parameters)
@@ -350,8 +371,8 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             let next_anchor = (segment + 1) % anchors.len();
             Sample {
                 point,
-                right: anchors[segment].right + u * (anchors[next_anchor].right - anchors[segment].right),
-                left: anchors[segment].left + u * (anchors[next_anchor].left - anchors[segment].left),
+                right: lerp(anchors[segment].right, anchors[next_anchor].right, u),
+                left: lerp(anchors[segment].left, anchors[next_anchor].left, u),
             }
         })
         .collect()
@@ -379,6 +400,28 @@ mod tests {
 
         assert!(circuit.samples.iter().all(|sample| sample.right == 20.0));
         assert!(circuit.samples.iter().all(|sample| sample.left < 20.0));
+    }
+
+    #[test]
+    fn stored_circle_geometry_wraps_smoothly() {
+        let samples = (0..64)
+            .map(|i| {
+                let angle = std::f64::consts::TAU * i as f64 / 64.0;
+                Sample {
+                    point: Position::new(10.0 * angle.cos(), 10.0 * angle.sin()),
+                    right: 2.0,
+                    left: 2.0,
+                }
+            })
+            .collect();
+        let circuit = Circuit::finish(samples);
+        for progress in [0.0, circuit.length / 4.0, circuit.length - 0.01, circuit.length + 0.01] {
+            assert!((circuit.curvature(progress) - 0.1).abs() < 1e-12);
+        }
+        assert!(
+            crate::common::geometry::wrap_angle(circuit.heading(circuit.length - 0.01) - circuit.heading(0.01)).abs()
+                < 0.01
+        );
     }
 
     #[test]

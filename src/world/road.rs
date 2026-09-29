@@ -37,6 +37,7 @@ pub(super) fn road_window(track: &Track, x: f64, speed: f64, dt: f64) -> Road {
         .map(|(i, pair)| pair[0].distance(pair[1]) * (anchor_index - i as f64).clamp(0.0, 1.0))
         .sum();
     let mut road = Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt);
+    road.set_reference_geometry(track.reference_geometry(x - ROAD_BEHIND_M, x + ahead, ROAD_SAMPLE_STEP_M, false));
     road.ego_projection_window = Some((anchor_station, ROAD_REFRESH_DISTANCE_M + ROAD_SAMPLE_STEP_M));
     road
 }
@@ -54,7 +55,9 @@ pub(super) fn full_circuit_road(track: &Track, dt: f64) -> Road {
     let polygon = track
         .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
         .expect("track road must form a valid closed polygon");
-    Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt)
+    let mut road = Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, dt);
+    road.set_reference_geometry(track.reference_geometry(0.0, length, ROAD_SAMPLE_STEP_M, true));
+    road
 }
 
 #[cfg(test)]

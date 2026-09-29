@@ -27,7 +27,8 @@ use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
 use crate::common::differencing::forward_difference;
-use crate::common::math::wrap_angle;
+use crate::common::geometry::wrap_angle;
+use crate::common::interp::lerp;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{RoadFrame, brake_controls, dist, parent_chain, path_to_controls, signed_max};
@@ -231,7 +232,7 @@ fn steer_cost(
         if curvature.abs() > MAX_ABS_CURVATURE {
             return None;
         }
-        let (s, d) = path.project_near(p, sa + (sb - sa) * u, PROJECT_WINDOW_M);
+        let (s, d) = path.project_near(p, lerp(sa, sb, u), PROJECT_WINDOW_M);
         // Endpoints alone aren't enough: a Hermite curve whose tangent
         // directions don't line up well with its chord can bulge past
         // both endpoints' lateral offset before coming back — clamping

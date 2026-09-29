@@ -207,7 +207,7 @@ fn transition_widths(
         }
         let u = traveled / arc_length;
         let smoothstep = u * u * (3.0 - 2.0 * u);
-        widths[i] = from + (to - from) * smoothstep;
+        widths[i] = crate::common::interp::lerp(from, to, smoothstep);
     }
 }
 
@@ -257,16 +257,8 @@ fn sampled_chirp_peak(length: f64, amplitude: f64) -> f64 {
         })
         .collect::<Vec<_>>()
         .windows(3)
-        .map(|points| polyline_curvature(points[0], points[1], points[2]))
+        .map(|points| crate::common::geometry::menger_curvature(points[0], points[1], points[2]).abs())
         .fold(0.0, f64::max)
-}
-
-fn polyline_curvature(a: Position, b: Position, c: Position) -> f64 {
-    let ab = point_distance(a, b);
-    let bc = point_distance(b, c);
-    let ac = point_distance(a, c);
-    let cross = ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs();
-    2.0 * cross / (ab * bc * ac).max(1e-9)
 }
 
 fn sample(points: &mut Vec<Position>, approximate_length: f64, point: impl Fn(f64) -> Position) {
@@ -386,7 +378,7 @@ mod tests {
                         let ramp = CHIRP_START_FREQUENCY_RATIO * u + (1.0 - CHIRP_START_FREQUENCY_RATIO) * u * u;
                         (from..to).contains(&ramp)
                     })
-                    .map(|(_, points)| polyline_curvature(points[0], points[1], points[2]))
+                    .map(|(_, points)| crate::common::geometry::menger_curvature(points[0], points[1], points[2]).abs())
                     .fold(0.0, f64::max)
             })
             .collect::<Vec<_>>();
@@ -409,7 +401,7 @@ mod tests {
             (cap_length_estimate(LARGE_END_CAP_REACH_M, LARGE_HALF_SEPARATION_M) / SAMPLE_STEP_M).ceil() as usize;
         let peak_curvature = generated.points[straight_samples..straight_samples + cap_samples]
             .windows(3)
-            .map(|points| polyline_curvature(points[0], points[1], points[2]))
+            .map(|points| crate::common::geometry::menger_curvature(points[0], points[1], points[2]).abs())
             .fold(0.0, f64::max);
         let sustainable_speed = (MAX_ABS_LAT_ACCEL / peak_curvature).sqrt();
         let fraction = sustainable_speed / *MAX_TERMINAL_SPEED_MPS;

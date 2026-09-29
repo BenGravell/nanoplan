@@ -5,9 +5,9 @@ use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 use colorgrad::Gradient;
 
+use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp_state;
 use crate::common::kinematics::TrajectoryKinematics;
-use crate::common::math::wrap_angle;
 use crate::geometry::EGO_FOOTPRINT;
 use crate::metrics::Metrics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, Position, State};

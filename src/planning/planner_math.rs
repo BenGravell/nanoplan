@@ -1,6 +1,6 @@
 //! Planner-specific math helpers.
 
-use crate::common::math::wrap_angle;
+use crate::common::geometry::wrap_angle;
 use crate::planning::constraints::Sample;
 use crate::simulation::State;
 use crate::track::Path;
