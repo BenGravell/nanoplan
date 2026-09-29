@@ -13,7 +13,7 @@ use std::path::Path;
 use super::catalog::TRACK_CATALOG;
 
 #[cfg(all(feature = "track-pregeneration", not(target_family = "wasm")))]
-use super::circuit::Circuit;
+use super::geometry::TrackGeometry;
 
 #[cfg(all(feature = "track-pregeneration", not(target_family = "wasm")))]
 use super::presets;
@@ -45,22 +45,22 @@ pub fn pregenerate_tracks(output: &Path) -> Result<(), String> {
             .collect::<Result<Vec<_>, String>>()
     })?;
     for (track, source) in downloads {
-        let circuit = Circuit::parse(&source).and_then(|circuit| {
-            circuit
+        let geometry = TrackGeometry::parse(&source).and_then(|geometry| {
+            geometry
                 .is_simple()
-                .then_some(circuit)
+                .then_some(geometry)
                 .ok_or_else(|| "road intersects itself".to_owned())
         })?;
-        write(output, track.id, circuit)?;
+        write(output, track.id, geometry)?;
     }
     for (index, name) in ["preset_large", "preset_small"].into_iter().enumerate() {
-        write(output, name, Circuit::preset(presets::generate(index)))?;
+        write(output, name, TrackGeometry::preset(presets::generate(index)))?;
     }
     Ok(())
 }
 
 #[cfg(all(feature = "track-pregeneration", not(target_family = "wasm")))]
-fn write(output: &Path, name: &str, circuit: Circuit) -> Result<(), String> {
-    std::fs::write(output.join(format!("{name}.csv")), circuit.baked_csv())
+fn write(output: &Path, name: &str, geometry: TrackGeometry) -> Result<(), String> {
+    std::fs::write(output.join(format!("{name}.csv")), geometry.baked_csv())
         .map_err(|error| format!("write {name}: {error}"))
 }

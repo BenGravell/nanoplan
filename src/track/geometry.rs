@@ -1,4 +1,4 @@
-//! Closed-circuit samples, parsing, interpolation, and projection.
+//! Closed-track samples, parsing, interpolation, and projection.
 
 #[cfg(feature = "track-pregeneration")]
 use super::presets::PresetTrack;
@@ -21,22 +21,23 @@ const CURVATURE_WIDTH_BUFFER_M: f64 = 0.25;
 const MAX_WIDTH_SLOPE: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Sample {
+pub(super) struct TrackSample {
     pub(super) point: Position,
     right: f64,
     left: f64,
 }
 
+/// Sampled geometry of a closed track; progress wraps at the lap boundary.
 #[derive(Debug)]
-pub(super) struct Circuit {
-    pub(super) samples: Vec<Sample>,
+pub(super) struct TrackGeometry {
+    pub(super) samples: Vec<TrackSample>,
     distance: Vec<f64>,
     heading: Vec<f64>,
     curvature: Vec<f64>,
     pub(super) length: f64,
 }
 
-impl Circuit {
+impl TrackGeometry {
     #[cfg(feature = "track-pregeneration")]
     pub(super) fn parse(csv: &str) -> Result<Self, String> {
         let samples = csv
@@ -55,7 +56,7 @@ impl Circuit {
                 if fields[2] <= 0.0 || fields[3] <= 0.0 {
                     return Err(format!("line {}: track widths must be positive", index + 2));
                 }
-                Ok(Sample {
+                Ok(TrackSample {
                     point: Position::new(fields[0], fields[1]),
                     right: fields[2],
                     left: fields[3],
@@ -65,18 +66,18 @@ impl Circuit {
         if samples.len() < 3 {
             return Err("track needs at least three samples".to_owned());
         }
-        let circuit = Self::processed(samples);
-        if !circuit.length.is_finite() || circuit.length <= 0.0 {
+        let geometry = Self::processed(samples);
+        if !geometry.length.is_finite() || geometry.length <= 0.0 {
             return Err("track length must be finite and positive".to_owned());
         }
-        if circuit
+        if geometry
             .samples
             .iter()
             .any(|sample| sample.right <= 0.0 || sample.left <= 0.0)
         {
             return Err("track curvature is too tight for a positive width".to_owned());
         }
-        Ok(circuit)
+        Ok(geometry)
     }
 
     #[cfg(feature = "track-pregeneration")]
@@ -103,7 +104,7 @@ impl Circuit {
                 .into_iter()
                 .zip(track.right)
                 .zip(track.left)
-                .map(|((point, right), left)| Sample { point, right, left })
+                .map(|((point, right), left)| TrackSample { point, right, left })
                 .collect(),
         )
     }
@@ -115,7 +116,7 @@ impl Circuit {
             .map(|line| {
                 let mut fields = line.split(',');
                 let mut value = || fields.next().unwrap().parse::<f32>().unwrap() as f64;
-                Sample {
+                TrackSample {
                     point: Position::new(value(), value()),
                     right: value(),
                     left: value(),
@@ -126,12 +127,12 @@ impl Circuit {
     }
 
     #[cfg(any(test, feature = "track-pregeneration"))]
-    fn processed(samples: Vec<Sample>) -> Self {
+    fn processed(samples: Vec<TrackSample>) -> Self {
         Self::from_samples(resample_spline(&samples, SAMPLE_SPACING_M))
     }
 
     #[cfg(any(test, feature = "track-pregeneration"))]
-    fn from_samples(mut samples: Vec<Sample>) -> Self {
+    fn from_samples(mut samples: Vec<TrackSample>) -> Self {
         let points = samples.iter().map(|sample| sample.point).collect::<Vec<_>>();
         let mut right = samples.iter().map(|sample| sample.right).collect::<Vec<_>>();
         let mut left = samples.iter().map(|sample| sample.left).collect::<Vec<_>>();
@@ -143,7 +144,7 @@ impl Circuit {
         Self::finish(samples)
     }
 
-    fn finish(samples: Vec<Sample>) -> Self {
+    fn finish(samples: Vec<TrackSample>) -> Self {
         let mut distance = vec![0.0];
         for pair in samples.windows(2) {
             distance.push(distance.last().unwrap() + dist(pair[0].point, pair[1].point));
@@ -294,7 +295,7 @@ fn road_is_simple(points: &[Position], right: &[f64], left: &[f64]) -> bool {
 /// Fit a closed, periodic cubic spline through the source stations and return
 /// a nearly arc-length-uniform polyline.
 #[cfg(any(test, feature = "track-pregeneration"))]
-fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
+fn resample_spline(anchors: &[TrackSample], spacing: f64) -> Vec<TrackSample> {
     #[derive(Clone, Copy)]
     struct Station {
         distance: f64,
@@ -369,7 +370,7 @@ fn resample_spline(anchors: &[Sample], spacing: f64) -> Vec<Sample> {
             let u = (parameter - anchor_parameters[segment])
                 / (anchor_parameters[segment + 1] - anchor_parameters[segment]);
             let next_anchor = (segment + 1) % anchors.len();
-            Sample {
+            TrackSample {
                 point,
                 right: lerp(anchors[segment].right, anchors[next_anchor].right, u),
                 left: lerp(anchors[segment].left, anchors[next_anchor].left, u),
@@ -383,12 +384,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn circuit_construction_limits_catalog_widths_for_curvature() {
+    fn geometry_construction_limits_catalog_widths_for_curvature() {
         let samples = (0..8)
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / 8.0;
                 let unit = Position::from_angle(angle);
-                Sample {
+                TrackSample {
                     point: Position::new(10.0 * unit.x, 10.0 * unit.y),
                     right: 20.0,
                     left: 20.0,
@@ -396,10 +397,10 @@ mod tests {
             })
             .collect();
 
-        let circuit = Circuit::processed(samples);
+        let geometry = TrackGeometry::processed(samples);
 
-        assert!(circuit.samples.iter().all(|sample| sample.right == 20.0));
-        assert!(circuit.samples.iter().all(|sample| sample.left < 20.0));
+        assert!(geometry.samples.iter().all(|sample| sample.right == 20.0));
+        assert!(geometry.samples.iter().all(|sample| sample.left < 20.0));
     }
 
     #[test]
@@ -407,19 +408,25 @@ mod tests {
         let samples = (0..64)
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / 64.0;
-                Sample {
+                TrackSample {
                     point: Position::new(10.0 * angle.cos(), 10.0 * angle.sin()),
                     right: 2.0,
                     left: 2.0,
                 }
             })
             .collect();
-        let circuit = Circuit::finish(samples);
-        for progress in [0.0, circuit.length / 4.0, circuit.length - 0.01, circuit.length + 0.01] {
-            assert!((circuit.curvature(progress) - 0.1).abs() < 1e-12);
+        let geometry = TrackGeometry::finish(samples);
+        for progress in [
+            0.0,
+            geometry.length / 4.0,
+            geometry.length - 0.01,
+            geometry.length + 0.01,
+        ] {
+            assert!((geometry.curvature(progress) - 0.1).abs() < 1e-12);
         }
         assert!(
-            crate::common::geometry::wrap_angle(circuit.heading(circuit.length - 0.01) - circuit.heading(0.01)).abs()
+            crate::common::geometry::wrap_angle(geometry.heading(geometry.length - 0.01) - geometry.heading(0.01))
+                .abs()
                 < 0.01
         );
     }
@@ -430,7 +437,7 @@ mod tests {
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / 8.0;
                 let unit = Position::from_angle(angle);
-                Sample {
+                TrackSample {
                     point: Position::new(20.0 * unit.x, 20.0 * unit.y),
                     right: 4.0 + i as f64,
                     left: 5.0,

@@ -1,7 +1,7 @@
 //! Geometry shared by tracks and the planners.
 
 mod catalog;
-mod circuit;
+mod geometry;
 mod path;
 pub(crate) mod pregenerate;
 #[cfg_attr(not(any(test, feature = "track-pregeneration")), allow(dead_code))]
@@ -21,7 +21,6 @@ pub(crate) const ROAD_SAMPLE_STEP_M: f64 = 1.0;
 
 #[cfg(test)]
 mod tests {
-    use super::track::TrackGeometry;
     use super::*;
     use crate::common::geometry::distance::dist;
 
@@ -38,8 +37,8 @@ mod tests {
     fn every_catalog_track_has_finite_geometry_and_widths() {
         for (index, info) in TRACK_CATALOG.iter().enumerate() {
             let track = Track::from_catalog(TRACK_PRESETS.len() + index);
-            let TrackGeometry::Circuit(circuit) = &track.geometry;
-            assert!(circuit.is_simple(), "{} intersects itself", info.name);
+            let geometry = &track.geometry;
+            assert!(geometry.is_simple(), "{} intersects itself", info.name);
             let (point, yaw) = track.pose(100.0);
             let widths = track.widths(100.0);
             assert!(point.is_finite() && [yaw, widths.0, widths.1].into_iter().all(f64::is_finite));
@@ -53,10 +52,10 @@ mod tests {
             let track = Track::from_catalog(index);
             let length = track.lap_length().unwrap();
             assert!(dist(track.point(0.0), track.point(length)) < 1e-9);
-            let TrackGeometry::Circuit(circuit) = &track.geometry;
-            assert!(circuit.is_simple(), "{} intersects itself", info.name);
-            for i in 0..circuit.samples.len() {
-                let progress = length * i as f64 / circuit.samples.len() as f64;
+            let geometry = &track.geometry;
+            assert!(geometry.is_simple(), "{} intersects itself", info.name);
+            for i in 0..geometry.samples.len() {
+                let progress = length * i as f64 / geometry.samples.len() as f64;
                 let (point, yaw) = track.pose(progress);
                 let (right, left) = track.widths(progress);
                 assert!(point.is_finite() && [yaw, right, left].into_iter().all(f64::is_finite));

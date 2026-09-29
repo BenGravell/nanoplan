@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use super::circuit::Circuit;
+use super::geometry::TrackGeometry;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TrackInfo {
@@ -58,14 +58,15 @@ pub(super) const PRESET_TRACKS: [&str; 2] = [
     include_str!("data/preset_small.csv"),
 ];
 
-static CIRCUITS: [OnceLock<Arc<Circuit>>; TRACK_CATALOG.len()] = [const { OnceLock::new() }; TRACK_CATALOG.len()];
+static TRACK_GEOMETRIES: [OnceLock<Arc<TrackGeometry>>; TRACK_CATALOG.len()] =
+    [const { OnceLock::new() }; TRACK_CATALOG.len()];
 
-pub(super) fn circuit(index: usize) -> Result<Arc<Circuit>, String> {
+pub(super) fn geometry(index: usize) -> Result<Arc<TrackGeometry>, String> {
     let track = TRACK_CATALOG
         .get(index)
         .ok_or_else(|| "track catalog index out of bounds".to_owned())?;
-    Ok(CIRCUITS[index]
-        .get_or_init(|| Arc::new(Circuit::baked(track.data)))
+    Ok(TRACK_GEOMETRIES[index]
+        .get_or_init(|| Arc::new(TrackGeometry::baked(track.data)))
         .clone())
 }
 

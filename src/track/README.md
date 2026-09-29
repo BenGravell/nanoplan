@@ -51,7 +51,7 @@ Segment-intersection checks reject non-simple shapes.
 track/
 ├── README.md           this document
 ├── catalog.rs          metadata and checked-in baked point inclusion
-├── circuit.rs          closed-circuit baking, interpolation, and projection
+├── geometry.rs         TrackGeometry: closed-track baking, interpolation, and projection
 ├── data/               spline-processed point data used at runtime
 ├── mod.rs              module wiring
 ├── path.rs             arc-length lookup and Frenet projection

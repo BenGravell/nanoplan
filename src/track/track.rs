@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::catalog::{self, PRESET_TRACKS};
-use super::circuit::Circuit;
+use super::geometry::TrackGeometry;
 use super::path::ReferenceGeometry;
 use super::presets::TRACK_PRESETS;
 use crate::common::geometry::RoadPolygon;
@@ -11,25 +11,18 @@ use crate::simulation::Position;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Track {
-    pub(super) geometry: TrackGeometry,
-}
-
-#[derive(Debug, Clone)]
-pub(super) enum TrackGeometry {
-    Circuit(Arc<Circuit>),
+    pub(super) geometry: Arc<TrackGeometry>,
 }
 
 impl Track {
     pub(crate) fn from_catalog(index: usize) -> Self {
         if index < TRACK_PRESETS.len() {
             return Self {
-                geometry: TrackGeometry::Circuit(Arc::new(Circuit::baked(PRESET_TRACKS[index]))),
+                geometry: Arc::new(TrackGeometry::baked(PRESET_TRACKS[index])),
             };
         }
         Self {
-            geometry: TrackGeometry::Circuit(
-                catalog::circuit(index - TRACK_PRESETS.len()).expect("selected track is invalid"),
-            ),
+            geometry: catalog::geometry(index - TRACK_PRESETS.len()).expect("selected track is invalid"),
         }
     }
 
@@ -38,15 +31,11 @@ impl Track {
     }
 
     pub(crate) fn pose(&self, progress: f64) -> (Position, f64) {
-        match &self.geometry {
-            TrackGeometry::Circuit(circuit) => circuit.pose(progress),
-        }
+        self.geometry.pose(progress)
     }
 
     pub(crate) fn widths(&self, progress: f64) -> (f64, f64) {
-        match &self.geometry {
-            TrackGeometry::Circuit(circuit) => circuit.widths(progress),
-        }
+        self.geometry.widths(progress)
     }
 
     pub(crate) fn half_width(&self, progress: f64) -> f64 {
@@ -75,11 +64,9 @@ impl Track {
     pub(crate) fn reference_geometry(&self, from: f64, to: f64, step: f64, closed: bool) -> Vec<ReferenceGeometry> {
         Self::road_stations(from, to, step, closed)
             .into_iter()
-            .map(|s| match &self.geometry {
-                TrackGeometry::Circuit(circuit) => ReferenceGeometry {
-                    heading: circuit.heading(s),
-                    curvature: circuit.curvature(s),
-                },
+            .map(|s| ReferenceGeometry {
+                heading: self.geometry.heading(s),
+                curvature: self.geometry.curvature(s),
             })
             .collect()
     }
@@ -92,14 +79,10 @@ impl Track {
     }
 
     pub(crate) fn lap_length(&self) -> Option<f64> {
-        match &self.geometry {
-            TrackGeometry::Circuit(circuit) => Some(circuit.length),
-        }
+        Some(self.geometry.length)
     }
 
     pub(crate) fn project_progress(&self, point: Position, hint: f64) -> f64 {
-        match &self.geometry {
-            TrackGeometry::Circuit(circuit) => circuit.project(point, hint),
-        }
+        self.geometry.project(point, hint)
     }
 }
