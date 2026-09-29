@@ -13,6 +13,7 @@ use crate::viewer::{CANVAS_RGB, MIN_VIEWPORT_ASPECT_RATIO, MIN_VIEWPORT_WIDTH};
 
 #[test]
 fn viewer_elements_fit_and_render_at_target_sizes() {
+    let _gpu = super::test_support::gpu_test_guard();
     let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("viewer-renders");
     std::fs::create_dir_all(&output_dir).unwrap();
 

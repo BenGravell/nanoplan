@@ -101,6 +101,7 @@ fn landing_background_respects_the_gpu_texture_limit() {
 
 #[test]
 fn landing_bottom_corner_visibility_threshold_prevents_svg_pixel_collisions() {
+    let _gpu = crate::viewer::ui::test_support::gpu_test_guard();
     assert!(super::show_bottom_left(egui::vec2(31.0, 20.0)));
     assert!(!super::show_bottom_left(egui::vec2(3.0, 2.0)));
     assert!(super::show_bottom_left(egui::vec2(16.0, 9.0)));
