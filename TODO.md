@@ -22,16 +22,6 @@ They should run a basic planner instead of using magic unphysical motion.
 
 Add guidance mode, human steers target for planner
 
-## planning horizon
-
-planning horizon should remain long enough to plan a max decel stop to standstill.
-this is for coming down from top speed on a long straight to low speed for a sharp corner.
-
-planning horizon might be too long, seems to cause bad behaviors like flickering and slowdown.
-
-need to handle progress rewards somehow elegantly so that we encourage short-term acceleration without becoming too
-myopic and failing to reason about and anticipate corners and overtake maneuvers
-
 ## Cost map
 
 - Compute signed distance field to obstacles and road boundaries.

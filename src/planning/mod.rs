@@ -167,50 +167,60 @@ pub(crate) fn test_run_on(
     actors: &[State],
     ticks: usize,
 ) -> Vec<State> {
+    test_steps_on(planner, road, ego, actors, ticks).collect()
+}
+
+/// Lazy closed-loop steps, allowing callers to stop at the first matching state.
+#[cfg(test)]
+pub(crate) fn test_steps_on<'a>(
+    planner: &'a mut dyn Planner,
+    road: &'a Road,
+    ego: State,
+    actors: &'a [State],
+    ticks: usize,
+) -> impl Iterator<Item = State> + 'a {
     let mut sim = crate::simulation::Simulator::new(ego, road.dt);
-    (0..ticks)
-        .map(|_| {
-            let command = planner
-                .plan(sim.state, &test_ctx(road, actors))
-                .first()
-                .copied()
-                .unwrap_or_default();
-            let previous = sim.state;
-            sim.step(command);
-            sim.state = crate::common::geometry::barrier::collide_with_road_barriers(
-                previous,
-                sim.state,
+    (0..ticks).map(move |_| {
+        let command = planner
+            .plan(sim.state, &test_ctx(road, actors))
+            .first()
+            .copied()
+            .unwrap_or_default();
+        let previous = sim.state;
+        sim.step(command);
+        sim.state = crate::common::geometry::barrier::collide_with_road_barriers(
+            previous,
+            sim.state,
+            crate::common::geometry::EGO_FOOTPRINT,
+            road,
+        );
+        // Planner fixtures describe prescribed obstacle trajectories, not
+        // live-world dynamic actors. Keep those fixtures fixed while the
+        // production world resolves all vehicles symmetrically.
+        sim.state = actors.iter().fold(sim.state, |state, actor| {
+            let Some(hit) = crate::common::geometry::overlap_mtv(
+                state.pose(),
                 crate::common::geometry::EGO_FOOTPRINT,
-                road,
-            );
-            // Planner fixtures describe prescribed obstacle trajectories, not
-            // live-world dynamic actors. Keep those fixtures fixed while the
-            // production world resolves all vehicles symmetrically.
-            sim.state = actors.iter().fold(sim.state, |state, actor| {
-                let Some(hit) = crate::common::geometry::overlap_mtv(
-                    state.pose(),
-                    crate::common::geometry::EGO_FOOTPRINT,
-                    actor.pose(),
-                    crate::common::geometry::CAR_FOOTPRINT,
-                ) else {
-                    return state;
-                };
-                let direction = Position::from_angle(state.pose.yaw);
-                let mut velocity = [state.speed * direction.x, state.speed * direction.y];
-                let normal_speed = velocity[0] * hit.normal[0] + velocity[1] * hit.normal[1];
-                if normal_speed < 0.0 {
-                    velocity[0] -= 1.1 * normal_speed * hit.normal[0];
-                    velocity[1] -= 1.1 * normal_speed * hit.normal[1];
-                }
-                {
-                    let mut state = state;
-                    state.pose.position.x = state.position().x + hit.normal[0] * hit.depth;
-                    state.pose.position.y = state.position().y + hit.normal[1] * hit.depth;
-                    state.speed = velocity[0].hypot(velocity[1]);
-                    state
-                }
-            });
-            sim.state
-        })
-        .collect()
+                actor.pose(),
+                crate::common::geometry::CAR_FOOTPRINT,
+            ) else {
+                return state;
+            };
+            let direction = Position::from_angle(state.pose.yaw);
+            let mut velocity = [state.speed * direction.x, state.speed * direction.y];
+            let normal_speed = velocity[0] * hit.normal[0] + velocity[1] * hit.normal[1];
+            if normal_speed < 0.0 {
+                velocity[0] -= 1.1 * normal_speed * hit.normal[0];
+                velocity[1] -= 1.1 * normal_speed * hit.normal[1];
+            }
+            {
+                let mut state = state;
+                state.pose.position.x = state.position().x + hit.normal[0] * hit.depth;
+                state.pose.position.y = state.position().y + hit.normal[1] * hit.depth;
+                state.speed = velocity[0].hypot(velocity[1]);
+                state
+            }
+        });
+        sim.state
+    })
 }
