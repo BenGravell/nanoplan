@@ -29,15 +29,9 @@
 //!
 //! ## Fitting treetop into the nanoplan framework
 //!
-//! - **The goal is a moving lane target, not a parking pose.** treetop
-//!   solves point-to-point: drive from a start pose to a user-placed goal
-//!   pose in a fixed obstacle field. nanoplan's problem is a rolling one —
-//!   follow the centerline at the target speed. [`goal_state`] bridges the
-//!   two: the goal is the centerline pose a planning horizon ahead
-//!   (at the average of current and target speed), at the target speed.
-//!   Every treetop notion of "distance to goal" and "target hit" then
-//!   carries over, with the hit tolerance loosened from treetop's
-//!   parking-precision 0.01 to a lane-driving [`GOAL_HIT_TOL`].
+//! - **The goal guides sampling.** A maximum-acceleration rollout places a
+//!   reachable preview on the centerline. Candidate selection uses the shared
+//!   progress cost, without a terminal-speed or goal-distance preference.
 //! - **Obstacles are moving actors priced by the shared metric objective.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
@@ -96,37 +90,28 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
     x
 }
 
-/// The goal state the tree grows toward: the centerline pose one planning
-/// horizon ahead of the ego's current
-/// station (at the average of current and target speed, so a slow start
-/// aims at a reachable point), at the road's target speed. This is the
-/// treetop→nanoplan bridge — treetop's fixed user-placed goal pose becomes
-/// a rolling lane target recomputed every replan.
+/// Guide tree sampling with the centerline pose at maximum-acceleration reach.
+/// This preview bounds the search; the progress cost chooses the trajectory.
 pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
     let (s0, _) = path.project(ego.position());
-    let horizon_s = TICKS as f64 * ctx.road.dt;
-    let preview = 0.5 * (ego.speed + ctx.road.target_speed) * horizon_s;
-    let s_goal = (s0 + preview).min(path.length());
+    let mut preview = State {
+        speed: ego.speed,
+        ..Default::default()
+    };
+    for _ in 0..TICKS {
+        preview = world_step(
+            preview,
+            Control {
+                acceleration: crate::vehicle::MAX_LON_ACCEL,
+                curvature: 0.0,
+            },
+            ctx.road.dt,
+        );
+    }
+    let s_goal = (s0 + preview.position().x).min(path.length());
     let (goal, gyaw) = path.pose_at(s_goal);
-    (goal, gyaw, ctx.road.target_speed).into()
+    (goal, gyaw, preview.speed).into()
 }
-
-/// treetop's heuristic `stateDistance`: planar distance plus absolute yaw
-/// and speed deltas, mixing meters, radians, and m/s equally — treetop's
-/// own comment concedes this is "a decent choice empirically (even if it
-/// is not very principled)".
-pub(crate) fn state_distance(a: &State, b: &State) -> f64 {
-    a.position().distance(b.position())
-        + crate::common::geometry::wrap_angle(a.pose.yaw - b.pose.yaw).abs()
-        + (a.speed - b.speed).abs()
-}
-
-/// A trajectory endpoint within this [`state_distance`] of the goal counts
-/// as hitting it. treetop uses 0.01 (per-axis) because its goal is a
-/// parking pose to be reached exactly; a rolling lane target only needs to
-/// be reached *roughly* — the point is sustained progress, not terminal
-/// precision.
-pub(crate) const GOAL_HIT_TOL: f64 = 2.0;
 
 /// How many samples the tree spends per `plan()` call, spread across the
 /// layers. treetop's interactive default is 5000 across 19 layers; a 10 Hz
@@ -204,28 +189,18 @@ impl Planner for TreetopPlanner {
                 (tree, candidates)
             });
 
-            // ---- Trajectory optimization (treetop `traj_opt`): run iLQR
-            // on each candidate's action sequence, then pick by treetop's
-            // two-tier rule — the cheapest solution that still hits the
-            // goal, else the one ending nearest it (a candidate that
-            // merely optimized to a low cost by giving up on progress
-            // must not beat one that gets there).
+            // Optimize each candidate and select by the shared progress cost.
             let ocp = ilqr::Ocp { path, start: ego, ctx };
             let best = ctx.time("traj_opt", || {
-                let mut best_hit: Option<(f64, usize, ilqr::Solution)> = None;
-                let mut best_any: Option<(f64, usize, ilqr::Solution)> = None;
-                for (i, cand) in candidates.iter().enumerate() {
-                    let actions = tree.actions_of(cand);
-                    let sol = ilqr::solve(&ocp, &actions, OPT_ITERS);
-                    let dist = state_distance(sol.states.last().unwrap(), &goal);
-                    if dist < GOAL_HIT_TOL && best_hit.as_ref().is_none_or(|(c, ..)| sol.cost < *c) {
-                        best_hit = Some((sol.cost, i, sol.clone()));
-                    }
-                    if best_any.as_ref().is_none_or(|(d, ..)| dist < *d) {
-                        best_any = Some((dist, i, sol));
-                    }
-                }
-                best_hit.or(best_any).expect("at least one candidate")
+                candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cand)| {
+                        let sol = ilqr::solve(&ocp, &tree.actions_of(cand), OPT_ITERS);
+                        (sol.cost, i, sol)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .expect("at least one candidate")
             });
             (tree, candidates, best)
         });
@@ -258,7 +233,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn goal_state_sits_on_the_centerline_at_target_speed() {
+    fn goal_state_uses_reachable_progress_on_the_centerline() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(road.centerline());
@@ -267,11 +242,17 @@ mod tests {
             ..Default::default()
         };
         let g = goal_state(&path, ego, &ctx);
-        // 10 m/s for 10 s ahead of x = 0, on the lane, facing along it
-        assert!((g.position().x - 100.0).abs() < 1e-6, "goal x {}", g.position().x);
+        assert!(
+            g.position().x > 100.0 && g.position().x <= 400.0,
+            "goal x {}",
+            g.position().x
+        );
         assert_eq!(g.position().y, 0.0);
         assert_eq!(g.pose.yaw, 0.0);
-        assert_eq!(g.speed, 10.0);
+        assert_eq!(
+            g.speed,
+            crate::simulation::speed_after_max_accel(ego.speed, TICKS, road.dt)
+        );
     }
 
     #[test]

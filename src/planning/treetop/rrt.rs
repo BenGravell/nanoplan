@@ -48,7 +48,7 @@
 //! **Diagnostics**: every tree node as a point and every edge's rollout
 //! polyline as a trajectory — the whole search considered, mirroring RRT*.
 
-use super::{GOAL_HIT_TOL, SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, state_distance, zero_action_point};
+use super::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::common::geometry::wrap_angle;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math;
@@ -66,13 +66,12 @@ use crate::track::Path;
 /// only bounds where candidates are *drawn*, never what counts as on-road.
 const SAMPLE_LATERAL_M: f64 = 4.5;
 
-/// Cold samples' heading spread around the lane direction (rad), and their
-/// speed range as a multiple of the target speed. treetop samples yaw over
+/// Cold samples' heading spread around the lane direction (rad).
+/// Speeds span zero to the reachable speed at each layer. treetop samples yaw over
 /// ±π/2 and speed over the full signed limit range; lane driving has no
 /// use for near-perpendicular or reversing states, which would only steer
 /// unreachable segments.
 const SAMPLE_YAW_SPREAD: f64 = 0.5;
-const SAMPLE_SPEED_FACTOR: f64 = 1.2;
 const COLD_GRID_STATIONS: usize = SEGMENTS - 1;
 const COLD_GRID_LATERALS: usize = 5;
 
@@ -102,7 +101,6 @@ pub(crate) struct Node {
     /// (`controls.len() + 1`; just the state for the root).
     pub(crate) states: Vec<State>,
     pub(crate) cost_to_come: f64,
-    pub(crate) dist_to_goal: f64,
     /// Whether any edge on the path to this node hard-violates the shared
     /// cost (collision / off-road) — set only by the fallback chains that
     /// deliberately ignore collisions to guarantee connectivity.
@@ -157,7 +155,6 @@ impl Tree {
             controls: Vec::new(),
             states: vec![start],
             cost_to_come: 0.0,
-            dist_to_goal: state_distance(&start, &goal),
             collides: false,
         });
         tree.layers[0].push(0);
@@ -172,7 +169,7 @@ impl Tree {
             let from = tree.nodes[parent].state;
             let target = zero_action_point(from, steer_dur);
             let (us, xs, ee) = g.steer_edge(from, target, steer_dur, layer);
-            parent = tree.add_node(parent, us, xs, layer, &goal, ee);
+            parent = tree.add_node(parent, us, xs, layer, ee);
         }
 
         // Hot chain (treetop `growHot`): re-roll the warm-start actions
@@ -189,7 +186,7 @@ impl Tree {
                 if ee.collides {
                     break;
                 }
-                parent = tree.add_node(parent, us, xs, layer, &goal, ee);
+                parent = tree.add_node(parent, us, xs, layer, ee);
             }
         }
 
@@ -238,7 +235,7 @@ impl Tree {
                     let target = State::from((
                         xy,
                         lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
-                        c[3] * SAMPLE_SPEED_FACTOR * ctx.road.target_speed,
+                        c[3] * crate::simulation::speed_after_max_accel(start.speed, layer * STEER_TICKS, ctx.road.dt),
                     ));
                     (target, Reason::Sample)
                 };
@@ -272,7 +269,7 @@ impl Tree {
                 if ee.collides {
                     continue;
                 }
-                tree.add_node(parent, us, xs, layer, &goal, ee);
+                tree.add_node(parent, us, xs, layer, ee);
             }
         }
 
@@ -287,13 +284,13 @@ impl Tree {
             if ee.collides {
                 continue;
             }
-            tree.add_node(parent, us, xs, SEGMENTS, &goal, ee);
+            tree.add_node(parent, us, xs, SEGMENTS, ee);
         }
         if tree.layers[SEGMENTS].is_empty() {
             let parent = tree.nearest_zap_parent(SEGMENTS, &goal, steer_dur);
             let from = tree.nodes[parent].state;
             let (us, xs, ee) = g.steer_edge(from, goal, steer_dur, SEGMENTS);
-            tree.add_node(parent, us, xs, SEGMENTS, &goal, ee);
+            tree.add_node(parent, us, xs, SEGMENTS, ee);
         }
 
         tree
@@ -305,7 +302,6 @@ impl Tree {
         controls: Vec<Control>,
         states: Vec<State>,
         layer: usize,
-        goal: &State,
         ee: EdgeEval,
     ) -> usize {
         let p = &self.nodes[parent];
@@ -314,7 +310,6 @@ impl Tree {
             state,
             parent: Some(parent),
             cost_to_come: p.cost_to_come + ee.cost,
-            dist_to_goal: state_distance(&state, goal),
             collides: p.collides || ee.collides,
             controls,
             states,
@@ -339,27 +334,14 @@ impl Tree {
             .expect("layers are never empty")
     }
 
-    /// The best `k` full-length paths, each as `SEGMENTS` node ids from
-    /// layer 1 to the goal layer — treetop's `getPathCandidates`, with the
-    /// random alternates made deterministic: the best node is the
-    /// cheapest goal-hitter (else the closest to the goal), and the
-    /// alternates are the next-best goal nodes by the same ordering,
-    /// instead of a shuffle.
+    /// The best `k` full-length paths, preferring feasible paths, then progress cost.
     pub(crate) fn path_candidates(&self, k: usize) -> Vec<Vec<usize>> {
         let mut goal_nodes = self.layers[SEGMENTS].clone();
         goal_nodes.sort_by(|&a, &b| {
             let (na, nb) = (&self.nodes[a], &self.nodes[b]);
-            let hit = |n: &Node| !(n.collides || n.dist_to_goal >= GOAL_HIT_TOL);
-            // goal-hitters first, cheapest first among them; then by
-            // distance to goal, collision-free before colliding
-            hit(nb)
-                .cmp(&hit(na))
-                .then(na.collides.cmp(&nb.collides))
-                .then(if hit(na) {
-                    na.cost_to_come.total_cmp(&nb.cost_to_come)
-                } else {
-                    na.dist_to_goal.total_cmp(&nb.dist_to_goal)
-                })
+            na.collides
+                .cmp(&nb.collides)
+                .then(na.cost_to_come.total_cmp(&nb.cost_to_come))
         });
         goal_nodes.truncate(k);
         goal_nodes.iter().map(|&n| self.extract_path(n)).collect()
@@ -521,13 +503,7 @@ impl Planner for RrtPlanner {
             let best = &tree.path_candidates(1)[0];
             tree.actions_of(best)
         });
-        let mut out = repeat_last_controls(&controls, ctx.horizon);
-        let mut x = ego;
-        for u in &mut out {
-            let speed_hold = (0.5 * (ctx.road.target_speed - x.speed)).clamp(-4.0, 1.5);
-            u.acceleration = u.acceleration.min(speed_hold);
-            x = world_step(x, *u, ctx.road.dt);
-        }
+        let out = repeat_last_controls(&controls, ctx.horizon);
         self.expected_next = world_step(ego, out[0], ctx.road.dt);
         self.prev = Some(controls);
         out
@@ -625,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn stays_on_road_and_near_speed() {
+    fn stays_on_road_and_accelerates() {
         let ego = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
             6.0,
@@ -633,7 +609,7 @@ mod tests {
         let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.position().y.abs() < SAMPLE_LATERAL_M, "offset {}", end.position().y);
-        assert!((end.speed - 10.0).abs() < 2.5, "speed {}", end.speed);
+        assert!(end.speed > 10.0, "speed {}", end.speed);
     }
 
     #[test]

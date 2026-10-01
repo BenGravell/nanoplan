@@ -63,7 +63,7 @@ pub(crate) use ps::PredictiveSampling;
 
 use crate::common::geometry::wrap_angle;
 use crate::planning::constraints::{HardConstraints, Sample};
-use crate::planning::policy::centerline_feedback;
+use crate::planning::policy::centerline_curvature;
 use crate::planning::sampling::{self, Halton};
 use crate::planning::{Context, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
@@ -262,16 +262,16 @@ impl<O: Optimizer> SamplingPlanner<O> {
     /// why PI²-DDP rolls out with its feedback gains `K` rather than raw
     /// nominal controls — so the QMC exploration prices real maneuvers
     /// (an obstacle swerve) instead of open-loop drift.
-    fn base_policy(path: &Path, x: &State, ctx: &Context) -> Knot {
-        let u = centerline_feedback(path, x, ctx.road.target_speed);
-        [u.acceleration, u.curvature]
+    fn base_policy(path: &Path, x: &State) -> Knot {
+        // Nominal throttle is a search seed; the progress cost selects deviations.
+        [1.5, centerline_curvature(path, x)]
     }
 
     /// The action commanded at rollout state `x` for knot-deviation `dev`:
     /// the base policy plus the deviation. It is not clamped here — `step`
     /// applies the shared action/state limits exactly as the plant will.
-    fn command(path: &Path, x: &State, dev: Knot, ctx: &Context) -> Control {
-        let base = Self::base_policy(path, x, ctx);
+    fn command(path: &Path, x: &State, dev: Knot) -> Control {
+        let base = Self::base_policy(path, x);
         Control {
             acceleration: base[0] + dev[0],
             curvature: base[1] + dev[1],
@@ -314,7 +314,7 @@ impl<O: Optimizer> SamplingPlanner<O> {
 
         for t in 0..HORIZON {
             let dev = control_at(knots, t, HORIZON);
-            let u = Self::command(path, &x, dev, ctx);
+            let u = Self::command(path, &x, dev);
             x = world_step(x, u, ctx.road.dt);
             total += Self::state_cost(path, &x, t + 1, ego.speed, ctx);
             xs.push(x);
@@ -391,7 +391,7 @@ impl<O: Optimizer> Planner for SamplingPlanner<O> {
             let mut x = ego;
             (0..ctx.horizon)
                 .map(|t| {
-                    let u = Self::command(path, &x, control_at(&nominal, t, HORIZON), ctx);
+                    let u = Self::command(path, &x, control_at(&nominal, t, HORIZON));
                     x = world_step(x, u, ctx.road.dt);
                     u
                 })
@@ -427,7 +427,6 @@ mod tests {
     #[test]
     fn base_policy_steers_toward_the_lane() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(road.centerline());
         // from y = +2 (left of the lane), the base policy steers right
         // (negative curvature). The nominal throttle keeps weighted-average
@@ -436,7 +435,7 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
             8.0,
         );
-        let base = SamplingPlanner::<PredictiveSampling>::base_policy(&path, &x, &ctx);
+        let base = SamplingPlanner::<PredictiveSampling>::base_policy(&path, &x);
         assert!(base[1] < 0.0, "curvature {}", base[1]);
         assert!(base[0] > 0.0, "accel {}", base[0]);
     }

@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::common::differencing::forward_difference;
-use crate::planning::policy::centerline_feedback;
+use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S};
 use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;
@@ -28,7 +28,7 @@ impl<'a> RoadFrame<'a> {
     pub(crate) fn new(ego: State, ctx: &'a Context) -> Self {
         let path = ctx.path();
         let (s0, d0) = path.project(ego.position());
-        let speed = ego.speed.clamp(2.0, ctx.road.target_speed.max(2.0));
+        let speed = ego.speed.max(2.0);
         RoadFrame {
             path,
             s0,
@@ -197,7 +197,6 @@ pub(crate) fn centerline_follow_controls(ego: State, path: &Path, ctx: &Context,
     let mut controls = Vec::with_capacity(horizon);
     for _ in 0..horizon {
         let (s, _) = path.project(x.position());
-        let base = centerline_feedback(path, &x, ctx.road.target_speed);
         let traffic_brake = ctx
             .actors
             .iter()
@@ -208,10 +207,10 @@ pub(crate) fn centerline_follow_controls(ego: State, path: &Path, ctx: &Context,
             })
             .min_by(f64::total_cmp)
             .unwrap_or(0.0);
-        let accel = base.acceleration.min(traffic_brake).clamp(MIN_LON_ACCEL, 0.0);
+        let accel = traffic_brake.clamp(MIN_LON_ACCEL, 0.0);
         let u = Control {
             acceleration: accel,
-            curvature: base.curvature,
+            curvature: centerline_curvature(path, &x),
         };
         x = world_step(x, u, ctx.road.dt);
         controls.push(u);

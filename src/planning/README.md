@@ -74,7 +74,7 @@ Native tests and batch measurement can explicitly block for a result; the live v
 
 ```rust
 pub struct Context<'a> {
-    pub road: &'a Road,               // centerline + target speed + tick length
+    pub road: &'a Road,               // centerline + tick length
     pub actors: &'a [State],          // other vehicles, current states only
     pub horizon: usize,               // requested control-trajectory length
     pub latency: Option<&'a Latency>, // recorder; see below
@@ -85,9 +85,9 @@ pub struct Context<'a> {
 Everything a planner needs besides its own state and the ego pose.
 Notably:
 
-- **`road` is the current planning window** — the `track::Road` parameter object bundling the track centerline, the
-  desired cruise speed, and the tick length of the returned controls.
-  Planners read `ctx.road.centerline()`, `ctx.road.target_speed`, and `ctx.road.dt`.
+- **`road` is the current planning window** — the `track::Road` parameter object bundling the track centerline and the
+  tick length of the returned controls.
+  Planners read `ctx.road.centerline()` and `ctx.road.dt`.
   The live world sizes this window for maximum-acceleration reach over the shared planning horizon for every planner, and
   refreshes it when speed increases beyond the existing window's coverage.
 - **`actors` is current-tick only.** Planners see no future information about other vehicles — if they want a prediction,
@@ -206,7 +206,7 @@ See each planner's README for exactly what it records.
 
 `planning/mod.rs` exposes three `#[cfg(test)]` helpers shared by every planner's tests:
 
-- `test_road(centerline) -> Road` — a `Road` with sane defaults (`target_speed: 10.0`, `dt: 0.1`).
+- `test_road(centerline) -> Road` — a `Road` with sane defaults (`dt: 0.1`).
 - `test_ctx(&road, actors) -> Context` — a `Context` over that road (`horizon: 10`, no recorders).
 - `test_run(planner, ego, actors, ticks) -> Vec<State>` — drives a planner closed-loop through a fixed straight centerline
   for `ticks` steps and returns the ego trace, for assertions like "ends up within 0.5 m of the centerline" or "keeps more

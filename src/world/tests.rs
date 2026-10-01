@@ -327,7 +327,7 @@ fn planner_only_sees_reachable_traffic() {
 #[test]
 fn ego_bounces_off_road_barriers() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
-    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
+    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 3.5, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
         crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), std::f64::consts::FRAC_PI_2),
@@ -430,7 +430,7 @@ fn traffic_keeps_rebound_velocity_on_the_next_tick() {
 #[test]
 fn ego_and_actor_both_receive_collision_response() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
-    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 10.0, 50.0, 0.1);
+    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 50.0, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
         crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), 0.0),
@@ -454,7 +454,7 @@ fn ego_and_actor_both_receive_collision_response() {
 #[test]
 fn traffic_bounces_off_static_road_barriers() {
     let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
-    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
+    world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 3.5, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
         crate::simulation::Pose::new(crate::simulation::Position::new(-50.0, 0.0), 0.0),

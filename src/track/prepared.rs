@@ -44,18 +44,14 @@ impl PreparedRoads {
             .max(planning_lookahead_m(initial_speed.max(*MAX_TERMINAL_SPEED_MPS), dt) + ROAD_REFRESH_DISTANCE_M)
             .max(VISIBLE_TRACK_AHEAD_M);
         let count = prefix + sample_index(lap + reach, lap, samples).ceil() as usize + 2;
-        let mut planning = Road::from_polygon(
-            polygon.repeated(-(prefix as isize), count),
-            *MAX_TERMINAL_SPEED_MPS,
-            PLANNING_DT_S,
-        );
+        let mut planning = Road::from_polygon(polygon.repeated(-(prefix as isize), count), PLANNING_DT_S);
         planning.set_reference_geometry(
             (0..count)
                 .map(|i| geometry[(i + samples - prefix % samples) % samples])
                 .collect(),
         );
         planning.prepare();
-        let mut collision = Road::from_polygon(polygon, *MAX_TERMINAL_SPEED_MPS, PLANNING_DT_S);
+        let mut collision = Road::from_polygon(polygon, PLANNING_DT_S);
         collision.set_reference_geometry(geometry[..samples].to_vec());
         collision.prepare();
         Self {

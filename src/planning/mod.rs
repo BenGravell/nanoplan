@@ -51,7 +51,7 @@ use crate::track::{Path, Road};
 /// Everything a planner sees besides the ego state.
 pub(crate) struct Context<'a> {
     path: OnceCell<Path>,
-    /// The fixed setting of the run: centerline, target speed, tick length.
+    /// The fixed setting of the run: centerline and tick length.
     pub(crate) road: &'a Road,
     /// Current states of the other actors.
     pub(crate) actors: &'a [State],
@@ -133,7 +133,7 @@ pub(crate) const TEST_HALF_WIDTH_M: f64 = 5.5;
 
 #[cfg(test)]
 pub(crate) fn test_road<P: Copy + Into<crate::simulation::Position>>(centerline: &[P]) -> Road {
-    Road::new(centerline.to_vec(), 10.0, TEST_HALF_WIDTH_M, 0.1)
+    Road::new(centerline.to_vec(), TEST_HALF_WIDTH_M, 0.1)
 }
 
 #[cfg(test)]

@@ -15,7 +15,6 @@ pub(crate) struct Road {
     range: std::ops::Range<usize>,
     path: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<super::path::PathGeometry>>>,
     reference_geometry: Option<std::sync::Arc<[ReferenceGeometry]>>,
-    pub(crate) target_speed: f64,
     pub(crate) half_width: f64,
     barriers: std::sync::Arc<[Barrier]>,
     pub(crate) dt: f64,
@@ -33,13 +32,13 @@ pub(crate) struct RoadView {
 
 impl Road {
     #[cfg(test)]
-    pub(crate) fn new<P: Into<Position>>(centerline: Vec<P>, target_speed: f64, half_width: f64, dt: f64) -> Self {
+    pub(crate) fn new<P: Into<Position>>(centerline: Vec<P>, half_width: f64, dt: f64) -> Self {
         let polygon = RoadPolygon::uniform(centerline.into_iter().map(Into::into).collect(), half_width)
             .expect("road needs a finite positive width and at least two distinct stations");
-        Self::from_polygon(polygon, target_speed, dt)
+        Self::from_polygon(polygon, dt)
     }
 
-    pub(crate) fn from_polygon(polygon: RoadPolygon, target_speed: f64, dt: f64) -> Self {
+    pub(crate) fn from_polygon(polygon: RoadPolygon, dt: f64) -> Self {
         let mut stations = Vec::with_capacity(polygon.centerline().len());
         stations.push(0.0);
         for pair in polygon.centerline().windows(2) {
@@ -61,7 +60,6 @@ impl Road {
             segments: Default::default(),
             stations: stations.into(),
             reference_geometry: None,
-            target_speed,
             half_width,
             barriers: barriers.into(),
             dt,
@@ -179,7 +177,7 @@ mod tests {
     fn barrier_projection_latency_clocks_bound_long_roads_and_clones() {
         use crate::planning::Latency;
         for segments in [256, 4096] {
-            let road = Road::new((0..=segments).map(|i| [i as f64, 0.0]).collect(), 10.0, 3.5, 0.1);
+            let road = Road::new((0..=segments).map(|i| [i as f64, 0.0]).collect(), 3.5, 0.1);
             let lat = Latency::default();
             lat.time("build", || road.closest_centerline_segment([0.5, 1.0].into()));
             let build = lat.take()[0].clocks;
@@ -209,7 +207,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let road = Road::from_polygon(polygon, 10.0, 0.1);
+        let road = Road::from_polygon(polygon, 0.1);
         assert_eq!(road.lateral_bounds_at(5.0), (-3.0, 5.0));
     }
 }

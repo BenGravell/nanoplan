@@ -61,12 +61,10 @@ fn candidate(
     if first_distance <= 0.0 {
         return None;
     }
-    let fastest_speed = (lane_speed * lane_speed + 2.0 * MAX_LON_ACCEL * first_distance)
-        .sqrt()
-        .min(ctx.road.target_speed);
+    let fastest_speed = (lane_speed * lane_speed + 2.0 * MAX_LON_ACCEL * first_distance).sqrt();
     let fastest_duration = 2.0 * first_distance / (lane_speed + fastest_speed).max(1.0);
     let mut duration = fastest_duration * duration_factor;
-    let mut cruise_speed = (2.0 * first_distance / duration - lane_speed).clamp(0.0, ctx.road.target_speed);
+    let mut cruise_speed = (2.0 * first_distance / duration - lane_speed).max(0.0);
     let mut target_s = s0 + first_distance;
     let mut x = ego;
     let mut controls = Vec::with_capacity(ctx.horizon);
@@ -158,7 +156,6 @@ fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) 
 mod tests {
     use super::*;
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
-    use crate::simulation::MAX_TERMINAL_SPEED_MPS;
     use crate::simulation::Position;
     use crate::simulation::world_step;
     use crate::track::Track;
@@ -177,8 +174,7 @@ mod tests {
     #[test]
     fn rolling_road_window_still_returns_to_centerline() {
         let track = Track::from_catalog(1);
-        let mut road = test_road(&track.centerline(-50.0, 250.0, 15.0));
-        road.target_speed = *MAX_TERMINAL_SPEED_MPS;
+        let road = test_road(&track.centerline(-50.0, 250.0, 15.0));
         let path = Path::new(road.centerline());
         let (p, yaw) = path.pose_at(50.0);
         let left = Position::from_angle(yaw + std::f64::consts::FRAC_PI_2);
@@ -289,7 +285,7 @@ mod tests {
             for n in 0..20 {
                 let progress = lap * n as f64 / 20.0;
                 let centerline = track.centerline(progress - 50.0, progress + 250.0, 15.0);
-                let road = Road::new(centerline, *MAX_TERMINAL_SPEED_MPS, track.half_width(progress), 0.1);
+                let road = Road::new(centerline, track.half_width(progress), 0.1);
                 let (p, yaw) = track.pose(progress);
                 let ego = State::from((p, yaw, 20.0));
                 let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);

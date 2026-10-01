@@ -19,9 +19,9 @@ treetop/
 nanoplan's kinematic model uses treetop's same pose/speed kinematics, but with a four-dimensional state `(x, y, yaw,
 speed)` and direct acceleration/curvature commands.
 Three adaptations recur throughout (see the module doc): treetop's fixed user-placed goal pose becomes a **rolling lane
-target** (`goal_state`: the centerline pose a planning horizon ahead, at the target speed); treetop's static circular
-obstacles become **moving actors priced through the shared metric objective** at the absolute time each state is
-reached; and treetop's `std::mt19937` sampling and action jitter are replaced by the **shared Halton QMC sequence**
+target** (`goal_state`: the centerline pose at maximum-acceleration reach over the planning horizon); treetop's static
+circular obstacles become **moving actors priced through the shared metric objective** at the absolute time each state
+is reached; and treetop's `std::mt19937` sampling and action jitter are replaced by the **shared Halton QMC sequence**
 (jitter dropped entirely — its purpose is randomized restarts), so all three planners are pure functions of the ego
 state, pinned by `*_is_a_pure_function_of_state` tests.
 
@@ -61,9 +61,8 @@ An RRT variant shaped by its downstream job — feeding a trajectory optimizer �
   alternative and surface only as a better-than-nothing brace.
 - **Edge cost = the metric objective.** Every rolled-out stage is priced by `point_cost`; hard violations reject ordinary
   samples, while fallback chains use the finite escape penalty.
-  Path candidates rank goal-hitters (within `GOAL_HIT_TOL` of the goal, treetop's `checkTargetHit` loosened from parking
-  precision to lane driving) by cost-to-come, everyone else by distance to goal; alternates are the next-best by the same
-  ordering where treetop shuffles randomly.
+  Path candidates rank feasible paths first, then by progress cost-to-come; alternates use the same ordering.
+  The reachable centerline goal guides sampling only, without a terminal-speed reward.
 
 The standalone planner takes the best path candidate as the plan, with its own warm start (previous plan shifted one
 tick, replayed as treetop's "hot" chain and sampled around as "warm") — the plan is exactly what the treetop planner
@@ -134,8 +133,7 @@ The coordinator glue, treetop's `planner.h` loop: **tree → candidates → iLQR
 1. Extract the best `num_path_candidates = 2` full-horizon path candidates.
 1. Run iLQR on each candidate's action sequence (a handful of iterations — the tree's near-feasible guess converges fast,
    where treetop's on-demand replans afford up to 200).
-1. Select by treetop's two-tier rule: the cheapest solution that still *hits the goal*, else the one ending nearest it — a
-   candidate that optimized to a low cost by giving up on progress must not beat one that gets there.
+1. Select the solution with the lowest shared progress cost.
 1. Store the winner's action sequence as next tick's warm start, and drive its first control.
 
 The division of labor is the point, and it's the same lesson RRT\*'s warm-start section tells from the other side: the

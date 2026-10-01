@@ -8,7 +8,7 @@ Terminal lateral speeds are limited to −0.5, 0, and +0.5 m/s.
 Longitudinal cubics match initial position and velocity and finish at a sampled position and speed.
 Terminal states form a Cartesian grid with 11 evenly spaced values per axis at nominal compute budget: longitudinal
 position ahead of the current station, lateral offset across the usable road width, and longitudinal speed from zero to
-the road's target speed.
+the speed reachable under maximum acceleration over the horizon, including drag.
 The station range includes acceleration over the horizon: `speed * T + 0.5 * MAX_LON_ACCEL * T²`, capped at the end of
 the available road.
 The live world supplies FRENETIX with the existing speed-dependent road window, sized for maximum acceleration with

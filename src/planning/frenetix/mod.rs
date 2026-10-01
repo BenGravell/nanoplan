@@ -93,8 +93,12 @@ impl Planner for FrenetixPlanner {
         let samples = grid_samples(ctx.compute_budget);
         let stations = grid(s0, (s0 + ahead).min(path.length()), samples);
         let laterals = grid(-width, width, samples);
-        let speeds = grid(0.0, ctx.road.target_speed, samples);
         let ticks = (duration / ctx.road.dt).ceil() as usize;
+        let speeds = grid(
+            0.0,
+            crate::simulation::speed_after_max_accel(ego.speed, ticks, ctx.road.dt),
+            samples,
+        );
         let mut best = None;
         ctx.time("fit", || {
             for station in stations {
@@ -183,8 +187,7 @@ mod tests {
 
     #[test]
     fn accelerates_on_an_empty_straight_at_cruising_speeds() {
-        let mut road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
-        road.target_speed = *crate::simulation::MAX_TERMINAL_SPEED_MPS;
+        let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
         let controls: Vec<_> = [0.0, 10.0, 20.0, 40.0]
             .into_iter()
             .map(|speed| {

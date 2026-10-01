@@ -10,7 +10,7 @@ use crate::common::math::smoothstep;
 use crate::metrics;
 use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math::state_sample;
-use crate::planning::policy::centerline_feedback;
+use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 use crate::prediction::predict;
 use crate::simulation::{Control, Pose, Position, State, curvature_limit, world_step};
@@ -307,8 +307,7 @@ fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> 
             if curvature.abs() > MAX_ABS_CURVATURE {
                 0.0
             } else {
-                ctx.road
-                    .target_speed
+                crate::vehicle::MAX_TERMINAL_SPEED_MPS
                     .powi(2)
                     .min(MAX_ABS_LAT_ACCEL / curvature.abs().max(1e-9))
             }
@@ -424,11 +423,11 @@ fn extract_controls(
             // Track the timed TOPP-RA profile. Comparing speed against the
             // old Euler position cancels acceleration just after launch.
             let net_accel = crate::common::differencing::forward_difference(state.speed, target_speed, ctx.road.dt);
-            let feedback = centerline_feedback(&curve.reference, &state, target_speed);
+            let feedback = centerline_curvature(&curve.reference, &state);
             let u = Control {
                 acceleration: (net_accel + longitudinal_resistance_accel(state.speed))
                     .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL),
-                curvature: (curve.at(distance).1 + feedback.curvature)
+                curvature: (curve.at(distance).1 + feedback)
                     .clamp(-curvature_limit(state.speed), curvature_limit(state.speed)),
             };
             distance += state.speed.max(0.0) * ctx.road.dt;
@@ -487,7 +486,10 @@ fn brake(ego: State, ctx: &Context) -> Vec<Control> {
     let mut state = ego;
     (0..ctx.horizon)
         .map(|_| {
-            let mut u = centerline_feedback(ctx.path(), &state, 0.0);
+            let mut u = Control {
+                acceleration: 0.0,
+                curvature: centerline_curvature(ctx.path(), &state),
+            };
             let (s, _) = ctx.path().project(state.position());
             let before = ctx.path().pose_at(s - 7.5).1;
             let after = ctx.path().pose_at(s + 7.5).1;
@@ -792,8 +794,7 @@ mod tests {
 
     #[test]
     fn clear_straight_accelerates_through_the_entire_horizon() {
-        let mut road = test_road(&[[-50.0, 0.0], [2_000.0, 0.0]]);
-        road.target_speed = *crate::vehicle::MAX_TERMINAL_SPEED_MPS;
+        let road = test_road(&[[-50.0, 0.0], [2_000.0, 0.0]]);
         for speed in [0.0, 20.0, 40.0, 70.0] {
             let ego = State {
                 speed,
@@ -811,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn centerline_candidate_converges_to_centerline_and_target_speed() {
+    fn centerline_candidate_converges_to_centerline_and_accelerates() {
         let mut ego = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 3.0), 0.0),
             5.0,
@@ -826,7 +827,7 @@ mod tests {
             ego = world_step(ego, controls[0], road.dt);
         }
         assert!(ego.position().y.abs() < 0.3, "offset {}", ego.position().y);
-        assert!((ego.speed - 10.0).abs() < 0.5, "speed {}", ego.speed);
+        assert!(ego.speed > 10.0, "speed {}", ego.speed);
     }
 
     #[test]
@@ -839,7 +840,7 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
             0.0,
         );
-        let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 10.0, 1.6, 0.1);
+        let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 1.6, 0.1);
         let trace = test_run_on(&mut BezierToppraPlanner::default(), &road, ego, &[actor], 300);
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
@@ -898,7 +899,7 @@ mod tests {
 
     #[test]
     fn previous_plan_is_revalidated_after_skipped_ticks_and_new_obstacles() {
-        let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 10.0, 1.6, 0.1);
+        let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 1.6, 0.1);
         let mut planner = BezierToppraPlanner::default();
         let mut ego = State {
             speed: 8.0,
@@ -990,7 +991,6 @@ mod tests {
     #[test]
     fn baked_track_predictions_stay_inside_road_for_full_horizon() {
         use crate::common::geometry::barrier::collides_with_road_barrier;
-        use crate::simulation::MAX_TERMINAL_SPEED_MPS;
         use crate::track::{Road, TRACK_PRESETS, Track};
 
         for track_index in 0..TRACK_PRESETS.len() {
@@ -1000,7 +1000,6 @@ mod tests {
                 let progress = lap * n as f64 / 20.0;
                 let road = Road::new(
                     track.centerline(progress - 50.0, progress + 250.0, 15.0),
-                    *MAX_TERMINAL_SPEED_MPS,
                     track.half_width(progress),
                     0.1,
                 );

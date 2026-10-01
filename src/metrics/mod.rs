@@ -78,7 +78,7 @@ mod tests {
     const TEST_HALF_WIDTH_M: f64 = 5.5;
 
     fn road() -> Road {
-        Road::new(CENTERLINE.to_vec(), 10.0, TEST_HALF_WIDTH_M, DT)
+        Road::new(CENTERLINE.to_vec(), TEST_HALF_WIDTH_M, DT)
     }
 
     fn cruise(speed: f64, ticks: usize) -> Vec<State> {

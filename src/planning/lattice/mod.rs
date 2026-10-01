@@ -462,8 +462,7 @@ mod tests {
 
     #[test]
     fn maximum_acceleration_segment_is_feasible() {
-        let mut road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
-        road.target_speed = 100.0;
+        let road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
         let ctx = test_ctx(&road, &[]);
         for speed in [0.0, 5.0] {
             let ego = State {
@@ -482,8 +481,7 @@ mod tests {
 
     #[test]
     fn accelerates_on_an_open_straight_without_a_speed_profile() {
-        let mut road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
-        road.target_speed = 100.0;
+        let road = test_road(&[[-20.0, 0.0], [1_500.0, 0.0]]);
         let controls = LatticePlanner.plan(
             State {
                 speed: 5.0,
@@ -508,7 +506,7 @@ mod tests {
                 crate::simulation::Position::new(radius * a.sin(), radius * (1.0 - a.cos()))
             })
             .collect();
-        let road = Road::new(centerline, 60.0, 5.5, 0.1);
+        let road = Road::new(centerline, 5.5, 0.1);
         let controls = LatticePlanner.plan(
             State {
                 speed: 25.0,
@@ -549,7 +547,7 @@ mod tests {
             crate::simulation::Position::new(50.0 + radius * a.sin(), radius * (1.0 - a.cos()))
         }));
         centerline.extend((1..=30).map(|i| crate::simulation::Position::new(50.0 + radius, radius + 4.0 * i as f64)));
-        let road = Road::new(centerline, 60.0, 7.0, 0.1);
+        let road = Road::new(centerline, 7.0, 0.1);
         let trace = test_run_on(
             &mut LatticePlanner,
             &road,

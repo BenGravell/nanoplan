@@ -37,7 +37,7 @@ This preserves a safe continuation when a fresh sparse search misses it.
 Each path gets its own scalar [TOPP-RA](https://arxiv.org/abs/1707.07239) speed profile: squared speed is propagated
 backward through controllable intervals and forward under maximum acceleration.
 Grid spacing uses sampled arc length along the curve chain.
-Curvature, lateral grip, target speed, acceleration and braking limits bound the profile.
+Curvature, lateral grip, drag-limited terminal speed, acceleration and braking limits bound the profile.
 The preview endpoint permits nonzero speed; it does not introduce an artificial stop into an otherwise clear
 acceleration path.
 

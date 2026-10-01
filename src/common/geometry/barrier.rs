@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn road_barriers_clamp_and_reflect_outward_motion() {
-        let road = Road::new(vec![[0.0, 0.0], [100.0, 0.0]], 10.0, 3.5, 0.1);
+        let road = Road::new(vec![[0.0, 0.0], [100.0, 0.0]], 3.5, 0.1);
         let prev = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(12.0, 0.0), std::f64::consts::FRAC_PI_2),
             10.0,
@@ -259,12 +259,7 @@ mod tests {
 
     #[test]
     fn road_barriers_ignore_nonlocal_route_segments() {
-        let road = Road::new(
-            vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
-            10.0,
-            3.5,
-            0.1,
-        );
+        let road = Road::new(vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]], 3.5, 0.1);
         let on_first_segment = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
             8.0,
@@ -278,7 +273,7 @@ mod tests {
 
     #[test]
     fn road_side_barriers_do_not_cap_an_open_window() {
-        let road = Road::new(vec![[0.0, 0.0], [10.0, 0.0]], 10.0, 3.5, 0.1);
+        let road = Road::new(vec![[0.0, 0.0], [10.0, 0.0]], 3.5, 0.1);
         let previous = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(10.5, 0.0), std::f64::consts::FRAC_PI_2),
             10.0,
@@ -324,7 +319,7 @@ mod tests {
             true,
         )
         .unwrap();
-        let road = Road::from_polygon(polygon, 10.0, 0.1);
+        let road = Road::from_polygon(polygon, 0.1);
         let state = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(50.0, 0.0), 0.0),
             10.0,
