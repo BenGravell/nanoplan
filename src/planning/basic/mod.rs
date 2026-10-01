@@ -2,6 +2,7 @@
 
 use crate::common::geometry::barrier::collide_with_road_barriers;
 use crate::common::geometry::wrap_angle;
+use crate::common::kinematics::speed_after_distance;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{brake_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
@@ -61,7 +62,7 @@ fn candidate(
     if first_distance <= 0.0 {
         return None;
     }
-    let fastest_speed = (lane_speed * lane_speed + 2.0 * MAX_LON_ACCEL * first_distance).sqrt();
+    let fastest_speed = speed_after_distance(lane_speed, MAX_LON_ACCEL, first_distance);
     let fastest_duration = 2.0 * first_distance / (lane_speed + fastest_speed).max(1.0);
     let mut duration = fastest_duration * duration_factor;
     let mut cruise_speed = (2.0 * first_distance / duration - lane_speed).max(0.0);

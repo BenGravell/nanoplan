@@ -45,6 +45,11 @@ impl TrajectoryKinematics {
     }
 }
 
+/// Speed after traveling a given distance under constant acceleration from an initial speed.
+pub(crate) fn speed_after_distance(speed: f64, acceleration: f64, distance: f64) -> f64 {
+    (speed * speed + 2.0 * acceleration * distance).sqrt()
+}
+
 /// Signed lateral acceleration for a speed and path curvature.
 pub(crate) fn lateral_acceleration(speed: f64, curvature: f64) -> f64 {
     speed.powi(2) * curvature
