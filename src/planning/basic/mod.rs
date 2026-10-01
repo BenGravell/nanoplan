@@ -2,19 +2,19 @@
 
 use crate::common::geometry::barrier::collide_with_road_barriers;
 use crate::common::geometry::wrap_angle;
-use crate::common::kinematics::speed_after_distance;
+use crate::common::kinematics::{TrajectoryKinematics, speed_after_distance};
+use crate::metrics;
 use crate::planning::constraints::{HardConstraints, Sample};
 use crate::planning::search_tree::{brake_controls, stop_controls};
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State, world_step};
-use crate::track::Path;
+use crate::track::{Path, Road};
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 const FIRST_TARGETS_M: [f64; 3] = [10.0, 25.0, 40.0];
 const DURATION_FACTORS: [f64; 3] = [1.0, 1.5, 2.0];
 const CENTERLINE_SEGMENT_M: f64 = 15.0;
-const GOAL_BUFFER_M: f64 = 1.0;
 
 pub(crate) struct BasicPlanner;
 
@@ -29,24 +29,31 @@ impl Planner for BasicPlanner {
             (path, s0, lane_speed)
         });
         ctx.time("fit", || {
-            let mut best: Option<(f64, Vec<Control>)> = None;
-            for distance in FIRST_TARGETS_M {
-                for factor in DURATION_FACTORS {
-                    let Some(controls) = candidate(ego, path, ctx, s0, lane_speed, distance, factor) else {
-                        continue;
-                    };
-                    let Some(cost) = candidate_cost(ego, &controls, path, ctx) else {
-                        continue;
-                    };
-                    if best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
-                        best = Some((cost, controls));
-                    }
-                }
-            }
-            best.map(|(_, controls)| controls)
-                .unwrap_or_else(|| brake_controls(ego, ctx, MIN_LON_ACCEL))
+            best_candidate(ego, path, ctx, s0, lane_speed).unwrap_or_else(|| brake_controls(ego, ctx, MIN_LON_ACCEL))
         })
     }
+}
+
+fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64, lane_speed: f64) -> Option<Vec<Control>> {
+    let mut best: Option<(f64, Vec<Control>)> = None;
+    for distance in FIRST_TARGETS_M {
+        for factor in DURATION_FACTORS {
+            let Some(controls) = candidate(ego, path, ctx, s0, lane_speed, distance, factor) else {
+                continue;
+            };
+            let Some(trajectory) = feasible_candidate_trajectory(ego, &controls, path, ctx) else {
+                continue;
+            };
+            let score = ctx.time("cost", || candidate_score(&trajectory, ctx.road));
+            if !score.is_finite() {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(best_score, _)| score > *best_score) {
+                best = Some((score, controls));
+            }
+        }
+    }
+    best.map(|(_, controls)| controls)
 }
 
 fn candidate(
@@ -58,49 +65,43 @@ fn candidate(
     first_distance: f64,
     duration_factor: f64,
 ) -> Option<Vec<Control>> {
-    let first_distance = first_distance.min(path.length() - s0);
-    if first_distance <= 0.0 {
-        return None;
-    }
-    let fastest_speed = speed_after_distance(lane_speed, MAX_LON_ACCEL, first_distance);
-    let fastest_duration = 2.0 * first_distance / (lane_speed + fastest_speed).max(1.0);
-    let mut duration = fastest_duration * duration_factor;
-    let mut cruise_speed = (2.0 * first_distance / duration - lane_speed).max(0.0);
+    let (mut duration, cruise_speed) = first_segment_motion(lane_speed, first_distance, duration_factor);
     let mut target_s = s0 + first_distance;
     let mut x = ego;
     let mut controls = Vec::with_capacity(ctx.horizon);
 
     loop {
-        let at_end = target_s >= path.length() - 1e-6;
-        if at_end {
-            cruise_speed = 0.0;
-            duration = duration.max(x.speed.max(0.0) / -MIN_LON_ACCEL);
+        // The window edge is missing geometry, not a stopping destination.
+        if target_s > path.length() {
+            return None;
         }
-        let goal_s = if at_end {
-            (target_s - GOAL_BUFFER_M).max(s0)
-        } else {
-            target_s
-        };
-        let (position, yaw) = path.pose_at(goal_s);
-        append_segment(
-            &mut controls,
-            &mut x,
-            State::from((position, yaw, cruise_speed)),
-            duration,
-            ctx,
-        );
+        let (position, yaw) = path.pose_at(target_s);
+        let target = State::from((position, yaw, cruise_speed));
+        append_segment(&mut controls, &mut x, target, duration, ctx);
         if controls.len() >= ctx.horizon {
             break;
         }
-        if at_end || cruise_speed <= 0.01 {
+        if target.speed <= 0.01 {
             controls.extend(stop_controls(x, ctx, ctx.horizon - controls.len()));
             break;
         }
-        let next_s = (target_s + CENTERLINE_SEGMENT_M).min(path.length());
-        duration = (next_s - target_s) / cruise_speed;
-        target_s = next_s;
+        duration = CENTERLINE_SEGMENT_M / cruise_speed;
+        target_s += CENTERLINE_SEGMENT_M;
     }
     Some(controls)
+}
+
+/// Constant-acceleration timing seeds the first cubic's terminal speed.
+fn first_segment_motion(lane_speed: f64, distance: f64, duration_factor: f64) -> (f64, f64) {
+    let fastest_speed = speed_after_distance(lane_speed, MAX_LON_ACCEL, distance);
+    let fastest_average_speed = (lane_speed + fastest_speed) / 2.0;
+    let fastest_duration = distance / fastest_average_speed;
+    let duration = fastest_duration * duration_factor;
+
+    let average_speed = distance / duration;
+    let terminal_speed = 2.0 * average_speed - lane_speed;
+    let cruise_speed = terminal_speed.max(0.0);
+    (duration, cruise_speed)
 }
 
 fn append_segment(controls: &mut Vec<Control>, x: &mut State, target: State, duration: f64, ctx: &Context) {
@@ -113,44 +114,60 @@ fn append_segment(controls: &mut Vec<Control>, x: &mut State, target: State, dur
     *x = end;
 }
 
-fn candidate_cost(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<f64> {
+fn feasible_candidate_trajectory(
+    ego: State,
+    controls: &[Control],
+    path: &Path,
+    ctx: &Context,
+) -> Option<TrajectoryKinematics> {
     let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
     let mut x = ego;
-    let mut total = 0.0;
+    let mut states = Vec::with_capacity(controls.len() + 1);
+    states.push(ego);
     let mut feasible = true;
-
-    let mut trajectory = ctx.diagnostics.map(|_| vec![ego.position()]);
     for (tick, &u) in controls.iter().enumerate() {
         let prev = x;
         x = world_step(x, u, ctx.road.dt);
         if collide_with_road_barriers(prev, x, crate::common::geometry::EGO_FOOTPRINT, ctx.road) != x {
             feasible = false;
         }
-        if let Some(points) = &mut trajectory {
-            points.push(x.position());
-        }
-        let (s, lateral) = path.project(x.position());
-        let (_, lane_yaw) = path.pose_at(s);
-        let sample = Sample {
-            position: x.position(),
-            lateral,
-            road_bounds: None,
-            heading_err: wrap_angle(x.pose.yaw - lane_yaw),
-            speed: x.speed,
-            station_speed: None,
-            t: (tick + 1) as f64 * ctx.road.dt,
-        };
-        let cost = ctx.time("cost", || constraints.point_cost(&sample));
-        if !cost.is_finite() {
+        let sample = constraint_sample(x, path, (tick + 1) as f64 * ctx.road.dt);
+        if constraints.is_violated(&sample) {
             feasible = false;
-        } else {
-            total += cost;
         }
+        states.push(x);
     }
-    if let (Some(diag), Some(trajectory)) = (ctx.diagnostics, trajectory) {
-        diag.record_trajectory(trajectory);
+    if let Some(diag) = ctx.diagnostics {
+        diag.record_trajectory(states.iter().map(|state| state.position()).collect());
     }
-    feasible.then_some(total)
+    if !feasible {
+        return None;
+    }
+    // Align controls with states, including the final state, as required by metrics.
+    let controls = controls
+        .iter()
+        .copied()
+        .chain([controls.last().copied().unwrap_or_default()])
+        .collect();
+    Some(TrajectoryKinematics::new(states, controls, ctx.road.dt))
+}
+
+fn candidate_score(trajectory: &TrajectoryKinematics, road: &Road) -> f64 {
+    metrics::evaluate(trajectory, road).score
+}
+
+fn constraint_sample(state: State, path: &Path, time: f64) -> Sample {
+    let (s, lateral) = path.project(state.position());
+    let (_, lane_yaw) = path.pose_at(s);
+    Sample {
+        position: state.position(),
+        lateral,
+        road_bounds: None,
+        heading_err: wrap_angle(state.pose.yaw - lane_yaw),
+        speed: state.speed,
+        station_speed: None,
+        t: time,
+    }
 }
 
 #[cfg(test)]
@@ -195,49 +212,36 @@ mod tests {
     }
 
     #[test]
-    fn stops_at_short_route_goal() {
+    fn window_endpoint_does_not_request_a_stop() {
+        let road = test_road(&[[-5.0, 0.0], [20.0, 0.0]]);
+        let ctx = Context::new(&road, &[], 20, crate::planning::ComputeBudget::NOMINAL, None, None);
         let ego = State {
-            speed: 8.0,
+            speed: 10.0,
             ..Default::default()
         };
-        let road = test_road(&[[-5.0, 0.0], [25.0, 0.0]]);
-        let trace = test_run_on(&mut BasicPlanner, &road, ego, &[], 200);
-        let end = trace.last().unwrap();
-        assert!(
-            end.position().x > 20.0 && end.position().x < 30.0,
-            "x {}",
-            end.position().x
-        );
-        assert!(end.speed < 0.8, "speed {}", end.speed);
+        let (fastest_duration, _) = first_segment_motion(ego.speed, 20.0, 1.0);
+        let duration_factor = 2.0 / fastest_duration;
+        let controls = candidate(ego, ctx.path(), &ctx, 5.0, ego.speed, 20.0, duration_factor).unwrap();
+        let end = controls
+            .iter()
+            .fold(ego, |state, &control| world_step(state, control, road.dt));
+
+        assert_eq!(controls.len(), ctx.horizon);
+        assert!(end.position().x > 18.0, "position {}", end.position().x);
+        assert!(end.speed > 8.0, "speed {}", end.speed);
     }
 
     #[test]
-    fn preview_plan_stops_at_goal_instead_of_overshooting() {
-        let road = test_road(&[[-5.0, 0.0], [50.0, 0.0]]);
+    fn rejects_candidates_that_need_geometry_beyond_the_window() {
+        let road = test_road(&[[-5.0, 0.0], [20.0, 0.0]]);
         let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
-        let mut state = State {
-            speed: 8.0,
+        let ego = State {
+            speed: 10.0,
             ..Default::default()
         };
-        let mut max_x = state.position().x;
-        for u in BasicPlanner.plan(state, &ctx) {
-            state = world_step(state, u, road.dt);
-            max_x = max_x.max(state.position().x);
-        }
-        assert!(max_x <= 52.0, "preview reached x {max_x}");
-        assert!(state.speed < 1.0, "speed {}", state.speed);
-    }
 
-    #[test]
-    fn route_goal_state_has_full_stop_boundary() {
-        let path = Path::new(&[Position::new(-5.0, 0.0), Position::new(20.0, 5.0)]);
-        let (position, yaw) = path.pose_at(path.length());
-        let goal = State::from((position, yaw, 0.0));
-        assert_eq!(
-            (goal.position().x, goal.position().y, goal.pose.yaw),
-            (position.x, position.y, yaw)
-        );
-        assert_eq!(goal.speed, 0.0);
+        assert!(candidate(ego, ctx.path(), &ctx, 5.0, ego.speed, 20.0, 1.0).is_none());
+        assert!(candidate(ego, ctx.path(), &ctx, 5.0, ego.speed, 40.0, 1.0).is_none());
     }
 
     #[test]
@@ -273,6 +277,45 @@ mod tests {
                 .iter()
                 .all(|trajectory| trajectory.len() == ctx.horizon + 1)
         );
+    }
+
+    #[test]
+    fn feasibility_rejects_collisions_independently_of_progress_score() {
+        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let controls = [Control::default(); 3];
+        let ctx = test_ctx(&road, &[]);
+        let trajectory = feasible_candidate_trajectory(ego, &controls, ctx.path(), &ctx).unwrap();
+        assert_eq!(trajectory.states.len(), controls.len() + 1);
+        assert_eq!(trajectory.states[0], ego);
+        assert_eq!(trajectory.controls.len(), trajectory.states.len());
+        let score = candidate_score(&trajectory, &road);
+        assert_eq!(score, metrics::evaluate(&trajectory, &road).score);
+
+        let accelerated = [Control {
+            acceleration: MAX_LON_ACCEL,
+            ..Default::default()
+        }; 3];
+        let trajectory = feasible_candidate_trajectory(ego, &accelerated, ctx.path(), &ctx).unwrap();
+        let accelerated_score = candidate_score(&trajectory, &road);
+        assert!((accelerated_score - 1.0).abs() < 1e-9);
+        assert!(accelerated_score > score);
+
+        let actors = [ego];
+        let diagnostics = crate::planning::Diagnostics::default();
+        let blocked = Context {
+            diagnostics: Some(&diagnostics),
+            ..test_ctx(&road, &actors)
+        };
+        assert!(feasible_candidate_trajectory(ego, &controls, blocked.path(), &blocked).is_none());
+        assert_eq!(diagnostics.take().trajectories[0].len(), controls.len() + 1);
+
+        // The footprint hits the barrier even while the center is inside the road.
+        let near_barrier = State::from((Position::new(0.0, road.half_width - 0.1), 0.0, ego.speed));
+        assert!(feasible_candidate_trajectory(near_barrier, &controls, ctx.path(), &ctx).is_none());
     }
 
     #[test]

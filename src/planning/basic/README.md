@@ -4,7 +4,7 @@
 
 A small exhaustive search over centerline-following cubic trajectories.
 It tries multiple lookahead distances at multiple traversal durations, extends each candidate along the centerline to
-fill the requested horizon, and selects the lowest-cost feasible rollout.
+fill the requested horizon, and selects the highest-scoring feasible rollout.
 If none is feasible, it brakes.
 
 Candidates use the shared hard constraints and metric objective.
