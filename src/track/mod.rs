@@ -4,6 +4,7 @@ mod catalog;
 mod geometry;
 mod path;
 pub(crate) mod pregenerate;
+pub(crate) mod prepared;
 #[cfg_attr(not(any(test, feature = "track-pregeneration")), allow(dead_code))]
 mod presets;
 mod road;
@@ -13,7 +14,7 @@ mod track;
 pub(crate) use catalog::TRACK_CATALOG;
 pub(crate) use path::Path;
 pub(crate) use presets::TRACK_PRESETS;
-pub(crate) use road::Road;
+pub(crate) use road::{Road, RoadView};
 pub(crate) use track::Track;
 
 /// Shared sampling grid for rendered and physical road boundaries.

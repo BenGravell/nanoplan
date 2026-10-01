@@ -10,4 +10,4 @@ pub(crate) use carpet::{EgoCarpetMesh, setup as setup_carpet};
 pub(crate) use diagnostics::{DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, configure as configure_diagnostics};
 pub(crate) use grid::{GridMesh, setup as setup_grid};
 pub(crate) use plan::{PlannedTrajectoryGizmos, configure as configure_plan};
-pub(crate) use track::{RoadSurfaceMesh, setup as setup_road_surface};
+pub(crate) use track::{prepare_surface as prepare_road_surface, setup as setup_road_surface};

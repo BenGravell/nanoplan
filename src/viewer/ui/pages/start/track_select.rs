@@ -28,7 +28,13 @@ struct TrackPreview {
 
 static PREVIEWS: OnceLock<Vec<TrackPreview>> = OnceLock::new();
 
-pub(super) fn show(root: &mut egui::Ui, view: &mut StartView, state: &mut UiState, live: &mut Live) -> Option<Route> {
+pub(super) fn show(
+    root: &mut egui::Ui,
+    view: &mut StartView,
+    start_requested: &mut Option<usize>,
+    state: &mut UiState,
+    live: &mut Live,
+) -> Option<Route> {
     root.style_mut().visuals.window_shadow = egui::epaint::Shadow::NONE;
     root.style_mut().visuals.popup_shadow = egui::epaint::Shadow::NONE;
     root.painter().rect_filled(root.max_rect(), 0.0, SURFACE);
@@ -49,17 +55,30 @@ pub(super) fn show(root: &mut egui::Ui, view: &mut StartView, state: &mut UiStat
         });
     }
 
+    let prepared_track = state.track;
+    let ready = live.prepare_selection(
+        state.planner,
+        prepared_track,
+        state.opponents,
+        root.ctx().cumulative_frame_nr(),
+    );
     let screen = root.max_rect();
     let gallery_height = screen.height() * GALLERY_FRACTION;
     let top = egui::Rect::from_min_max(screen.min, egui::pos2(screen.right(), screen.bottom() - gallery_height));
     let gallery = egui::Rect::from_min_max(egui::pos2(screen.left(), top.bottom()), screen.max);
-    let start = top_section(root, top, view, &previews[state.track], state.track);
+    let start = top_section(root, top, view, &previews[state.track], state.track, ready);
     let double_clicked = gallery_section(root, gallery, state, previews, state.track != previous_track);
 
     let keyboard_start = !root.ctx().egui_wants_keyboard_input()
         && root.input(|input| input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space));
     if start || double_clicked || keyboard_start {
-        live.regenerate_with_actor_count(live.seed, state.planner, state.track, state.opponents);
+        *start_requested = Some(state.track);
+    }
+    if *view != StartView::TrackSelect || start_requested.is_some_and(|track| track != state.track) {
+        *start_requested = None;
+    }
+    if ready && state.track == prepared_track && *start_requested == Some(state.track) {
+        *start_requested = None;
         return Some(Route::Driving);
     }
     root.ctx().request_repaint_after(std::time::Duration::from_millis(16));
@@ -72,6 +91,7 @@ fn top_section(
     view: &mut StartView,
     preview: &TrackPreview,
     track_index: usize,
+    ready: bool,
 ) -> bool {
     let compact = rect.height() < 400.0;
     let margin = if compact { 12.0 } else { 24.0 };
@@ -152,7 +172,7 @@ fn top_section(
     });
     root.put(
         drive,
-        egui::Button::new(egui::RichText::new("DRIVE").font(caps_font(13.0))),
+        egui::Button::new(egui::RichText::new(if ready { "DRIVE" } else { "PREPARING…" }).font(caps_font(13.0))),
     )
     .clicked()
 }

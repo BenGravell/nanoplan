@@ -484,3 +484,22 @@ fn changing_actor_count_preserves_world_progress_and_camera() {
     assert_eq!(live.lap_stats.current_s, 12.0);
     assert_eq!(live.camera.center, camera.center);
 }
+
+#[test]
+fn track_selection_prepares_once_before_driving_and_invalidates_on_change() {
+    use crate::planning::latency::geometry_build_clocks;
+    let mut live = Live::default();
+    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 0));
+    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 0));
+    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 1));
+    assert!(live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 2));
+    let before = geometry_build_clocks();
+    for _ in 0..3 {
+        assert!(live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 2));
+    }
+    assert_eq!(geometry_build_clocks(), before);
+    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 3));
+    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 4));
+    assert!(live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 5));
+    assert!(geometry_build_clocks() > before);
+}

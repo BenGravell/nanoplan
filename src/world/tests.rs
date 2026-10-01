@@ -184,22 +184,23 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
     }
 
     assert_eq!(world.ego_collision_count, 0);
-    assert_eq!(ticks, 293);
+    assert_eq!(ticks, 292);
+    // Includes live segment queries and candidate geometry; static track builds are covered by preparation tests.
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 293, 293, 1),
-        ("simulation.actors", 293, 1_465, 5),
-        ("simulation.actor_culling", 293, 1_465, 5),
-        ("route", 293, 170_106, 734),
-        ("bezier_fit", 293, 266_337, 909),
-        ("optimize", 293, 8_854_365, 65_299),
-        ("extract", 293, 1_008_081, 7_272),
-        ("cost", 293, 1_404_084, 5_585),
-        ("planner.total", 293, 10_723_092, 72_303),
-        ("simulation.preview", 293, 8_790, 30),
-        ("simulation.ego", 293, 293, 1),
-        ("simulation.collisions", 293, 1_758, 6),
-        ("simulation.total", 293, 59_077, 781),
-        ("simulation.roads", 76, 45_013, 733),
+        ("simulation.progress", 292, 292, 1),
+        ("simulation.actors", 292, 1_460, 5),
+        ("simulation.actor_culling", 292, 1_460, 5),
+        ("route", 292, 13_432, 46),
+        ("bezier_fit", 292, 265_428, 909),
+        ("extract", 292, 8_204_963, 61_430),
+        ("optimize", 292, 24_589_522, 206_857),
+        ("cost", 292, 17_031_446, 79_130),
+        ("planner.total", 292, 41_937_046, 284_285),
+        ("simulation.preview", 292, 8_760, 30),
+        ("simulation.ego", 292, 292, 1),
+        ("simulation.collisions", 292, 38_456, 198),
+        ("simulation.total", 292, 50_792, 240),
+        ("simulation.roads", 72, 72, 1),
     ] {
         let seam = latency
             .seams
@@ -567,7 +568,10 @@ fn lockstep_waits_for_matching_plan_without_advancing_ego_or_traffic() {
     let mut world = LiveWorld::with_track(1, 1, PlannerKind::Straight, 3, 0.1);
     let (release, gate) = mpsc::channel();
     let (started, planning) = mpsc::channel();
-    world.planner = PlannerEngine::with_planner(Box::new(GatedPlanner(gate, started)));
+    world.planner = PlannerEngine::with_planner(
+        Box::new(GatedPlanner(gate, started)),
+        world.track.prepared().planning.clone(),
+    );
     let ego = world.ego();
     let actors: Vec<_> = world.actors.iter().map(|a| a.state).collect();
     world.prepare_tick(None);

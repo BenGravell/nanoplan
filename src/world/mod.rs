@@ -66,6 +66,7 @@ impl LiveWorld {
         start: EgoStart,
     ) -> Self {
         let track = Track::from_catalog(track_index);
+        track.prepare(start.speed, dt);
         let (p, centerline_yaw) = track.pose(start.progress);
         let left = Position::from_angle(centerline_yaw + std::f64::consts::FRAC_PI_2);
         let ego = State::from((
@@ -94,6 +95,9 @@ impl LiveWorld {
                 SmartActor::new(i, x, personality, rng.uniform(), actor_rng, &track)
             })
             .collect();
+        let mut planner_road = track.prepared().planning.clone();
+        planner_road.dt = dt;
+        let planner_engine = PlannerEngine::new(planner, track_index, planner_road, start.speed);
         Self {
             track,
             track_progress: start.progress,
@@ -109,7 +113,7 @@ impl LiveWorld {
             diagnostics_enabled: false,
             compute_budget: ComputeBudget::NOMINAL,
             planner_kind: planner,
-            planner: PlannerEngine::new(planner),
+            planner: planner_engine,
             plan: Vec::new(),
             pending_actors: None,
             plan_tick: 0,
@@ -120,10 +124,14 @@ impl LiveWorld {
         }
     }
 
+    pub(crate) fn is_prepared(&mut self) -> bool {
+        self.planner.is_prepared()
+    }
+
     pub(crate) fn set_planner(&mut self, kind: PlannerKind) {
         if kind != self.planner_kind {
             self.planner_kind = kind;
-            self.planner = PlannerEngine::new(kind);
+            self.planner.reset(kind);
             self.plan.clear();
             self.pending_actors = None;
             self.planner_slow = false;
@@ -135,7 +143,7 @@ impl LiveWorld {
         let actor_count = actor_count.min(MAX_ACTORS);
         if actor_count != self.actors.len() && self.pending_actors.take().is_some() {
             // The in-flight snapshot no longer describes this traffic setup.
-            self.planner = PlannerEngine::new(self.planner_kind);
+            self.planner.reset(self.planner_kind);
             self.planner_slow = false;
         }
 
@@ -250,7 +258,7 @@ impl LiveWorld {
                 (self.track_progress / road::ROAD_REFRESH_DISTANCE_M).floor() * road::ROAD_REFRESH_DISTANCE_M;
             self.road = timed(latency, "simulation.roads", || {
                 let road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
-                work(latency, road.centerline().len() as u64);
+                work(latency, 1);
                 road
             });
         }
@@ -280,7 +288,7 @@ impl LiveWorld {
         let submitted = self.planner.submit(PlanRequest {
             tick: self.tick,
             ego: self.ego(),
-            road: self.road.clone(),
+            road: self.road.view(),
             actors: actor_states,
             horizon: self.preview_ticks.max(1),
             compute_budget: self.compute_budget,

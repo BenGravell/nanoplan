@@ -7,6 +7,7 @@ mod footprint;
 #[cfg(any(test, feature = "track-pregeneration"))]
 mod polygon;
 mod road_polygon;
+pub(crate) mod segment_index;
 
 use crate::common::measure::dot;
 use crate::simulation::{Pose, Position};

@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use super::Live;
 use super::drawing::{
-    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh, PlannedTrajectoryGizmos,
-    RoadSurfaceMesh, carpet, diagnostics, grid, plan, track, vehicles,
+    DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, EgoCarpetMesh, GridMesh, PlannedTrajectoryGizmos, carpet,
+    diagnostics, grid, plan, track, vehicles,
 };
 use crate::common::interp::lerp_state;
 use crate::common::math::smooth_exp_step;
@@ -55,7 +55,6 @@ impl RenderSnapshot {
 pub(crate) fn draw(
     mut gizmos: Gizmos,
     mut grid_mesh: ResMut<GridMesh>,
-    mut road_surface: ResMut<RoadSurfaceMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut carpet_mesh: ResMut<EgoCarpetMesh>,
     mut planned_trajectory: Gizmos<PlannedTrajectoryGizmos>,
@@ -97,8 +96,6 @@ pub(crate) fn draw(
     let roads_started = Instant::now();
     track::draw(
         &mut gizmos,
-        &mut meshes,
-        &mut road_surface,
         &world.track,
         world.track_progress,
         state.show_stations,

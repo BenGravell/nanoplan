@@ -41,7 +41,7 @@ impl Planner for BezierToppraPlanner {
         let (path, start) = ctx.time("route", || {
             let path = ctx.path();
             let start = ctx.project_ego(ego);
-            ctx.work(ctx.road.centerline().len() as u64);
+            ctx.work(1);
             (path, start)
         });
         let Some(stations) = stations(ego.speed, start.0, path.length(), ctx.road.dt) else {

@@ -5,15 +5,15 @@ use crate::common::types::Position;
 /// A sampled road represented by its source stations and two continuous
 /// boundary polylines. All rendered and physical road geometry is derived from
 /// this type so corners use the same miter joins everywhere.
-#[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoadPolygon {
-    centerline: Vec<Position>,
-    right_widths: Vec<f64>,
-    left_widths: Vec<f64>,
-    right_boundary: Vec<Position>,
-    left_boundary: Vec<Position>,
+    centerline: std::sync::Arc<[Position]>,
+    right_widths: std::sync::Arc<[f64]>,
+    left_widths: std::sync::Arc<[f64]>,
+    right_boundary: std::sync::Arc<[Position]>,
+    left_boundary: std::sync::Arc<[Position]>,
     closed: bool,
+    range: std::ops::Range<usize>,
 }
 
 impl RoadPolygon {
@@ -35,6 +35,7 @@ impl RoadPolygon {
             return None;
         }
 
+        crate::planning::latency::geometry_build_work(centerline.len() as u64);
         let segment_count = if closed { centerline.len() } else { centerline.len() - 1 };
         let normals = (0..segment_count)
             .map(|i| {
@@ -74,14 +75,16 @@ impl RoadPolygon {
                 ))
             })
             .collect::<Option<Vec<_>>>()?;
-        let (right_boundary, left_boundary) = boundaries.into_iter().unzip();
+        let (right_boundary, left_boundary): (Vec<_>, Vec<_>) = boundaries.into_iter().unzip();
 
+        let range = 0..centerline.len();
         Some(Self {
-            centerline,
-            right_widths,
-            left_widths,
-            right_boundary,
-            left_boundary,
+            range,
+            centerline: centerline.into(),
+            right_widths: right_widths.into(),
+            left_widths: left_widths.into(),
+            right_boundary: right_boundary.into(),
+            left_boundary: left_boundary.into(),
             closed,
         })
     }
@@ -97,28 +100,59 @@ impl RoadPolygon {
         )
     }
 
+    pub(crate) fn same_geometry(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.centerline, &other.centerline)
+            && self.range == other.range
+            && self.closed == other.closed
+    }
+
+    pub(crate) fn repeated(&self, first: isize, count: usize) -> Self {
+        assert!(self.closed);
+        let indices: Vec<_> = (0..count)
+            .map(|i| (first + i as isize).rem_euclid(self.range.len() as isize) as usize)
+            .collect();
+        Self {
+            centerline: indices.iter().map(|&i| self.centerline()[i]).collect(),
+            right_widths: indices.iter().map(|&i| self.right_widths()[i]).collect(),
+            left_widths: indices.iter().map(|&i| self.left_widths()[i]).collect(),
+            right_boundary: indices.iter().map(|&i| self.right_boundary()[i]).collect(),
+            left_boundary: indices.iter().map(|&i| self.left_boundary()[i]).collect(),
+            closed: false,
+            range: 0..count,
+        }
+    }
+
+    pub(crate) fn window(&self, range: std::ops::Range<usize>) -> Self {
+        assert!(range.start < range.end && range.end <= self.centerline.len());
+        Self {
+            range,
+            closed: false,
+            ..self.clone()
+        }
+    }
+
     pub(crate) fn centerline(&self) -> &[Position] {
-        &self.centerline
+        &self.centerline[self.range.clone()]
     }
 
     pub(crate) fn right_widths(&self) -> &[f64] {
-        &self.right_widths
+        &self.right_widths[self.range.clone()]
     }
 
     pub(crate) fn left_widths(&self) -> &[f64] {
-        &self.left_widths
+        &self.left_widths[self.range.clone()]
     }
 
     pub(crate) fn right_boundary(&self) -> &[Position] {
-        &self.right_boundary
+        &self.right_boundary[self.range.clone()]
     }
 
     pub(crate) fn left_boundary(&self) -> &[Position] {
-        &self.left_boundary
+        &self.left_boundary[self.range.clone()]
     }
 
     pub(crate) fn segment_count(&self) -> usize {
-        self.centerline.len() - usize::from(!self.closed)
+        self.range.len() - usize::from(!self.closed)
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -128,12 +162,12 @@ impl RoadPolygon {
     #[cfg(any(test, feature = "track-pregeneration"))]
     pub(crate) fn quads(&self) -> impl Iterator<Item = [Position; 4]> + '_ {
         (0..self.segment_count()).map(|i| {
-            let next = (i + 1) % self.centerline.len();
+            let next = (i + 1) % self.centerline().len();
             [
-                self.right_boundary[i],
-                self.right_boundary[next],
-                self.left_boundary[next],
-                self.left_boundary[i],
+                self.right_boundary()[i],
+                self.right_boundary()[next],
+                self.left_boundary()[next],
+                self.left_boundary()[i],
             ]
         })
     }

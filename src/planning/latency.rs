@@ -38,6 +38,26 @@ use std::borrow::Cow;
 
 use web_time::Instant;
 
+thread_local! {
+    // Shared geometry has no planning Context. Count work on the executing
+    // thread so nested spans include it, without charging other workers.
+    static GEOMETRY_BUILD_CLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static GEOMETRY_CLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn geometry_build_work(clocks: u64) {
+    GEOMETRY_BUILD_CLOCKS.set(GEOMETRY_BUILD_CLOCKS.get().wrapping_add(clocks));
+}
+
+#[cfg(test)]
+pub(crate) fn geometry_build_clocks() -> u64 {
+    GEOMETRY_BUILD_CLOCKS.get()
+}
+
+pub(crate) fn geometry_work(clocks: u64) {
+    GEOMETRY_CLOCKS.set(GEOMETRY_CLOCKS.get().wrapping_add(clocks));
+}
+
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone)]
 pub(crate) struct Span {
@@ -59,11 +79,12 @@ impl Latency {
     pub(crate) fn time<T>(&self, name: &'static str, f: impl FnOnce() -> T) -> T {
         let t0 = Instant::now();
         let c0 = self.clocks.get();
+        let g0 = GEOMETRY_CLOCKS.get();
         let out = f();
         self.record_span(Span {
             name: name.into(),
             milliseconds: t0.elapsed().as_secs_f64() * 1e3,
-            clocks: self.clocks.get() - c0,
+            clocks: self.clocks.get() - c0 + GEOMETRY_CLOCKS.get().wrapping_sub(g0),
         });
         out
     }
@@ -161,6 +182,22 @@ impl LatencyStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_clocks_are_nested_reset_and_isolated_from_workers() {
+        let lat = Latency::default();
+        geometry_work(100); // Work before the span must not leak in.
+        lat.time("outer", || {
+            lat.work(2);
+            geometry_work(3);
+            lat.time("inner", || geometry_work(5));
+            std::thread::spawn(|| geometry_work(1000)).join().unwrap();
+        });
+        let spans = lat.take();
+        assert_eq!((spans[0].clocks, spans[1].clocks), (5, 10));
+        lat.time("next", || geometry_work(7));
+        assert_eq!(lat.take()[0].clocks, 7);
+    }
 
     #[test]
     fn seams_sum_wall_time_and_stable_clocks() {

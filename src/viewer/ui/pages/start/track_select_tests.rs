@@ -101,3 +101,33 @@ fn corner_count_groups_bends_and_splits_direction_changes() {
     assert_eq!(super::count_corners(&curvatures, 5.0), 2);
     assert_eq!(super::count_corners(&[0.0; 40], 5.0), 0);
 }
+
+#[test]
+fn start_requested_during_preparation_waits_for_the_selected_track() {
+    let mut view = super::StartView::TrackSelect;
+    let mut requested = Some(1);
+    let mut state = crate::viewer::UiState {
+        track: 1,
+        ..Default::default()
+    };
+    let mut live = crate::viewer::live::Live::default();
+    let ctx = egui::Context::default();
+    configure(&ctx);
+    let mut route = None;
+    for frame in 0..3 {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(780.0, 390.0))),
+                ..Default::default()
+            },
+            |ui| {
+                route = super::show(ui, &mut view, &mut requested, &mut state, &mut live).or(route.take());
+            },
+        );
+        if frame < 2 {
+            assert!(route.is_none());
+        }
+    }
+    assert!(matches!(route, Some(crate::viewer::ui::pages::Route::Driving)));
+    assert!(live.world.is_prepared());
+}

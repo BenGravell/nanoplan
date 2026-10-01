@@ -146,6 +146,7 @@ pub(crate) fn run() {
         ),
     )
     .add_systems(EguiPrimaryContextPass, ui::ui)
+    .add_systems(Update, live::prepare_road_surface.before(live::draw))
     .add_systems(
         Update,
         (

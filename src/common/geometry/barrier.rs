@@ -189,11 +189,7 @@ fn collide_centers_with_barriers(
 pub(crate) fn collide_with_road_barriers(prev: State, state: State, footprint: Footprint, road: &Road) -> State {
     let polygon = road.polygon();
     let centerline = polygon.centerline();
-    let Some((i, segment_u)) = closest_centerline_segment(
-        centerline,
-        polygon.is_closed(),
-        center_state(state, footprint).position(),
-    ) else {
+    let Some((i, segment_u)) = road.closest_centerline_segment(center_state(state, footprint).position()) else {
         return state;
     };
     // A rolling road window is open at both ends. Its side segments must not
@@ -232,34 +228,6 @@ fn rear_state(mut state: State, footprint: Footprint) -> State {
 
 pub(crate) fn collides_with_road_barrier(state: State, road: &Road) -> bool {
     collide_with_road_barriers(state, state, super::EGO_FOOTPRINT, road) != state
-}
-
-fn closest_centerline_segment(centerline: &[Position], closed: bool, p: Position) -> Option<(usize, f64)> {
-    let segment_count = centerline.len().saturating_sub(usize::from(!closed));
-    (0..segment_count)
-        .min_by(|&a, &b| {
-            let a_next = (a + 1) % centerline.len();
-            let b_next = (b + 1) % centerline.len();
-            segment_projection(centerline[a], centerline[a_next], p)
-                .0
-                .total_cmp(&segment_projection(centerline[b], centerline[b_next], p).0)
-        })
-        .map(|i| {
-            let next = (i + 1) % centerline.len();
-            let (_, u) = segment_projection(centerline[i], centerline[next], p);
-            (i, u)
-        })
-}
-
-/// Squared distance to the finite segment and the unclamped projection along
-/// its supporting line. Values outside 0..=1 lie beyond an endpoint.
-fn segment_projection(a: Position, b: Position, p: Position) -> (f64, f64) {
-    let ab = [b.x - a.x, b.y - a.y];
-    let len2 = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-9);
-    let u = ((p.x - a.x) * ab[0] + (p.y - a.y) * ab[1]) / len2;
-    let clamped = u.clamp(0.0, 1.0);
-    let q = Position::new(a.x + ab[0] * clamped, a.y + ab[1] * clamped);
-    ((p.x - q.x).powi(2) + (p.y - q.y).powi(2), u)
 }
 
 #[cfg(test)]

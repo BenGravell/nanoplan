@@ -88,8 +88,7 @@ impl<'a> Context<'a> {
     }
 
     pub(crate) fn path(&self) -> &Path {
-        self.path
-            .get_or_init(|| Path::with_geometry(self.road.centerline(), self.road.reference_geometry()))
+        self.path.get_or_init(|| self.road.path())
     }
 
     pub(crate) fn project_ego(&self, ego: State) -> (f64, f64) {

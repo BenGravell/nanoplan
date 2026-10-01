@@ -5,7 +5,7 @@ use crate::common::kinematics::TrajectoryKinematics;
 use crate::simulation::speed_after_max_accel;
 #[cfg(test)]
 use crate::simulation::{Control, Position, State};
-use crate::track::{Path, Road};
+use crate::track::Road;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Metrics {
@@ -18,7 +18,7 @@ pub(crate) fn evaluate(trajectory_kinematics: &TrajectoryKinematics, road: &Road
     if n == 0 {
         return Metrics::default();
     }
-    let path = Path::new(road.centerline());
+    let path = road.path();
     let station: Vec<f64> = trajectory_kinematics
         .states
         .iter()

@@ -13,15 +13,18 @@ pub(super) enum StartView {
 #[derive(Default)]
 pub(crate) struct StartPage {
     view: StartView,
+    start_requested: Option<usize>,
 }
 
 impl StartPage {
     pub(crate) fn select_track(&mut self) {
         self.view = StartView::TrackSelect;
+        self.start_requested = None;
     }
 
     pub(crate) fn show_menu(&mut self) {
         self.view = StartView::Menu;
+        self.start_requested = None;
     }
 
     #[cfg(test)]
@@ -34,7 +37,7 @@ impl PageView for StartPage {
     fn show(&mut self, context: PageContext<'_>) -> PageOutput {
         let PageContext { root, state, live, .. } = context;
         let route = if self.view == StartView::TrackSelect {
-            track_select::show(root, &mut self.view, state, live)
+            track_select::show(root, &mut self.view, &mut self.start_requested, state, live)
         } else {
             landing::show(root, &mut self.view)
         };

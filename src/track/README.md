@@ -45,6 +45,21 @@ segments.
 
 Segment-intersection checks reject non-simple shapes.
 
+## Runtime preparation
+
+Track selection prepares the full collision road and a shared planning strip covering one lap plus the maximum lookahead
+and visible-road margins.
+It keeps the metre-spaced samples and the short closing segment at the lap seam.
+Boundaries, barrier segments, arc lengths, reference headings/curvatures, spatial indexes, and the viewer's surface mesh
+are built before Driving.
+Parsed preset tracks are cached just like catalog tracks.
+
+Rolling planning and visible-road windows are ranges into that immutable storage.
+They do not resample the track or rebuild polygons, paths, or indexes.
+Memory grows with lap length plus lookahead, rather than with the number of possible windows.
+Only the selected track's prepared road storage is retained by the live world and worker.
+The browser worker prepares its own resident copy once; tick messages carry a window descriptor and live state.
+
 ## Contents
 
 ```text
@@ -55,6 +70,7 @@ track/
 ├── data/               spline-processed point data used at runtime
 ├── mod.rs              module wiring
 ├── path.rs             arc-length lookup and Frenet projection
+├── prepared.rs        runtime track preparation and shared road-window views
 ├── pregenerate.rs      offline concurrent downloader and spline baker
 ├── presets.rs          deterministic procedurally constructed test circuits
 ├── road.rs             finite planner and simulation road windows

@@ -1,5 +1,10 @@
 use crate::common::geometry::RoadPolygon;
-use crate::track::{ROAD_SAMPLE_STEP_M, Track};
+use crate::track::Track;
+#[cfg(test)]
+use crate::track::{
+    ROAD_SAMPLE_STEP_M,
+    prepared::{VISIBLE_TRACK_AHEAD_M, VISIBLE_TRACK_BEHIND_M},
+};
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::prelude::*;
@@ -11,9 +16,6 @@ use super::config::ROAD_SURFACE_Z;
 use crate::viewer::colors::{
     ROAD_SURFACE, SUBDUED_TRACK_CENTERLINE, SUBDUED_TRACK_EDGE, TRACK_CENTERLINE, TRACK_EDGE, TRACK_STATION,
 };
-
-const VISIBLE_TRACK_BEHIND_M: f64 = 250.0;
-const VISIBLE_TRACK_AHEAD_M: f64 = 750.0;
 
 #[derive(Resource)]
 pub(crate) struct RoadSurfaceMesh {
@@ -28,7 +30,7 @@ pub(crate) fn setup(
     live: NonSend<Live>,
 ) {
     let polygon = surface_polygon(&live.world.track, live.world.track_progress);
-    let handle = meshes.add(surface_mesh(&polygon));
+    let handle = meshes.add(live.road_surface.clone());
     commands.spawn((
         Mesh2d(handle.clone()),
         MeshMaterial2d(materials.add(ROAD_SURFACE)),
@@ -39,33 +41,23 @@ pub(crate) fn setup(
 
 pub(in crate::viewer::live) fn draw(
     gizmos: &mut Gizmos,
-    meshes: &mut Assets<Mesh>,
-    surface: &mut RoadSurfaceMesh,
     track: &Track,
     progress: f64,
     show_stations: bool,
     show_centerline: bool,
 ) {
-    if let Some(length) = track.lap_length() {
-        let polygon = track
-            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
-            .expect("track must form a valid road polygon");
-        update_surface(meshes, surface, &polygon);
-        draw_lines(
-            gizmos,
-            &polygon,
-            true,
-            show_centerline,
-            SUBDUED_TRACK_EDGE,
-            SUBDUED_TRACK_CENTERLINE,
-        );
-    }
+    let polygon = track.prepared().collision.polygon();
+    draw_lines(
+        gizmos,
+        polygon,
+        true,
+        show_centerline,
+        SUBDUED_TRACK_EDGE,
+        SUBDUED_TRACK_CENTERLINE,
+    );
 
     let polygon = visible_polygon(track, progress);
 
-    if track.lap_length().is_none() {
-        update_surface(meshes, surface, &polygon);
-    }
     draw_lines(
         gizmos,
         &polygon,
@@ -83,51 +75,29 @@ pub(in crate::viewer::live) fn draw(
 }
 
 fn visible_polygon(track: &Track, progress: f64) -> RoadPolygon {
-    let visible_length = VISIBLE_TRACK_BEHIND_M + VISIBLE_TRACK_AHEAD_M;
-    if let Some(length) = track.lap_length().filter(|&length| length <= visible_length) {
-        return track
-            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
-            .expect("visible track must form a valid road polygon");
-    }
-    track
-        .road_polygon(
-            progress - VISIBLE_TRACK_BEHIND_M,
-            progress + VISIBLE_TRACK_AHEAD_M,
-            ROAD_SAMPLE_STEP_M,
-            false,
-        )
-        .expect("visible track must form a valid road polygon")
+    track.prepared().visible_polygon(progress)
 }
 
-fn surface_polygon(track: &Track, progress: f64) -> RoadPolygon {
-    if let Some(length) = track.lap_length() {
-        track
-            .road_polygon(0.0, length, ROAD_SAMPLE_STEP_M, true)
-            .expect("track must form a valid road polygon")
-    } else {
-        track
-            .road_polygon(
-                progress - VISIBLE_TRACK_BEHIND_M,
-                progress + VISIBLE_TRACK_AHEAD_M,
-                ROAD_SAMPLE_STEP_M,
-                false,
-            )
-            .expect("visible track must form a valid road polygon")
-    }
+fn surface_polygon(track: &Track, _progress: f64) -> RoadPolygon {
+    track.prepared().collision.polygon().clone()
 }
 
-fn update_surface(meshes: &mut Assets<Mesh>, surface: &mut RoadSurfaceMesh, polygon: &RoadPolygon) {
-    if !surface_needs_update(surface, polygon) {
-        return;
-    }
-    if let Some(mut mesh) = meshes.get_mut(&surface.handle) {
-        *mesh = surface_mesh(polygon);
+pub(crate) fn prepare_surface(
+    live: NonSend<Live>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut surface: ResMut<RoadSurfaceMesh>,
+) {
+    let polygon = live.world.track.prepared().collision.polygon();
+    if surface_needs_update(&surface, polygon)
+        && let Some(mut mesh) = meshes.get_mut(&surface.handle)
+    {
+        *mesh = live.road_surface.clone();
         surface.polygon = polygon.clone();
     }
 }
 
 fn surface_needs_update(surface: &RoadSurfaceMesh, polygon: &RoadPolygon) -> bool {
-    surface.polygon != *polygon
+    !surface.polygon.same_geometry(polygon) && surface.polygon != *polygon
 }
 
 fn empty_surface_mesh() -> Mesh {
@@ -137,7 +107,8 @@ fn empty_surface_mesh() -> Mesh {
     )
 }
 
-fn surface_mesh(road: &RoadPolygon) -> Mesh {
+pub(in crate::viewer::live) fn surface_mesh(road: &RoadPolygon) -> Mesh {
+    crate::planning::latency::geometry_build_work(road.centerline().len() as u64);
     let mut mesh = empty_surface_mesh();
     let positions = road
         .right_boundary()
@@ -192,6 +163,27 @@ fn draw_lines(
 mod tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn drawing_prepared_tracks_builds_no_static_geometry() {
+        use crate::planning::latency::geometry_build_clocks;
+        use bevy::ecs::system::SystemState;
+        use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
+        let mut world = World::new();
+        let mut config = GizmoConfigStore::default();
+        config.insert::<DefaultGizmoConfigGroup>(Default::default(), Default::default());
+        world.insert_resource(config);
+        let mut system = SystemState::<Gizmos>::new(&mut world);
+        for index in [1, 2] {
+            let track = Track::from_catalog(index);
+            track.prepared();
+            let builds = geometry_build_clocks();
+            for progress in [0.0, 50.0, track.lap_length().unwrap() + 5.0] {
+                draw(&mut system.get_mut(&mut world).unwrap(), &track, progress, true, true);
+            }
+            assert_eq!(geometry_build_clocks(), builds, "draw rebuilt track {index}");
+        }
+    }
 
     #[test]
     fn surface_is_a_triangle_strip_over_the_shared_polygon() {

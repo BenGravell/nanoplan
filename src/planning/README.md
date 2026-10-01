@@ -48,13 +48,20 @@ serializable request to a Web Worker.
 The simulation remains fixed-step and interacts with either implementation through the same non-blocking `submit`,
 `poll`, and `is_slow` operations.
 
-Between simulation ticks, `LiveWorld` submits the current ego state, road, next traffic states, horizon, compute budget,
-and diagnostic setting, giving the worker the full 100 ms interval before the next step is due.
+Track selection prepares the immutable road geometry and indexes before entering Driving.
+Native workers share that storage; browser workers receive a one-time track ID and timestep, prepare their own resident
+geometry, and acknowledge readiness.
+The selection screen waits for that acknowledgment.
+
+Between simulation ticks, `LiveWorld` submits the current ego state, road-window range and projection hint, next traffic
+states, horizon, compute budget, and diagnostic setting.
+No track points, boundaries, barriers, or indexes cross the worker boundary per tick.
+The worker gets the full 100 ms interval before the next step is due.
 Only one request may be in flight.
 The tick commits only after its matching `PlanResult` arrives: ego and traffic advance together by 100 ms. While
 waiting, the viewer keeps rendering and polling without advancing the world or consuming the accumulated tick.
 Traffic updates are staged so neither positions nor random state advance repeatedly during worker delays.
-Changing the planner or traffic count discards a pending snapshot.
+Changing the planner or traffic count discards pending snapshots by generation, while retaining prepared geometry.
 
 This is nonblocking lockstep: a fast planner supplies one fresh plan per simulation step; if computation exceeds 100 ms,
 simulated time slows rather than executing old controls and repeatedly rejecting stale replacements.
@@ -92,9 +99,10 @@ Notably:
   consumes the first one during closed-loop simulation.
   The viewer's future-preview feature asks for a larger horizon (up to 100 ticks, `PLANNING_HORIZON_S`) to draw a longer
   plan.
-- **`road.centerline()` is a raw polyline**, not a `Path`.
-  Every planner that needs Frenet operations (arc length, projection, curvature-following) builds its own `track::Path`
-  from it.
+- **`ctx.path()` is a cheap view of the road's prepared geometry.** Arc lengths, reference geometry, and spatial indexes
+  are shared with metrics and subsequent plan calls.
+  Actor projections remain local to each planning context so stale traffic predictions cannot accumulate in the static
+  cache.
 
 ## `PlannerKind` and the `PlannerSpec` registry
 
@@ -156,6 +164,16 @@ The short version:
 - Every span also accumulates hardware-independent logical `clocks`.
   A clock represents one domain work item (for example an actor, trajectory sample, or rendered plan state); nested seams
   include their children's work.
+  Timed spans also include shared geometry work: one clock per indexed segment built or exact segment-distance evaluation,
+  including evaluations inside the spatial index.
+  A thread-local counter keeps this work attributable to the executing worker; it does not charge the renderer for planner
+  work on another thread.
+  Long-road tests bound query clocks on 256- and 4,096-segment roads, check index reuse, and compare indexed projection
+  against exhaustive scans across every track.
+  These catch full-road scans hidden inside a single trajectory sample.
+  Separate geometry-construction clocks assert that prepared road windows, contexts, metrics, worker resets, and the
+  actual track drawing loop perform zero geometry construction.
+  Candidate paths remain dynamic and are built as needed.
   These deterministic totals can be asserted in normal unit tests even though wall milliseconds cannot.
 
 See each planner's README for which custom seams it adds and why.

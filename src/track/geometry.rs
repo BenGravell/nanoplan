@@ -110,6 +110,7 @@ impl TrackGeometry {
     }
 
     pub(super) fn baked(csv: &str) -> Self {
+        crate::planning::latency::geometry_build_work(csv.len() as u64);
         let samples = csv
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'))

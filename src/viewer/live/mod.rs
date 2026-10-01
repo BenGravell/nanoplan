@@ -15,7 +15,7 @@ mod screen;
 pub(crate) use camera::{CameraState, MAX_ZOOM, MIN_ZOOM, camera_input};
 pub(crate) use drawing::{
     DiagnosticPointGizmos, DiagnosticTrajectoryGizmos, PlannedTrajectoryGizmos, configure_diagnostics, configure_plan,
-    setup_carpet, setup_grid, setup_road_surface,
+    prepare_road_surface, setup_carpet, setup_grid, setup_road_surface,
 };
 use rendering::RenderSnapshot;
 pub(crate) use rendering::draw;
@@ -85,8 +85,15 @@ impl LapStats {
     }
 }
 
+struct TrackPreparation {
+    selection: (u64, PlannerKind, usize, usize),
+    frame: u64,
+    built: bool,
+}
+
 pub(crate) struct Live {
     pub(crate) world: LiveWorld,
+    road_surface: Mesh,
     pub(crate) seed: u64,
     pub(crate) paused: bool,
     pub(crate) camera: CameraState,
@@ -98,9 +105,38 @@ pub(crate) struct Live {
     planner: PlannerKind,
     recorder: Latency,
     acc: f32,
+    preparation: Option<TrackPreparation>,
 }
 
 impl Live {
+    pub(crate) fn prepare_selection(&mut self, planner: PlannerKind, track: usize, actors: usize, frame: u64) -> bool {
+        let selection = (self.seed, planner, track, actors);
+        if self.preparation.as_ref().is_none_or(|p| p.selection != selection) {
+            self.preparation = Some(TrackPreparation {
+                selection,
+                frame,
+                built: false,
+            });
+            return false;
+        }
+        let preparation = self.preparation.as_ref().unwrap();
+        // Egui may run several layout passes per frame. Show preparation
+        // first, then give the surface upload an Update before Driving.
+        if frame == preparation.frame {
+            return false;
+        }
+        if !preparation.built {
+            self.regenerate_with_actor_count(self.seed, planner, track, actors);
+            self.preparation = Some(TrackPreparation {
+                selection,
+                frame,
+                built: true,
+            });
+            return false;
+        }
+        self.world.is_prepared()
+    }
+
     pub(crate) fn regenerate_with_actor_count(
         &mut self,
         seed: u64,
@@ -108,8 +144,10 @@ impl Live {
         track: usize,
         actor_count: usize,
     ) {
+        self.preparation = None;
         self.seed = seed;
         self.world = LiveWorld::with_track(track, seed, planner, actor_count, DT);
+        self.road_surface = drawing::track::surface_mesh(self.world.track.prepared().collision.polygon());
         self.planner = planner;
         self.latency = LatencyStats::default();
         self.recorder.take();
@@ -172,6 +210,7 @@ impl Live {
 impl Default for Live {
     fn default() -> Self {
         let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
+        let road_surface = drawing::track::surface_mesh(world.track.prepared().collision.polygon());
         let previous = RenderSnapshot::capture(&world);
         let lap_stats = LapStats::new(world.track.lap_length());
         let mut camera = CameraState::default();
@@ -179,6 +218,7 @@ impl Default for Live {
         Self {
             camera,
             world,
+            road_surface,
             seed: 1,
             paused: false,
             latency: LatencyStats::default(),
@@ -189,6 +229,7 @@ impl Default for Live {
             planner: PlannerKind::Basic,
             recorder: Latency::default(),
             acc: 0.0,
+            preparation: None,
         }
     }
 }
