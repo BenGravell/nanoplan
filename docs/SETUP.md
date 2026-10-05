@@ -16,3 +16,9 @@ Install the developer tools (configured by `mise.toml`):
 ```bash
 mise install
 ```
+
+Install the hooks:
+
+```bash
+mise exec -- pre-commit install
+```

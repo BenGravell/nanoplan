@@ -1,4 +1,52 @@
+min_version = "2026.10.2"
+
 [tools]
 node = "22"
+python = "3.12"
+pre-commit = "4.6.0"
 "cargo:cargo-machete" = "0.9.2"
 "cargo:trunk" = "0.21.14"
+
+[settings]
+# mise's content-addressed task cache is currently experimental.
+experimental = true
+
+[task_config]
+global_env = ["PATH", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "TZ"]
+
+[task_config.cache]
+enabled = true
+command_inputs = [
+    "cargo -vV",
+    '"${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}" -vV',
+    "cargo clippy --version",
+    "python3 tools/cargo_hook_context.py",
+]
+
+[task_config.input_groups]
+rust = [
+    "Cargo.toml", "Cargo.lock", "rust-toolchain*", ".cargo/**", "build.rs",
+    "src/**", "tests/**", "benches/**", "examples/**", "tools/*.rs", "tools/cargo_hook_context.py",
+    "assets/**", "web/**", ".pre-commit-config.yaml", "!**/*.md",
+    "{{ env.CARGO_HOME | default(value=env.HOME ~ '/.cargo') }}/config{,.toml}",
+]
+
+[tasks.hook-clippy-fix]
+description = "Apply Clippy fixes and reject warnings; cache only verified, unchanged inputs"
+run = [
+    "python3 tools/clippy_fix.py cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features -- -D warnings",
+    # --fix can succeed with unfixable warnings; cache only a strict pass.
+    "cargo clippy --all-targets --all-features -- -D warnings",
+]
+sources = [
+    "@group:rust", "tools/clippy_fix.py",
+    "{{ env.CLIPPY_CONF_DIR | default(value=config_root) }}/{clippy.toml,.clippy.toml}",
+]
+outputs = []
+
+[tasks.hook-test]
+description = "Run the full Rust test suite, reusing successful results for identical inputs"
+run = "cargo test --locked --all-targets --all-features"
+sources = ["@group:rust"]
+# Preserve the render-test artifacts when restoring a successful run.
+outputs = ["viewer-renders"]

@@ -21,22 +21,15 @@ repos:
         pass_filenames: false
 
       - id: cargo-clippy-fix
-        name: cargo clippy fix
-        entry: cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features -- -D warnings
-        language: system
-        always_run: true
-        pass_filenames: false
-
-      - id: cargo-clippy
-        name: cargo clippy
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+        name: cargo clippy fix and check
+        entry: mise run hook-clippy-fix
         language: system
         always_run: true
         pass_filenames: false
 
       - id: cargo-test
         name: cargo test
-        entry: cargo test --all-targets --all-features
+        entry: mise run hook-test
         language: system
         always_run: true
         pass_filenames: false
