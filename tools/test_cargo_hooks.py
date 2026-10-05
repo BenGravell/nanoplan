@@ -105,9 +105,13 @@ Path("viewer-renders/result.png").write_text("rendered")
         self.cached_project()
         self.env["CARGO_HOME"] = str(self.root / "cargo-home")
         self.task()
+        self.task(env=dict(self.env, DISPLAY=":99", WAYLAND_DISPLAY="unused-display",
+                           XDG_RUNTIME_DIR=str(self.root / "unused-runtime"),
+                           LANG="C", LC_ALL="C", TZ="UTC0"))
+        self.assertEqual(self.runs(), 1, "session, locale and timezone changes should reuse results")
         self.task(env=dict(self.env, RUSTFLAGS="--cfg changed"))
         self.task(env=dict(self.env, WGPU_BACKEND="gl"))
-        self.task(env=dict(self.env, LANG="nanoplan-test-locale"))
+        self.task(env=dict(self.env, PATH=str(self.root / "other-bin") + os.pathsep + self.env["PATH"]))
         self.write("cargo-home/config.toml", "[build]\njobs = 2\n")
         self.task()
         # Same executable path, different active compiler version.
@@ -129,7 +133,7 @@ Path("viewer-renders/result.png").write_text("rendered")
         self.task(env=dict(self.env, MISE_TASK_CACHE="write-only"))
         self.assertEqual(self.runs(), 11)
 
-    def test_pre_commit_hashes_the_staged_snapshot(self):
+    def test_pre_commit_reuses_manual_runs_and_hashes_the_staged_snapshot(self):
         self.cached_project()
         self.write(".pre-commit-config.yaml", f'''repos:
   - repo: local
@@ -144,8 +148,12 @@ Path("viewer-renders/result.png").write_text("rendered")
         self.write("README.md", "Initial documentation")
         self.run_command("git", "init", "-q")
         self.run_command("git", "add", ".")
+        self.run_command("pre-commit", "install")
+        self.run_command("pre-commit", "run", "--all-files")
+        self.assertEqual(self.runs(), 1)
         self.run_command("git", "-c", "user.name=Hook Test", "-c", "user.email=hook-test@example.invalid",
                          "commit", "-qm", "fixture")
+        self.assertEqual(self.runs(), 1, "git commit must reuse the preceding manual hook run")
         self.task()
         self.write("README.md", "Staged documentation")
         self.run_command("git", "add", "README.md")
@@ -172,6 +180,8 @@ Path("viewer-renders/result.png").write_text("rendered")
             self.run_command("cargo", "clippy", *FLAGS)
         self.run_command(*fixer)
         unchanged = self.run_command(*fixer)
+        self.assertIn("sources up-to-date, skipping", unchanged)
+        unchanged = self.run_command(*fixer, env=dict(self.env, WGPU_BACKEND="gl"))
         self.assertIn("sources up-to-date, skipping", unchanged)
         with (self.root / ".gitignore").open("a") as ignore:
             ignore.write("src/generated.rs\n")

@@ -11,8 +11,10 @@ from pathlib import Path
 
 ENV_PREFIXES = (
     "CARGO_", "RUST", "CLIPPY_", "CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "CPPFLAGS",
-    "LDFLAGS", "LD_", "DYLD_", "LIB", "PKG_CONFIG", "WGPU", "VK_", "MESA", "EGL", "GL",
+    "LDFLAGS", "LD_", "DYLD_", "LIB", "PKG_CONFIG",
 )
+if os.environ.get("MISE_TASK_NAME") == "hook-test":
+    ENV_PREFIXES += ("WGPU", "VK_", "MESA", "EGL", "GL")
 
 root = Path.cwd()
 clippy_root = Path(os.environ.get("CLIPPY_CONF_DIR", root)).resolve()

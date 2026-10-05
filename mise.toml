@@ -11,12 +11,11 @@ pre-commit = "4.6.0"
 # mise's content-addressed task cache is currently experimental.
 experimental = true
 
-[task_config]
-global_env = ["PATH", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "TZ"]
-
 [task_config.cache]
 enabled = true
 command_inputs = [
+    # Git adds its helper directory to PATH for hooks; keep other PATH changes in the key.
+    'printf "%s\n" "$PATH" | tr ":" "\n" | grep -Fxv "$(git --exec-path)"',
     "cargo -vV",
     '"${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}" -vV',
     "cargo clippy --version",
