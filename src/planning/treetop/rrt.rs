@@ -462,7 +462,7 @@ impl Grower<'_, '_> {
 fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
     let steer = CubicSteer::from_states(start, goal, duration);
     let dir = steer.forward_sign(start.pose.yaw, dt);
-    steer_controls(*start, &steer, dt, STEER_TICKS, dir).0
+    steer_controls(*start, &steer, dt, STEER_TICKS, dir, true).0
 }
 
 /// The standalone tree planner: grow, take the best path candidate, drive
@@ -535,7 +535,6 @@ mod tests {
             target.position().x
         );
         assert!(end.position().y.abs() < 0.01);
-        assert!(end.speed <= target.speed);
         assert!(
             (end.speed - target.speed).abs() < 0.2,
             "speed {} vs {}",

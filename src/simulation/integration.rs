@@ -18,7 +18,11 @@ pub(crate) fn speed_after_max_accel(mut speed: f64, ticks: usize, dt: f64) -> f6
 /// longitudinal resistance. The live world resolves collisions after all
 /// dynamic bodies have advanced.
 pub(crate) fn world_step(s: State, u: Control, dt: f64) -> State {
-    let u = clamp_control(u, s.speed);
+    world_step_unclamped(s, clamp_control(u, s.speed), dt)
+}
+
+/// Integrate direct controls with resistance, without enforcing control limits.
+pub(crate) fn world_step_unclamped(s: State, u: Control, dt: f64) -> State {
     let net_accel = net_longitudinal_accel(u.acceleration, s.speed);
     let forward = crate::simulation::Position::from_angle(s.pose.yaw);
     (

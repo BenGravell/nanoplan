@@ -109,7 +109,7 @@ fn append_segment(controls: &mut Vec<Control>, x: &mut State, target: State, dur
     let ticks = remaining.min((duration / ctx.road.dt).round().max(1.0) as usize);
     let duration = ticks as f64 * ctx.road.dt;
     let steer = CubicSteer::from_states(x, &target, duration);
-    let (segment, end) = steer_controls(*x, &steer, ctx.road.dt, ticks, 1.0);
+    let (segment, end) = steer_controls(*x, &steer, ctx.road.dt, ticks, 1.0, true);
     controls.extend(segment);
     *x = end;
 }

@@ -5,8 +5,8 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
-use crate::common::differencing::forward_difference;
-use crate::simulation::{Control, Position, State, clamp_control, world_step};
+use crate::common::kinematics::{commanded_accel_for_net, commanded_accel_to_stop};
+use crate::simulation::{Control, Position, State, clamp_control, world_step_unclamped};
 
 /// Cubic flat-output connector between two states/poses.
 ///
@@ -107,12 +107,15 @@ impl CubicSteer {
 /// Convert a fitted cubic's analytic flat-output action into direct
 /// controls, sampling each segment at its midpoint. `curvature_sign` lets
 /// callers flip the curve when they intentionally drive it in reverse.
+/// Disable `clamp` to retain infeasible commands and integrate them without
+/// limits, leaving feasibility checks to the caller.
 pub(crate) fn steer_controls(
     start: State,
     steer: &CubicSteer,
     dt: f64,
     ticks: usize,
     curvature_sign: f64,
+    clamp: bool,
 ) -> (Vec<Control>, State) {
     let mut x = start;
     let controls = (0..ticks)
@@ -120,10 +123,12 @@ pub(crate) fn steer_controls(
             let t = (i as f64 + 0.5) * dt;
             let mut u = steer.control(t);
             u.curvature *= curvature_sign;
-            let accel_floor = forward_difference(x.speed, 0.0, dt);
-            u.acceleration = u.acceleration.max(accel_floor);
-            let u = clamp_control(u, x.speed);
-            x = world_step(x, u, dt);
+            u.acceleration = commanded_accel_for_net(u.acceleration, x.speed);
+            if clamp {
+                u.acceleration = u.acceleration.max(commanded_accel_to_stop(x.speed, dt));
+                u = clamp_control(u, x.speed);
+            }
+            x = world_step_unclamped(x, u, dt);
             u
         })
         .collect();
@@ -211,8 +216,38 @@ mod tests {
             6.0,
         );
         let steer = CubicSteer::from_states(&start, &goal, 1.2);
-        let (controls, _) = steer_controls(start, &steer, 0.1, 1, 1.0);
+        let (controls, _) = steer_controls(start, &steer, 0.1, 1, 1.0, true);
 
-        assert_eq!(controls[0], clamp_control(steer.control(0.05), start.speed));
+        let mut expected = steer.control(0.05);
+        expected.acceleration = commanded_accel_for_net(expected.acceleration, start.speed);
+        assert_eq!(controls[0], clamp_control(expected, start.speed));
+    }
+
+    #[test]
+    fn steering_compensates_resistance_and_optionally_preserves_infeasible_controls() {
+        let start = State {
+            speed: 5.0,
+            ..Default::default()
+        };
+        let goal = State::from((Position::new(50.0, 0.0), 0.0, 5.0));
+        let steer = CubicSteer::from_states(&start, &goal, 10.0);
+        let (_, end) = steer_controls(start, &steer, 0.1, 100, 1.0, false);
+        assert!((end.speed - start.speed).abs() < 1e-9);
+        assert!(end.position().distance(goal.position()) < 1e-9);
+
+        let goal = State::from((Position::new(5.0, 5.0), 0.0, 5.0));
+        let steer = CubicSteer::from_states(&start, &goal, 1.0);
+        let (raw, raw_end) = steer_controls(start, &steer, 0.1, 1, 1.0, false);
+        let (limited, limited_end) = steer_controls(start, &steer, 0.1, 1, 1.0, true);
+        let mut expected = steer.control(0.05);
+        expected.acceleration = commanded_accel_for_net(expected.acceleration, start.speed);
+        assert_eq!(raw[0], expected);
+        assert_ne!(raw[0], limited[0]);
+        assert_eq!(limited[0], clamp_control(raw[0], start.speed));
+        assert!((raw_end.speed - (start.speed + steer.control(0.05).acceleration * 0.1)).abs() < 1e-9);
+        assert!((raw_end.pose.yaw - (start.pose.yaw + start.speed * raw[0].curvature * 0.1)).abs() < 1e-9);
+        assert_ne!(raw_end.speed, limited_end.speed);
+        assert_ne!(raw_end.pose.yaw, limited_end.pose.yaw);
+        assert_eq!(limited_end, crate::simulation::world_step(start, limited[0], 0.1));
     }
 }

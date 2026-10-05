@@ -92,6 +92,11 @@ pub(crate) fn commanded_accel_for_net(net_accel: f64, speed: f64) -> f64 {
     net_accel + longitudinal_resistance_accel(speed)
 }
 
+/// Unclamped command needed to stop in one step of duration `dt`, including resistance.
+pub(crate) fn commanded_accel_to_stop(speed: f64, dt: f64) -> f64 {
+    commanded_accel_for_net(-speed / dt, speed)
+}
+
 /// State curvature bound for a given speed.
 pub(crate) fn curvature_limit(speed: f64) -> f64 {
     MAX_ABS_CURVATURE.min(curvature_from_lateral_acceleration(speed, MAX_ABS_LAT_ACCEL))
