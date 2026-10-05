@@ -3,8 +3,8 @@
 ## The shared metric objective
 
 Planners maximize forward progress subject to collision, road, and vehicle-dynamics constraints.
-`HardConstraints::point_cost(sample)` returns `1 - metrics::speed_score(...)` for feasible samples and `f64::INFINITY`
-for collision or road-bound violations.
+`Constraints::point_cost(sample)` returns `1 - metrics::speed_score(...)` for feasible samples and `f64::INFINITY` for
+collision or road-bound violations.
 There are no comfort weights or safety scores.
 The viewer displays normalized progress and its per-tick trajectory coloring.
 

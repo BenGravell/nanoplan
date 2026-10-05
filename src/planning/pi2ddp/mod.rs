@@ -155,26 +155,24 @@ impl Planner for Pi2DdpPlanner {
         // Composite-metric cost of being at `x` at tick `j`. A hard violation
         // (collision, or off the drivable area) becomes a large but
         // finite `constraints::HARD_VIOLATION_PENALTY · (1 + depth)` via
-        // `HardConstraints::soft_point_cost` rather than `f64::INFINITY` — the
+        // `Constraints::soft_point_cost` rather than `f64::INFINITY` — the
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
         let trajectory_cost = TrajectoryCost::new(path, ctx, ego.speed);
-        let state_cost = |x: &State, j: usize| trajectory_cost.stage(x, Control::default(), j, None);
+        let state_cost = |x: &State, u: Control, speed: f64, j: usize| {
+            let (_, sample) = crate::planning::planner_math::state_sample(path, x, j as f64 * ctx.road.dt, None);
+            trajectory_cost.stage_sample(sample.with_control(u, speed), ctx.actors, false)
+        };
         let noise_free = |u: &[V2]| -> (Vec<State>, f64) {
             let mut x = ego;
             let mut xs = vec![ego];
             let mut cost = 0.0;
             for (j, &uj) in u.iter().enumerate() {
-                x = world_step(
-                    x,
-                    Control {
-                        acceleration: uj[0],
-                        curvature: uj[1],
-                    },
-                    ctx.road.dt,
-                );
-                cost += state_cost(&x, j + 1);
+                let u = Control::from(uj);
+                let speed = x.speed;
+                x = world_step(x, u, ctx.road.dt);
+                cost += state_cost(&x, u, speed, j + 1);
                 xs.push(x);
             }
             (xs, cost)
@@ -219,8 +217,9 @@ impl Planner for Pi2DdpPlanner {
                             x.speed,
                         );
                         us[k][j] = [u.acceleration, u.curvature];
+                        let speed = x.speed;
                         x = world_step(x, u, ctx.road.dt);
-                        ctg[k][j] = state_cost(&x, j + 1);
+                        ctg[k][j] = state_cost(&x, u, speed, j + 1);
                         xs[k][j + 1] = x;
                     }
                     ctg[k][HORIZON] = 0.0;

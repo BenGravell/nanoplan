@@ -1,4 +1,4 @@
-use crate::planning::constraints::{HardConstraints, Sample};
+use crate::constraints::{Constraints, Sample};
 use crate::planning::{Context, planner_math};
 use crate::simulation::{Control, State};
 use crate::track::Path;
@@ -18,25 +18,25 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         }
     }
 
-    pub(crate) fn stage(&self, x: &State, _u: Control, t: usize, s_hint: Option<f64>) -> f64 {
+    pub(crate) fn stage(&self, x: &State, u: Control, t: usize, s_hint: Option<f64>) -> f64 {
         let (_, sample) = planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, self.ctx.actors, false)
+        self.stage_sample(sample.with_control(u, x.speed), self.ctx.actors, false)
     }
 
     pub(crate) fn stage_with_predicted_actors(
         &self,
         x: &State,
-        _u: Control,
+        u: Control,
         t: usize,
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
         let (_, sample) = planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample, predicted_actors, true)
+        self.stage_sample(sample.with_control(u, x.speed), predicted_actors, true)
     }
 
-    fn stage_sample(&self, sample: Sample, actors: &[State], actors_are_predicted: bool) -> f64 {
-        let constraints = HardConstraints::new(
+    pub(super) fn stage_sample(&self, sample: Sample, actors: &[State], actors_are_predicted: bool) -> f64 {
+        let constraints = Constraints::new(
             self.ctx.road.half_width,
             actors,
             self.path,

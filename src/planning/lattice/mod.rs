@@ -15,7 +15,7 @@ use crate::common::interp::lerp;
 use crate::common::kinematics::{
     LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
-use crate::planning::constraints::{HardConstraints, Sample};
+use crate::constraints::{Constraints, Sample};
 use crate::planning::search_tree::{RoadFrame, best_first, parent_chain, stop_controls};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
 use crate::simulation::{Control, Position, State, world_step};
@@ -259,6 +259,7 @@ fn segment(
             road_bounds: Some((right, left)),
             heading_err,
             speed: actual.speed,
+            control: Some((control, before.speed)),
             station_speed: Some(station_speed),
             t: start_time + (tick + 1) as f64 * dt,
         });
@@ -283,7 +284,7 @@ impl Planner for LatticePlanner {
         debug_assert!((ctx.road.dt - PLANNING_DT_S).abs() < 1e-9);
         let RoadFrame { path, s0, d0, .. } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let reach = reachable(ego.speed, ctx.road.dt);
-        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
+        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
         let max_evaluated_segments = ctx.compute_budget.scale(SEGMENTS_AT_100_MS, 100);
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);

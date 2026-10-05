@@ -29,7 +29,7 @@ use rstar::primitives::GeomWithData;
 use crate::common::differencing::forward_difference;
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
-use crate::planning::constraints::{HardConstraints, Sample};
+use crate::constraints::{Constraints, Sample};
 use crate::planning::sampling::{self, Halton};
 use crate::planning::search_tree::{RoadFrame, brake_controls, dist, parent_chain, path_to_controls, signed_max};
 use crate::planning::steering::CubicSteer;
@@ -106,7 +106,7 @@ const STEER_SAMPLES: usize = 16;
 // linear neighbour scans).
 const PROJECT_WINDOW_M: f64 = 20.0;
 // planner-specific safety margin, a bit more than the shared constraint
-// hard-collision threshold (`constraints::COLLISION_DIAMETER_M` = 2.5 m)
+// hard-collision threshold (the car width in `constraints::collision`)
 // to leave headroom for the discrete curve sampling below (the true closest
 // approach between two sampled points can dip a little further than what
 // gets checked)
@@ -225,7 +225,7 @@ fn steer_cost(
     [sa, sb]: [f64; 2],
 ) -> Option<f64> {
     let mut total = 0.0;
-    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, v, ctx.road.dt);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, v, ctx.road.dt);
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);

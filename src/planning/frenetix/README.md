@@ -26,7 +26,7 @@ The existing four-dimensional vehicle state supplies initial Frenet position and
 Reference curvature is estimated from the shared polyline.
 Polynomial derivatives produce acceleration and curvature commands, with drag compensation and the existing vehicle
 limits.
-Each candidate is rolled out through `world_step` and ranked by the existing `HardConstraints::point_cost`, including
+Each candidate is rolled out through `world_step` and ranked by the existing `Constraints::point_cost`, including
 predicted actors and local road bounds, with progress as the sole objective.
 The returned controls are truncated to `Context::horizon`; evaluation always covers `PLANNING_HORIZON_S`.
 If every candidate is rejected, the existing stopping controls are returned.

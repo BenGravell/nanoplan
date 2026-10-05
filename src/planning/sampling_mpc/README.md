@@ -52,7 +52,7 @@ optimizer; here the generic driver supplies them the nanoplan way, so each optim
 - **Knots → controls → rollout.** The `num_nodes` deviation knots are spread over the `PLANNING_HORIZON_S` horizon and
   linearly interpolated (`control_at`), added to the base policy, clamped to physical actuation limits, and rolled out
   through the shared kinematic `step`.
-- **The shared metric objective.** Each rolled-out state is priced by `HardConstraints::point_cost`, with a hard violation
+- **The shared metric objective.** Each rolled-out state is priced by `Constraints::point_cost`, with a hard violation
   made finite (`constraints::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward aggregation can't divide by an infinity —
   exactly PI²-DDP's reasoning.
   No planner-local outcome terms are added.

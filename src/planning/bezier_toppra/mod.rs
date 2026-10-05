@@ -5,10 +5,12 @@ use crate::common::geometry::wrap_angle;
 use crate::common::geometry::{
     CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
 };
-use crate::common::kinematics::{TrajectoryKinematics, longitudinal_resistance_accel, net_longitudinal_accel};
+use crate::common::kinematics::{
+    TrajectoryKinematics, commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel,
+};
 use crate::common::math::smoothstep;
+use crate::constraints::Constraints;
 use crate::metrics;
-use crate::planning::constraints::HardConstraints;
 use crate::planning::planner_math::state_sample;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
@@ -440,7 +442,7 @@ fn extract_controls(
 
 fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
     let path = ctx.path();
-    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
     let mut state = ego;
     let mut feasible = true;
     let mut states = Vec::with_capacity(controls.len() + 1);
@@ -450,6 +452,7 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
         state = world_step(state, u, ctx.road.dt);
         let time = (tick + 1) as f64 * ctx.road.dt;
         let (s, mut sample) = state_sample(path, &state, time, None);
+        sample = sample.with_control(u, previous.speed);
         sample.road_bounds = Some(ctx.road.lateral_bounds_at(s));
         if !u.acceleration.is_finite()
             || !u.curvature.is_finite()
@@ -494,8 +497,7 @@ fn brake(ego: State, ctx: &Context) -> Vec<Control> {
             let before = ctx.path().pose_at(s - 7.5).1;
             let after = ctx.path().pose_at(s + 7.5).1;
             u.curvature += wrap_angle(after - before) / 15.0;
-            u.acceleration = (-state.speed / ctx.road.dt + longitudinal_resistance_accel(state.speed))
-                .clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
+            u.acceleration = commanded_accel_to_stop(state.speed, ctx.road.dt).clamp(MIN_LON_ACCEL, MAX_LON_ACCEL);
             u.curvature = u
                 .curvature
                 .clamp(-curvature_limit(state.speed), curvature_limit(state.speed));

@@ -19,7 +19,7 @@
 //! treetop's `Loss` carries ~200 lines of hand-derived gradients and
 //! Hessians (`loss.h`), and its `Dynamics::jacobian` is closed-form.
 //! nanoplan deliberately provides neither: its shared metric objective
-//! ([`crate::planning::constraints::HardConstraints`]) and dynamics ([`world_step`]) are black-box scalars
+//! ([`crate::constraints::Constraints`]) and dynamics ([`world_step`]) are black-box scalars
 //! (see the "no analytic derivatives" discussion in
 //! `src/metrics/README.md`). So this port differentiates **numerically**:
 //! central finite differences for the state-cost gradient/Hessian

@@ -50,7 +50,7 @@
 
 use super::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::common::geometry::wrap_angle;
-use crate::planning::constraints::HardConstraints;
+use crate::constraints::Constraints;
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::{parent_chain, repeat_last_controls, rollout_constrained};
@@ -146,7 +146,7 @@ impl Tree {
             ctx,
             initial_speed: start.speed,
         };
-        let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, start.speed, ctx.road.dt);
+        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, start.speed, ctx.road.dt);
 
         // Root node.
         tree.nodes.push(Node {
@@ -426,7 +426,7 @@ impl Grower<'_, '_> {
         let mut total = 0.0;
         let mut collides = false;
 
-        let constraints = HardConstraints::new(
+        let constraints = Constraints::new(
             self.ctx.road.half_width,
             self.ctx.actors,
             self.path,
@@ -436,6 +436,7 @@ impl Grower<'_, '_> {
         for i in 0..us.len() {
             let x = &xs[i + 1];
             let (_, sample) = planner_math::state_sample(self.path, x, t0 + (i + 1) as f64 * dt, None);
+            let sample = sample.with_control(us[i], xs[i].speed);
             let shared = self.ctx.time("cost", || constraints.point_cost(&sample));
             if shared.is_finite() {
                 total += shared;
@@ -516,8 +517,7 @@ mod tests {
 
     #[test]
     fn steer_reaches_a_straight_ahead_target() {
-        // Steering follows the straight geometry; the plant still applies
-        // resistance, so speed may lag the fitted endpoint a little.
+        // Resistance is compensated; discrete integration still introduces endpoint error.
         let from = State {
             speed: 10.0,
             ..Default::default()

@@ -1,7 +1,7 @@
 //! Planner-specific math helpers.
 
 use crate::common::geometry::wrap_angle;
-use crate::planning::constraints::Sample;
+use crate::constraints::Sample;
 use crate::simulation::State;
 use crate::track::Path;
 
@@ -20,6 +20,7 @@ pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>
             road_bounds: None,
             heading_err: wrap_angle(x.pose.yaw - lane_yaw),
             speed: x.speed,
+            control: None,
             station_speed: None,
             t: t_s,
         },

@@ -1,6 +1,7 @@
 //! Nanoplan application and reusable command-line tooling.
 
 mod common;
+mod constraints;
 mod metrics;
 mod planning;
 mod prediction;

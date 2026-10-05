@@ -35,7 +35,7 @@
 //! - **Obstacles are moving actors priced by the shared metric objective.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
-//!   [`HardConstraints`](crate::planning::constraints::HardConstraints) at
+//!   [`Constraints`](crate::constraints::Constraints) at
 //!   the absolute time the state is reached, which folds in the same
 //!   actor prediction, drivable-area bound, and progress objective every
 //!   other search planner uses.

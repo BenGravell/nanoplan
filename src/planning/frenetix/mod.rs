@@ -4,7 +4,7 @@
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
 use crate::common::kinematics::commanded_accel_for_net;
-use crate::planning::constraints::HardConstraints;
+use crate::constraints::Constraints;
 use crate::planning::search_tree::stop_controls;
 use crate::planning::steering::cubic_coeffs;
 use crate::planning::{ComputeBudget, Context, PLANNING_HORIZON_S, Planner};
@@ -143,7 +143,7 @@ fn grid(lo: f64, hi: f64, samples: usize) -> impl Iterator<Item = f64> + Clone {
 fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<(f64, Vec<Control>)> {
     let path = ctx.path();
     let dt = ctx.road.dt;
-    let constraints = HardConstraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, dt);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, dt);
     let mut actual = ego;
     let mut controls = Vec::with_capacity(ticks);
     let mut points = ctx.diagnostics.map(|_| vec![ego.position()]);
@@ -155,6 +155,7 @@ fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<
         let mut control = motion.control(path, control_time)?;
         control.acceleration = commanded_accel_for_net(control.acceleration.max(-actual.speed / dt), actual.speed);
         let control = clamp_control(control, actual.speed);
+        let control_speed = actual.speed;
         actual = world_step(actual, control, dt);
         let (s, mut sample) = crate::planning::planner_math::state_sample(
             path,
@@ -162,6 +163,7 @@ fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<
             time,
             Some(motion.longitudinal.at(time.min(PLANNING_HORIZON_S))[0]),
         );
+        sample = sample.with_control(control, control_speed);
         sample.road_bounds = Some(ctx.road.lateral_bounds_at(s));
         cost += ctx.time("cost", || constraints.point_cost(&sample));
         ctx.work(1);
