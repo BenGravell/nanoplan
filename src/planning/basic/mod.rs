@@ -7,8 +7,8 @@ use crate::constraints::{Constraints, Sample};
 use crate::metrics;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::steering::{CubicSteer, steer_controls};
-use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
-use crate::simulation::{Control, State, world_step};
+use crate::planning::{ComputeBudget, Context, PLANNING_HORIZON_S, Planner};
+use crate::simulation::{Control, Position, State, world_step};
 use crate::track::{Path, Road};
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
@@ -51,14 +51,14 @@ fn fallback_controls(mut state: State, path: &Path, ctx: &Context) -> Vec<Contro
 
 fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64, initial_speed: f64) -> Option<Vec<Control>> {
     let ticks = (PLANNING_HORIZON_S / ctx.road.dt).ceil() as usize;
+    let correction = lateral_target_correction(ego, path, s0);
     let mut best: Option<(f64, Vec<Control>)> = None;
-    for (distance, speed) in longitudinal_targets(initial_speed, ctx.road.dt) {
+    for (distance, speed) in longitudinal_targets(initial_speed, ctx.road.dt, ctx.compute_budget) {
         // Relative station zero is the ego projection; the window edge is not a stop target.
         if s0 + distance > path.length() {
             continue;
         }
-        let (position, yaw) = path.pose_at(s0 + distance);
-        let target = State::from((position, yaw, speed));
+        let target = corrected_target(path, s0 + distance, speed, correction);
         let steer = CubicSteer::from_states(&ego, &target, PLANNING_HORIZON_S);
         let (controls, _) = steer_controls(ego, &steer, ctx.road.dt, ticks, 1.0, false);
         let Some(trajectory) = feasible_candidate_trajectory(ego, &controls, path, ctx) else {
@@ -75,8 +75,37 @@ fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64, initial_speed
     })
 }
 
+/// World-space displacement opposite the ego's current lateral offset.
+///
+/// Project onto the left normal of the road heading at `s0`. Applying this
+/// displacement to each terminal point strengthens the initial correction of
+/// the repeatedly replanned cubic. Use the ego's road frame even
+/// when the road heading changes before the terminal station.
+fn lateral_target_correction(ego: State, path: &Path, s0: f64) -> Position {
+    let (origin, heading) = path.pose_at(s0);
+    let offset = ego.position() - origin;
+    let lateral = offset.y * heading.cos() - offset.x * heading.sin();
+    let left = Position::from_angle(heading + std::f64::consts::FRAC_PI_2);
+    Position::new(-lateral * left.x, -lateral * left.y)
+}
+
+/// Shift the terminal centerline position while retaining its road heading and sampled speed.
+fn corrected_target(path: &Path, station: f64, speed: f64, correction: Position) -> State {
+    let (position, yaw) = path.pose_at(station);
+    State::from((position + correction, yaw, speed))
+}
+
+fn sample_counts(budget: ComputeBudget) -> (usize, usize) {
+    // Scale both axes by sqrt(budget) so total candidates scale approximately linearly.
+    let nominal_count = 4 * STATION_SAMPLES_PER_INTERVAL * SPEED_SAMPLES_PER_INTERVAL;
+    let scale = (budget.scale(nominal_count, 1) as f64 / nominal_count as f64).sqrt();
+    let station_count = ((STATION_SAMPLES_PER_INTERVAL as f64 * scale).round() as usize).max(2);
+    let speed_count = ((SPEED_SAMPLES_PER_INTERVAL as f64 * scale).round() as usize).max(2);
+    (station_count, speed_count)
+}
+
 /// Cartesian product of station and terminal-speed samples around the zero-thrust rollout.
-fn longitudinal_targets(initial_speed: f64, dt: f64) -> Vec<(f64, f64)> {
+fn longitudinal_targets(initial_speed: f64, dt: f64, budget: ComputeBudget) -> Vec<(f64, f64)> {
     let rollout = |acceleration| {
         let mut state = State {
             speed: initial_speed,
@@ -108,8 +137,9 @@ fn longitudinal_targets(initial_speed: f64, dt: f64) -> Vec<(f64, f64)> {
             .map(move |i| lerp(min, nominal, i as f64 / count as f64))
             .chain((0..count).map(move |i| lerp(nominal, max, i as f64 / (count - 1) as f64)))
     };
-    let stations = samples(min.0, nominal.0, max.0, STATION_SAMPLES_PER_INTERVAL);
-    let speeds = samples(min.1, nominal.1, max.1, SPEED_SAMPLES_PER_INTERVAL);
+    let (station_count, speed_count) = sample_counts(budget);
+    let stations = samples(min.0, nominal.0, max.0, station_count);
+    let speeds = samples(min.1, nominal.1, max.1, speed_count);
     let mut targets = Vec::with_capacity(stations.clone().count() * speeds.clone().count());
     for station in stations {
         for speed in speeds.clone() {
@@ -215,7 +245,7 @@ mod tests {
     #[test]
     fn targets_use_relative_station_and_resistance_over_the_planning_horizon() {
         let speed = 8.0;
-        let targets = longitudinal_targets(speed, 0.1);
+        let targets = longitudinal_targets(speed, 0.1, ComputeBudget::NOMINAL);
         let nominal = (0..100).fold(
             State {
                 speed,
@@ -268,6 +298,28 @@ mod tests {
         );
         assert_eq!(*targets.last().unwrap(), (end.position().x, end.speed));
         assert!(end.position().x < speed * PLANNING_HORIZON_S + 0.5 * MAX_LON_ACCEL * PLANNING_HORIZON_S.powi(2));
+    }
+
+    #[test]
+    fn candidate_count_scales_with_compute_budget() {
+        let nominal = longitudinal_targets(8.0, 0.1, ComputeBudget::NOMINAL);
+        let nominal_target =
+            nominal[STATION_SAMPLES_PER_INTERVAL * 2 * SPEED_SAMPLES_PER_INTERVAL + SPEED_SAMPLES_PER_INTERVAL];
+        for (percent, expected) in crate::planning::COMPUTE_BUDGET_BREAKPOINTS
+            .into_iter()
+            .zip([16, 24, 32, 96, 180, 364, 880])
+        {
+            let targets = longitudinal_targets(8.0, 0.1, ComputeBudget::from_percent(percent));
+            assert_eq!(targets.len(), expected, "{percent}%");
+            assert_eq!(targets.first(), nominal.first());
+            assert_eq!(targets.last(), nominal.last());
+            assert!(targets.contains(&nominal_target));
+            assert!(
+                targets
+                    .iter()
+                    .all(|(station, speed)| station.is_finite() && speed.is_finite())
+            );
+        }
     }
 
     #[test]
@@ -335,7 +387,7 @@ mod tests {
 
         assert!(!data.trajectories.is_empty());
         // Infeasible cubic commands are rejected rather than clipped into feasible rollouts.
-        assert!(data.trajectories.len() < longitudinal_targets(0.0, road.dt).len());
+        assert!(data.trajectories.len() < longitudinal_targets(0.0, road.dt, ctx.compute_budget).len());
         assert!(
             data.trajectories
                 .iter()
