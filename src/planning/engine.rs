@@ -101,7 +101,7 @@ mod platform {
 
         #[cfg(test)]
         pub(crate) fn with_planner(planner: Box<dyn Planner>, road: Road) -> Self {
-            Self::spawn(PlannerKind::Straight, planner, road)
+            Self::spawn(PlannerKind::LeeroyJenkins, planner, road)
         }
 
         fn spawn(kind: PlannerKind, planner: Box<dyn Planner>, road: Road) -> Self {
@@ -233,9 +233,9 @@ mod platform {
                     road.dt = dt;
                     self.prepared = Some(PreparedPlanner {
                         road,
-                        kind: PlannerKind::Straight,
+                        kind: PlannerKind::LeeroyJenkins,
                         generation: 0,
-                        planner: PlannerKind::Straight.build(),
+                        planner: PlannerKind::LeeroyJenkins.build(),
                     });
                     scope.respond(id, Output::Ready);
                 }
@@ -360,7 +360,7 @@ mod tests {
         let roads = track.prepared();
         let mut worker = PreparedPlanner {
             road: roads.planning.clone(),
-            kind: PlannerKind::Straight,
+            kind: PlannerKind::LeeroyJenkins,
             generation: 0,
             planner: Box::new(GeometryProbe),
         };
@@ -369,7 +369,7 @@ mod tests {
             let road = roads.window(tick as f64 * 20.0, 40.0, 0.1);
             let result = worker.run(WorkerRequest {
                 generation: u64::from(tick >= 10),
-                kind: PlannerKind::Straight,
+                kind: PlannerKind::LeeroyJenkins,
                 plan: PlanRequest {
                     tick,
                     ego: State::default(),

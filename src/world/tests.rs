@@ -13,7 +13,7 @@ fn ego_can_start_from_a_frenet_state() {
         yaw_offset: -0.2,
         speed: 17.0,
     };
-    let world = LiveWorld::with_track_at(0, 1, PlannerKind::Straight, 0, 0.1, start);
+    let world = LiveWorld::with_track_at(0, 1, PlannerKind::LeeroyJenkins, 0, 0.1, start);
     let (center, centerline_yaw) = world.track.pose(start.progress);
     let left = Position::from_angle(centerline_yaw + std::f64::consts::FRAC_PI_2);
     let ego = world.ego();
@@ -121,7 +121,7 @@ fn every_planner_gets_a_reachable_road_window_on_creation_and_switch() {
     let mut world = LiveWorld::with_track_at(
         0,
         1,
-        PlannerKind::Straight,
+        PlannerKind::LeeroyJenkins,
         0,
         0.1,
         EgoStart {
@@ -151,7 +151,7 @@ fn every_planner_gets_a_reachable_road_window_on_creation_and_switch() {
 
 #[test]
 fn growing_reach_refreshes_the_road_before_twenty_metres_of_progress() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 0, 0.1);
     let initial_length = world.road.length();
     let initial_projection = world.road.ego_projection_window;
     world.simulator.state.speed = 40.0;
@@ -227,14 +227,14 @@ fn world_keeps_driving_without_a_route_or_goal() {
 
 #[test]
 fn grid_position_ranks_ego_against_every_racer() {
-    let world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 2, 0.1);
+    let world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 2, 0.1);
 
     assert_eq!(world.grid_position(), (2, 3));
 }
 
 #[test]
 fn racer_progress_uses_the_farthest_corner() {
-    let world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
+    let world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 0, 0.1);
     let state = world.ego();
     let corner_progress = CAR_FOOTPRINT
         .corners(state.pose())
@@ -249,7 +249,7 @@ fn racer_progress_uses_the_farthest_corner() {
 
 #[test]
 fn resizing_traffic_removes_the_farthest_behind_and_adds_only_behind() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 5, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 5, 0.1);
     let ego_position = world.grid_position().0;
     let least_progress_id = world
         .actors
@@ -318,7 +318,7 @@ fn app_ticks_keep_traffic_motion_continuous_and_forward() {
 
 #[test]
 fn planner_only_sees_reachable_traffic() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 12, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 12, 0.1);
     world.tick_with_latency(None);
     assert!(world.last_planner_actors > 0);
     assert!(world.last_planner_actors < world.actors.len());
@@ -326,7 +326,7 @@ fn planner_only_sees_reachable_traffic() {
 
 #[test]
 fn ego_bounces_off_road_barriers() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 0, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 0, 0.1);
     world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 3.5, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
@@ -349,7 +349,7 @@ fn ego_bounces_off_road_barriers() {
 
 #[test]
 fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 12, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 12, 0.1);
     assert!(world.actors.iter().any(|a| a.track_x < world.track_progress));
     assert!(world.actors.iter().any(|a| a.track_x > world.track_progress));
 
@@ -374,7 +374,7 @@ fn traffic_starts_on_both_sides_and_personality_moves_it_laterally() {
 
 #[test]
 fn unblocked_traffic_accelerates() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 1, 0.1);
     let before = world.actors[0].state.speed;
     world.step_traffic();
     assert!(world.actors[0].state.speed > before);
@@ -386,7 +386,7 @@ fn traffic_brakes_for_ego_including_on_another_lap() {
         let mut world = LiveWorld::with_track_at(
             0,
             1,
-            PlannerKind::Straight,
+            PlannerKind::LeeroyJenkins,
             1,
             0.1,
             EgoStart {
@@ -407,7 +407,7 @@ fn traffic_brakes_for_ego_including_on_another_lap() {
 
 #[test]
 fn traffic_keeps_rebound_velocity_on_the_next_tick() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 1, 0.1);
     let (p, lane_yaw) = world.track.pose(0.0);
     world.actors[0].track_x = 0.0;
     world.actors[0].lateral = 0.0;
@@ -429,7 +429,7 @@ fn traffic_keeps_rebound_velocity_on_the_next_tick() {
 
 #[test]
 fn ego_and_actor_both_receive_collision_response() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 1, 0.1);
     world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 50.0, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
@@ -453,7 +453,7 @@ fn ego_and_actor_both_receive_collision_response() {
 
 #[test]
 fn traffic_bounces_off_static_road_barriers() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 1, 0.1);
     world.road = Road::new(vec![[-100.0, 0.0], [100.0, 0.0]], 3.5, 0.1);
     world.collision_road = world.road.clone();
     world.simulator.state = State::new(
@@ -481,7 +481,7 @@ fn traffic_bounces_off_static_road_barriers() {
 
 #[test]
 fn traffic_continues_past_the_rolling_road_window_end() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::Straight, 1, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 1, 0.1);
     let progress = world
         .track
         .project_progress(*world.road.centerline().last().unwrap(), world.road_anchor_x)
@@ -519,7 +519,7 @@ fn ego_projection_metadata_is_rebuilt_after_progress_refresh() {
     let mut world = LiveWorld::with_track_at(
         1,
         1,
-        PlannerKind::Straight,
+        PlannerKind::LeeroyJenkins,
         0,
         0.1,
         EgoStart {
@@ -565,7 +565,7 @@ fn lockstep_waits_for_matching_plan_without_advancing_ego_or_traffic() {
             ]
         }
     }
-    let mut world = LiveWorld::with_track(1, 1, PlannerKind::Straight, 3, 0.1);
+    let mut world = LiveWorld::with_track(1, 1, PlannerKind::LeeroyJenkins, 3, 0.1);
     let (release, gate) = mpsc::channel();
     let (started, planning) = mpsc::channel();
     world.planner = PlannerEngine::with_planner(

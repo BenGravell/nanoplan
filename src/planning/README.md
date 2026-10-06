@@ -10,7 +10,7 @@ planning/
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── basic/         cubic path planner
-├── straight/      strawman: zero control, always
+├── leeroy_jenkins/ maximum acceleration, zero steering
 ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
 ├── frenetix/      lateral cubics × longitudinal cubics, shared horizon and cost
@@ -34,7 +34,7 @@ The [`Simulator`](../simulation/README.md) clamps the first command to the vehic
 The simulator applies only the **first** control and re-invokes `plan()` next tick — this is a receding horizon /
 MPC-style loop, not open-loop trajectory execution.
 `&mut self` lets a planner keep state between calls (PI²-DDP warm-starts its policy this way); planners with no state to
-keep, like `StraightPlanner`, are zero-sized unit structs.
+keep, like `LeeroyJenkinsPlanner`, are zero-sized unit structs.
 
 An empty return value is treated as "coast" (zero control) by the simulator, not an error — no planner currently
 exercises this, but it's a legal escape hatch for "couldn't find anything, don't do anything worse."
@@ -106,7 +106,7 @@ Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { Straight, BezierToppra, Lattice, Pi2Ddp, RrtStar }
+pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, RrtStar }
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
@@ -198,7 +198,7 @@ The window follows simulation time through pause/resume and planner waits, rathe
 
 Every search planner records something — `PlannerKind::has_diagnostics()` reports which — including one timed rollout
 per Bezier+TOPP-RA path candidate.
-The straight strawman records nothing.
+Leeroy Jenkins records nothing.
 See each planner's README for exactly what it records.
 
 ## Test harness
@@ -249,7 +249,7 @@ exception.
 ## Planner implementations
 
 - [Basic cubic](basic/README.md)
-- [Straight strawman](straight/README.md)
+- [Leeroy Jenkins](leeroy_jenkins/README.md)
 - [Bezier + TOPP-RA](bezier_toppra/README.md)
 - [Frenet lattice](lattice/README.md)
 - [PI²-DDP](pi2ddp/README.md)

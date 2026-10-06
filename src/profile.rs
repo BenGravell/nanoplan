@@ -7,7 +7,7 @@ use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use crate::world::{EgoStart, LiveWorld};
 
 const PLANNERS: [(&str, PlannerKind); 13] = [
-    ("straight", PlannerKind::Straight),
+    ("leeroy-jenkins", PlannerKind::LeeroyJenkins),
     ("basic", PlannerKind::Basic),
     ("bezier-toppra", PlannerKind::BezierToppra),
     ("lattice", PlannerKind::Lattice),

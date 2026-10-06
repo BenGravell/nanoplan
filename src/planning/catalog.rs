@@ -1,6 +1,6 @@
 use super::{
-    BasicPlanner, BezierToppraPlanner, Cem, FrenetixPlanner, IlqrPlanner, LatticePlanner, Mppi, Pi2DdpPlanner, Planner,
-    PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, StraightPlanner, TreetopPlanner,
+    BasicPlanner, BezierToppraPlanner, Cem, FrenetixPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
+    Pi2DdpPlanner, Planner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -9,7 +9,7 @@ use super::{
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlannerKind {
-    Straight,
+    LeeroyJenkins,
     Basic,
     BezierToppra,
     Lattice,
@@ -33,9 +33,9 @@ struct PlannerSpec {
 
 const SPECS: [PlannerSpec; 13] = [
     PlannerSpec {
-        kind: PlannerKind::Straight,
-        name: "straight (strawman)",
-        build: || Box::new(StraightPlanner),
+        kind: PlannerKind::LeeroyJenkins,
+        name: "Leeroy Jenkins",
+        build: || Box::new(LeeroyJenkinsPlanner),
         has_diagnostics: false,
     },
     PlannerSpec {
@@ -114,7 +114,7 @@ const SPECS: [PlannerSpec; 13] = [
 
 impl PlannerKind {
     pub(crate) const ALL: [PlannerKind; 13] = [
-        PlannerKind::Straight,
+        PlannerKind::LeeroyJenkins,
         PlannerKind::Basic,
         PlannerKind::BezierToppra,
         PlannerKind::Lattice,
