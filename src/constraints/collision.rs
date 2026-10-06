@@ -1,10 +1,13 @@
 //! Collision checks against predicted actors and road barriers.
 
 use super::{Constraint, Sample};
-use crate::common::geometry::EGO_FOOTPRINT;
 use crate::common::geometry::barrier::collide_with_road_barriers;
+use crate::common::geometry::{
+    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, footprints_overlap,
+};
+use crate::planning::Context;
 use crate::prediction::predict;
-use crate::simulation::State;
+use crate::simulation::{Pose, State};
 use crate::track::{Path, Road};
 
 /// Center-to-center clearance below which point-sample planners treat two
@@ -50,4 +53,22 @@ impl CollisionFree<'_> {
 /// Check the swept ego footprint without applying the collision response.
 pub(super) fn road_barrier_collision(previous: State, state: State, road: &Road) -> bool {
     collide_with_road_barriers(previous, state, EGO_FOOTPRINT, road) != state
+}
+
+pub(crate) fn actor_collision(pose: Pose, time: f64, ctx: &Context) -> bool {
+    ctx.actors.iter().any(|actor| {
+        ctx.work(1);
+        // Live actors have already advanced when the current ego command is
+        // applied. Check their supplied poses as well as the prediction.
+        if time <= ctx.road.dt && footprints_overlap(pose, EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT) {
+            return true;
+        }
+        let predicted = predict(actor, ctx.path(), time).pose();
+        EGO_FOOTPRINT
+            .center(pose)
+            .position
+            .distance(CAR_FOOTPRINT.center(predicted).position)
+            < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
+            && footprints_overlap(pose, EGO_FOOTPRINT, predicted, CAR_FOOTPRINT)
+    })
 }

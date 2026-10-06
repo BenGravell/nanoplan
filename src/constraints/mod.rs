@@ -1,6 +1,6 @@
 //! Hard trajectory constraints shared by planners.
 
-mod collision;
+pub(crate) mod collision;
 mod drivable_area;
 mod kinodynamic;
 

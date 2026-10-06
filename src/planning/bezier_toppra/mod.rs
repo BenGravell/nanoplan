@@ -2,18 +2,20 @@
 
 use crate::common::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
 use crate::common::geometry::wrap_angle;
-use crate::common::geometry::{
-    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
-};
+#[cfg(test)]
+use crate::common::geometry::{CAR_FOOTPRINT, footprints_overlap};
+use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
 use crate::common::kinematics::{
     TrajectoryKinematics, commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel,
 };
 use crate::common::math::smoothstep;
 use crate::constraints::Constraints;
+use crate::constraints::collision::actor_collision;
 use crate::metrics;
 use crate::planning::planner_math::state_sample;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
+#[cfg(test)]
 use crate::prediction::predict;
 use crate::simulation::{Control, Pose, Position, State, curvature_limit, world_step};
 use crate::track::Path;
@@ -279,24 +281,6 @@ fn fit_bezier(start: Pose, end: Pose, start_handle: f64, end_handle: f64) -> [Po
         end.position - Position::from_angle(end.yaw) * end_handle,
         end.position,
     ]
-}
-
-fn actor_collision(pose: Pose, time: f64, ctx: &Context) -> bool {
-    ctx.actors.iter().any(|actor| {
-        ctx.work(1);
-        // Live actors have already advanced when the current ego command is
-        // applied. Check their supplied poses as well as the prediction.
-        if time <= ctx.road.dt && footprints_overlap(pose, EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT) {
-            return true;
-        }
-        let predicted = predict(actor, ctx.path(), time).pose();
-        EGO_FOOTPRINT
-            .center(pose)
-            .position
-            .distance(CAR_FOOTPRINT.center(predicted).position)
-            < EGO_COLLISION_RADIUS_M + CAR_COLLISION_RADIUS_M
-            && footprints_overlap(pose, EGO_FOOTPRINT, predicted, CAR_FOOTPRINT)
-    })
 }
 
 fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> Vec<Control> {
