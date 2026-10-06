@@ -19,7 +19,7 @@ use crate::common::rng::Rng;
 use crate::common::types::matrix::{M2, M4, M6, M24};
 use crate::common::types::state;
 use crate::common::types::vector::V2;
-use crate::planning::search_tree::centerline_follow_controls;
+use crate::planning::controls::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, take_warm};
 use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;

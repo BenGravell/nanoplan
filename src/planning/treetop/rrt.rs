@@ -51,9 +51,10 @@
 use super::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::common::geometry::wrap_angle;
 use crate::constraints::Constraints;
+use crate::planning::controls::{repeat_last_controls, rollout_constrained};
 use crate::planning::planner_math;
 use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
-use crate::planning::search_tree::{parent_chain, repeat_last_controls, rollout_constrained};
+use crate::planning::search_tree::parent_chain;
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::take_warm;
 use crate::planning::{Context, Planner};

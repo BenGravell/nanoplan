@@ -7,6 +7,7 @@ pub(crate) mod bezier_toppra;
 mod catalog;
 mod compute_budget;
 mod config;
+pub(crate) mod controls;
 pub(crate) mod diagnostics;
 pub(crate) mod engine;
 pub(crate) mod frenetix;

@@ -5,7 +5,7 @@ use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
 use crate::common::kinematics::commanded_accel_for_net;
 use crate::constraints::Constraints;
-use crate::planning::search_tree::stop_controls;
+use crate::planning::controls::stop_controls;
 use crate::planning::steering::cubic_coeffs;
 use crate::planning::{ComputeBudget, Context, PLANNING_HORIZON_S, Planner};
 use crate::simulation::{Control, State, clamp_control, world_step};

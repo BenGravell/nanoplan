@@ -22,7 +22,7 @@
 //!
 //! This file also owns what treetop keeps in `core/` — the pieces *both*
 //! halves stand on: the trajectory-length constants and the goal state
-//! (shared rollout lives in [`crate::planning::search_tree`]). nanoplan's
+//! (shared rollout lives in [`crate::planning::controls`]). nanoplan's
 //! kinematic model keeps only pose/speed in state and uses direct
 //! acceleration/curvature commands, so the treetop port reads those commands
 //! from its flat-output curves before every rollout.
@@ -55,7 +55,7 @@ pub(crate) mod rrt;
 pub(crate) use ilqr::IlqrPlanner;
 pub(crate) use rrt::RrtPlanner;
 
-use crate::planning::search_tree::repeat_last_controls;
+use crate::planning::controls::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
@@ -265,7 +265,7 @@ mod tests {
             acceleration: 2.0,
             curvature: 0.1,
         }];
-        let (xs, us) = crate::planning::search_tree::rollout_constrained(x0, &actions, 0.1);
+        let (xs, us) = crate::planning::controls::rollout_constrained(x0, &actions, 0.1);
         assert_eq!(us, actions);
         assert_eq!(xs[1], world_step(x0, actions[0], 0.1));
     }

@@ -16,7 +16,8 @@ use crate::common::kinematics::{
     LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
 use crate::constraints::{Constraints, Sample};
-use crate::planning::search_tree::{RoadFrame, best_first, parent_chain, stop_controls};
+use crate::planning::controls::stop_controls;
+use crate::planning::search_tree::{RoadFrame, best_first, parent_chain};
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner};
 use crate::simulation::{Control, Position, State, world_step};
 use crate::track::Path;

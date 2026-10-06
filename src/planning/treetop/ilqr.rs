@@ -66,7 +66,7 @@ use crate::common::measure::dot;
 use crate::common::types::matrix::{M4, M22, M24, M42};
 use crate::common::types::state;
 use crate::common::types::vector::{V2, V4};
-use crate::planning::search_tree::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
+use crate::planning::controls::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
 use crate::planning::take_warm;
 use crate::planning::{Context, Planner, TrajectoryCost};
 use crate::prediction::predict;
