@@ -9,7 +9,6 @@ use super::drawing::{
 };
 use crate::common::interp::lerp_state;
 use crate::common::math::smooth_exp_step;
-use crate::viewer::ui::controls::metrics::preview_metrics_for_trajectory;
 use crate::viewer::{DT, UiState};
 use web_time::Instant;
 
@@ -111,17 +110,12 @@ pub(crate) fn draw(
     let carpet_started = Instant::now();
     let carpet_clocks = if state.show_carpet && world.trajectory.len() > 1 {
         let trajectory = &world.trajectory;
-        let carpet_metrics = state
-            .carpet_visualization
-            .is_metric()
-            .then(|| preview_metrics_for_trajectory(&live, trajectory));
         carpet::draw(
             &mut meshes,
             &mut carpet_mesh,
             ego,
             trajectory,
             state.carpet_visualization,
-            carpet_metrics.as_ref(),
         )
     } else {
         carpet::clear(&mut meshes, &mut carpet_mesh);

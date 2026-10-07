@@ -59,13 +59,7 @@ pub(crate) enum CarpetVisualization {
     LongitudinalAcceleration,
     LateralAcceleration,
     Curvature,
-    Progress,
-}
-
-impl CarpetVisualization {
-    pub(crate) fn is_metric(self) -> bool {
-        matches!(self, Self::Progress)
-    }
+    Station,
 }
 
 #[derive(Resource)]

@@ -80,7 +80,7 @@ const ALL_VISUALIZATIONS: [CarpetVisualization; 6] = [
     CarpetVisualization::LongitudinalAcceleration,
     CarpetVisualization::LateralAcceleration,
     CarpetVisualization::Curvature,
-    CarpetVisualization::Progress,
+    CarpetVisualization::Station,
 ];
 
 fn option_label(visualization: CarpetVisualization) -> &'static str {
@@ -90,7 +90,7 @@ fn option_label(visualization: CarpetVisualization) -> &'static str {
         CarpetVisualization::LongitudinalAcceleration => "Longitudinal acceleration",
         CarpetVisualization::LateralAcceleration => "Lateral acceleration",
         CarpetVisualization::Curvature => "Curvature",
-        CarpetVisualization::Progress => "Progress",
+        CarpetVisualization::Station => "Station",
     }
 }
 

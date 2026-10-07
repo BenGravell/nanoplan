@@ -6,7 +6,9 @@ Planners maximize forward progress subject to collision, road, and vehicle-dynam
 `Constraints::point_cost(sample)` returns `-metrics::progress_score(...)` for feasible samples and `f64::INFINITY` for
 collision or road-bound violations.
 There are no comfort weights or safety scores.
-The viewer displays normalized progress and its per-tick trajectory coloring.
+The viewer displays the final normalized progress score; station carpet coloring uses cached path stations.
+`TrajectoryKinematics` caches full Frenet projections (station `s` and lateral offset `d`) once at construction; metric
+evaluation uses only the first and last stations and the final cached time.
 
 - **Progress** is the actual Frenet station delta above zero-acceleration coasting: `(delta_s - v_ego * t) / (0.5 *
   MAX_LON_ACCEL * t²)`.
@@ -16,7 +18,8 @@ The viewer displays normalized progress and its per-tick trajectory coloring.
   Actual rollout progress retains road geometry and vehicle dynamics; the reference needs no friction simulation.
   Braking or falling behind coasting scores negative, and exceeding maximum-acceleration reference progress scores above
   1.
-  The trajectory score is the final sample's score; the initial sample scores zero.
+  The trajectory score is computed directly at the final sample; a single-sample trajectory scores 1 and an empty one
+  scores 0.
 - **Collision and road constraints** reject samples inside the shared car-width actor clearance or outside the local
   drivable bounds.
   Planners with rectangular footprints additionally check actor and barrier contact.

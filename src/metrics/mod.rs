@@ -3,57 +3,39 @@
 use crate::common::kinematics::TrajectoryKinematics;
 #[cfg(test)]
 use crate::simulation::{Control, Position, State};
+#[cfg(test)]
 use crate::track::Road;
 use crate::vehicle::MAX_LON_ACCEL;
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Metrics {
-    pub(crate) score_per_tick: Vec<f64>,
-    pub(crate) score: f64,
-}
-
-pub(crate) fn evaluate(trajectory: &TrajectoryKinematics, road: &Road) -> Metrics {
+pub(crate) fn evaluate(trajectory: &TrajectoryKinematics) -> f64 {
     let Some(ego) = trajectory.states.first() else {
-        return Metrics::default();
+        return 0.0;
     };
 
-    let path = road.path();
-    let initial_station = path.project(ego.position()).s;
+    let last = trajectory.len() - 1;
+    if last == 0 {
+        return 1.0;
+    }
 
-    let score_per_tick: Vec<f64> = trajectory
-        .states
-        .iter()
-        .enumerate()
-        .map(|(tick, state)| {
-            if tick == 0 {
-                return 0.0;
-            }
-            progress_score(
-                path.project(state.position()).s - initial_station,
-                ego.speed,
-                tick as f64 * trajectory.dt,
-            )
-        })
-        .collect();
-
-    let score = score_per_tick.last().copied().unwrap_or_default();
-    Metrics { score_per_tick, score }
+    progress_score(
+        trajectory.projections[last].s - trajectory.projections[0].s,
+        ego.speed,
+        trajectory.time[last],
+    )
 }
 
 /// Frenet progress above zero-acceleration coasting, normalized by maximum-acceleration gain.
-/// Requires `t > 0`.
 pub(crate) fn progress_score(progress: f64, initial_speed: f64, t: f64) -> f64 {
     assert!(t > 0.0, "progress_score requires t > 0");
     let progress_gain = progress - initial_speed * t;
-    // Subtracting the same coasting distance leaves only the acceleration term.
     let max_progress_gain = 0.5 * MAX_LON_ACCEL * t * t;
     progress_gain / max_progress_gain
 }
 
 #[cfg(test)]
-pub(crate) fn evaluate_trace(states: &[State], controls: &[Control], road: &Road) -> Metrics {
-    let trajectory = TrajectoryKinematics::new(states.to_vec(), controls.to_vec(), road.dt);
-    evaluate(&trajectory, road)
+pub(crate) fn evaluate_trace(states: &[State], controls: &[Control], road: &Road) -> f64 {
+    let trajectory = TrajectoryKinematics::new(states.to_vec(), controls.to_vec(), road.dt, &road.path());
+    evaluate(&trajectory)
 }
 
 #[cfg(test)]
@@ -75,9 +57,8 @@ mod tests {
             State::from((Position::new(0.0, 20.0), 0.0, 10.0)),
             State::from((Position::new(0.0, 40.0), 0.0, 10.0)),
         ];
-        let metrics = evaluate_trace(&states, &[Control::default(); 3], &road);
-        assert_eq!(metrics.score_per_tick, [0.0, 0.0, 10.0 / 13.0]);
-        assert_eq!(metrics.score, 10.0 / 13.0);
+        let score = evaluate_trace(&states, &[Control::default(); 3], &road);
+        assert_eq!(score, 10.0 / 13.0);
         // For constant commanded acceleration without resistance, the signed
         // gain is 0.5 * acceleration * t², regardless of initial speed.
         for initial_speed in [-10.0, 0.0, 10.0] {
@@ -92,9 +73,8 @@ mod tests {
         let t = 0.01;
         assert_eq!(progress_score(0.5 * MAX_LON_ACCEL * t * t, 0.0, t), 1.0);
         for states in [&states[..0], &states[..1]] {
-            let metrics = evaluate_trace(states, &vec![Control::default(); states.len()], &road);
-            assert_eq!(metrics.score_per_tick.len(), states.len());
-            assert_eq!(metrics.score, 0.0);
+            let score = evaluate_trace(states, &vec![Control::default(); states.len()], &road);
+            assert_eq!(score, if states.is_empty() { 0.0 } else { 1.0 });
         }
     }
 }

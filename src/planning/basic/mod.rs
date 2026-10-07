@@ -10,7 +10,7 @@ use crate::planning::policy::centerline_curvature;
 use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::{ComputeBudget, Context, PLANNING_HORIZON_S, Planner};
 use crate::simulation::{Control, Position, State, world_step};
-use crate::track::{Path, Road};
+use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
 const STATION_SAMPLES_PER_INTERVAL: usize = 9;
@@ -61,7 +61,7 @@ fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64) -> Option<Vec
         let Some(trajectory) = feasible_candidate_trajectory(ego, &controls, path, ctx) else {
             continue;
         };
-        let score = ctx.time("cost", || compute_score(&trajectory, ctx.road));
+        let score = ctx.time("cost", || compute_score(&trajectory));
         if score.is_finite() && best.as_ref().is_none_or(|(best_score, _)| score > *best_score) {
             best = Some((score, controls));
         }
@@ -216,11 +216,11 @@ fn feasible_candidate_trajectory(
         .copied()
         .chain([controls.last().copied().unwrap_or_default()])
         .collect();
-    Some(TrajectoryKinematics::new(states, controls, ctx.road.dt))
+    Some(TrajectoryKinematics::new(states, controls, ctx.road.dt, path))
 }
 
-fn compute_score(trajectory: &TrajectoryKinematics, road: &Road) -> f64 {
-    metrics::evaluate(trajectory, road).score
+fn compute_score(trajectory: &TrajectoryKinematics) -> f64 {
+    metrics::evaluate(trajectory)
 }
 
 #[cfg(test)]
@@ -530,15 +530,15 @@ mod tests {
         assert_eq!(trajectory.states.len(), controls.len() + 1);
         assert_eq!(trajectory.states[0], ego);
         assert_eq!(trajectory.controls.len(), trajectory.states.len());
-        let score = compute_score(&trajectory, &road);
-        assert_eq!(score, metrics::evaluate(&trajectory, &road).score);
+        let score = compute_score(&trajectory);
+        assert_eq!(score, metrics::evaluate(&trajectory));
 
         let accelerated = [Control {
             acceleration: MAX_LON_ACCEL,
             ..Default::default()
         }; 3];
         let trajectory = feasible_candidate_trajectory(ego, &accelerated, ctx.path(), &ctx).unwrap();
-        let accelerated_score = compute_score(&trajectory, &road);
+        let accelerated_score = compute_score(&trajectory);
         // The analytic baseline ignores the drag present in the rollout.
         assert!(accelerated_score < 1.0);
         assert!(accelerated_score > score);

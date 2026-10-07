@@ -200,7 +200,7 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
         ("simulation.preview", 284, 8_520, 30),
         ("simulation.ego", 284, 284, 1),
         ("simulation.collisions", 284, 37_178, 198),
-        ("simulation.total", 284, 49_181, 240),
+        ("simulation.total", 284, 192_464, 966),
         ("simulation.roads", 75, 75, 1),
     ] {
         let seam = latency

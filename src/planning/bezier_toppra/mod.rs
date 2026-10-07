@@ -471,8 +471,8 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
         .copied()
         .chain([controls.last().copied().unwrap_or_default()])
         .collect();
-    let trajectory = TrajectoryKinematics::new(states, controls, ctx.road.dt);
-    -metrics::evaluate(&trajectory, ctx.road).score
+    let trajectory = TrajectoryKinematics::new(states, controls, ctx.road.dt, ctx.path());
+    -metrics::evaluate(&trajectory)
 }
 
 fn brake(ego: State, ctx: &Context) -> Vec<Control> {
@@ -856,7 +856,7 @@ mod tests {
         for &control in &controls {
             states.push(world_step(*states.last().unwrap(), control, road.dt));
         }
-        let score = metrics::evaluate_trace(&states, &vec![Control::default(); states.len()], &road).score;
+        let score = metrics::evaluate_trace(&states, &vec![Control::default(); states.len()], &road);
         assert_eq!(candidate_cost(ego, &ctx, &controls), -score);
 
         let off_road = State::from((Position::new(0.0, road.half_width + 1.0), 0.0, 8.0));
