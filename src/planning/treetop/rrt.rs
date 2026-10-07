@@ -146,8 +146,9 @@ impl Tree {
             path,
             ctx,
             initial_speed: start.speed,
+            initial_station: ctx.project_ego(start).s,
         };
-        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, start.speed, ctx.road.dt);
+        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, start.speed, g.initial_station);
 
         // Root node.
         tree.nodes.push(Node {
@@ -195,8 +196,8 @@ impl Tree {
         // in place of the RNG. One global sample index keeps every draw —
         // category selector and state coordinates alike — deterministic.
         let per_layer = samples / (SEGMENTS - 1).max(1);
-        let (s0, _) = path.project(start.position());
-        let (s_goal, _) = path.project(goal.position());
+        let s0 = path.project(start.position()).s;
+        let s_goal = path.project(goal.position()).s;
         let cold_samples = sampling::road_frame_samples::<Halton>(
             s0,
             (s_goal - s0).max(1.0),
@@ -400,6 +401,7 @@ struct Grower<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
     initial_speed: f64,
+    initial_station: f64,
 }
 
 impl Grower<'_, '_> {
@@ -432,7 +434,7 @@ impl Grower<'_, '_> {
             self.ctx.actors,
             self.path,
             self.initial_speed,
-            self.ctx.road.dt,
+            self.initial_station,
         );
         for i in 0..us.len() {
             let x = &xs[i + 1];

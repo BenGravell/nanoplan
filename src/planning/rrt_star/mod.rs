@@ -29,6 +29,7 @@ use rstar::primitives::GeomWithData;
 use crate::common::differencing::forward_difference;
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
+use crate::common::types::FrenetPosition;
 use crate::constraints::{Constraints, Sample};
 use crate::planning::controls::{brake_controls, path_to_controls};
 use crate::planning::sampling::{self, Halton};
@@ -226,14 +227,14 @@ fn steer_cost(
     [sa, sb]: [f64; 2],
 ) -> Option<f64> {
     let mut total = 0.0;
-    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, v, ctx.road.dt);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, v, s0);
     for (i, &p) in segment.iter().enumerate() {
         let u = i as f64 / (segment.len() - 1) as f64;
         let curvature = curve.curvature(u);
         if curvature.abs() > MAX_ABS_CURVATURE {
             return None;
         }
-        let (s, d) = path.project_near(p, lerp(sa, sb, u), PROJECT_WINDOW_M);
+        let FrenetPosition { s, d } = path.project_near(p, lerp(sa, sb, u), PROJECT_WINDOW_M);
         // Endpoints alone aren't enough: a Hermite curve whose tangent
         // directions don't line up well with its chord can bulge past
         // both endpoints' lateral offset before coming back — clamping
@@ -258,8 +259,8 @@ fn steer_cost(
         }
         let sample = Sample {
             position: p,
+            station: s,
             lateral: d,
-            speed: v,
             t,
             ..Default::default()
         };
@@ -290,7 +291,7 @@ fn try_extend(
     ctx: &Context,
     target: Position,
 ) -> bool {
-    let target_s = path.project(target).0;
+    let target_s = path.project(target).s;
     // nearest existing node strictly behind the target's station: walk the
     // spatial index outward from the target (nearest first) and take the
     // first behind it — exact, and typically only a couple of steps.
@@ -312,7 +313,7 @@ fn try_extend(
         parent.pos.y + step_len * steer_dir.sin(),
     );
     let new_yaw = steer_dir;
-    let (new_s, new_d) = path.project(new_pos);
+    let FrenetPosition { s: new_s, d: new_d } = path.project(new_pos);
     if new_s <= nodes[nearest_idx].station {
         return false; // steering laterally lost all forward progress
     }
@@ -445,7 +446,7 @@ impl Planner for RrtStarPlanner {
         ctx.time("warm_start", || {
             let mut parent_idx = 0;
             for &p in &self.prev_path {
-                let (station, lateral) = path.project(p);
+                let FrenetPosition { s: station, d: lateral } = path.project(p);
                 let parent = &nodes[parent_idx];
                 if station <= parent.station {
                     continue; // behind the chain so far: drop, don't break the rest
@@ -506,7 +507,7 @@ impl Planner for RrtStarPlanner {
         // limit would reject outright).
         let drivable = drivable_bound(ctx);
         for a in ctx.actors {
-            let (a_s, a_d) = path.project(a.position());
+            let FrenetPosition { s: a_s, d: a_d } = path.project(a.position());
             for side in [-1.0, 1.0] {
                 let bypass = (a_d + side * (COLLISION_MARGIN_M + 2.0)).clamp(-drivable, drivable);
                 for (station_offset, lateral) in [
@@ -555,7 +556,7 @@ impl Planner for RrtStarPlanner {
         if let Some(diag) = ctx.diagnostics {
             for node in nodes.iter().skip(1) {
                 diag.record_point(node.pos);
-                let times = node.segment.iter().map(|&p| (path.project(p).0 - s0) / v).collect();
+                let times = node.segment.iter().map(|&p| (path.project(p).s - s0) / v).collect();
                 diag.record_timed_trajectory(node.segment.clone(), times);
             }
         }

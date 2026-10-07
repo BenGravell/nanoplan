@@ -45,7 +45,7 @@ mod tests {
                             + Position::from_angle(yaw + std::f64::consts::FRAC_PI_2)
                                 * (offset * track.half_width(progress));
                         let ego = State::from((position, yaw, 40.0));
-                        let projected = ctx.project_ego(ego).0;
+                        let projected = ctx.project_ego(ego).s;
                         assert!(
                             (projected - expected).abs() < 0.5,
                             "track {index}, anchor {anchor}, delta {delta}, offset {offset}: {projected} vs {expected}"

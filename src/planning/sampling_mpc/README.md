@@ -64,6 +64,8 @@ optimizer; here the generic driver supplies them the nanoplan way, so each optim
 
 Each `plan()` runs `iterations` (default 4, echoing PI²-DDP's `GENERATIONS`) sample→rollout→update passes — a nanoplan
 adaptation of judo's controller loop, which runs one optimizer step per control cycle.
+Each optimizer update is rolled out and compared with the best sampled candidate.
+If blending degrades the reward, the best sample is retained instead.
 
 **Seams**: `route` (build the `Path`), `warm_start` (reuse or road-informed re-init), `optimize` (the
 sample/rollout/update iterations) with `cost` (the shared metric objective, once per rolled-out state) nested inside,

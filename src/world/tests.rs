@@ -1,6 +1,7 @@
 use super::traffic::lateral_target;
 use super::*;
 use crate::common::geometry::barrier::collides_with_road_barrier;
+use crate::common::types::FrenetPosition;
 use crate::planning::LatencyStats;
 use crate::simulation::Position;
 use crate::track::ROAD_SAMPLE_STEP_M;
@@ -184,23 +185,23 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
     }
 
     assert_eq!(world.ego_collision_count, 0);
-    assert_eq!(ticks, 292);
+    assert_eq!(ticks, 284);
     // Includes live segment queries and candidate geometry; static track builds are covered by preparation tests.
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 292, 292, 1),
-        ("simulation.actors", 292, 1_460, 5),
-        ("simulation.actor_culling", 292, 1_460, 5),
-        ("route", 292, 13_432, 46),
-        ("bezier_fit", 292, 265_428, 909),
-        ("extract", 292, 8_204_963, 61_430),
-        ("optimize", 292, 24_589_522, 206_857),
-        ("cost", 292, 17_031_446, 79_130),
-        ("planner.total", 292, 41_937_046, 284_285),
-        ("simulation.preview", 292, 8_760, 30),
-        ("simulation.ego", 292, 292, 1),
-        ("simulation.collisions", 292, 38_456, 198),
-        ("simulation.total", 292, 50_792, 240),
-        ("simulation.roads", 72, 72, 1),
+        ("simulation.progress", 284, 284, 1),
+        ("simulation.actors", 284, 1_420, 5),
+        ("simulation.actor_culling", 284, 1_420, 5),
+        ("route", 284, 13_064, 46),
+        ("bezier_fit", 284, 258_156, 909),
+        ("extract", 284, 7_638_867, 60_414),
+        ("optimize", 284, 22_898_106, 182_706),
+        ("cost", 284, 18_510_599, 84_439),
+        ("planner.total", 284, 41_716_241, 268_200),
+        ("simulation.preview", 284, 8_520, 30),
+        ("simulation.ego", 284, 284, 1),
+        ("simulation.collisions", 284, 37_178, 198),
+        ("simulation.total", 284, 49_181, 240),
+        ("simulation.roads", 75, 75, 1),
     ] {
         let seam = latency
             .seams
@@ -538,7 +539,7 @@ fn ego_projection_metadata_is_rebuilt_after_progress_refresh() {
                 < 1e-6
         );
         let ctx = crate::planning::test_ctx(&world.road, &[]);
-        let (station, lateral) = ctx.project_ego(world.ego());
+        let FrenetPosition { s: station, d: lateral } = ctx.project_ego(world.ego());
         let (hint, radius) = world.road.ego_projection_window.unwrap();
         assert!((station - hint).abs() < radius);
         assert!(lateral.abs() < 0.1);

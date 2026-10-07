@@ -93,7 +93,7 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
 /// Guide tree sampling with the centerline pose at maximum-acceleration reach.
 /// This preview bounds the search; the progress cost chooses the trajectory.
 pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
-    let (s0, _) = path.project(ego.position());
+    let s0 = path.project(ego.position()).s;
     let mut preview = State {
         speed: ego.speed,
         ..Default::default()
@@ -190,7 +190,7 @@ impl Planner for TreetopPlanner {
             });
 
             // Optimize each candidate and select by the shared progress cost.
-            let ocp = ilqr::Ocp { path, start: ego, ctx };
+            let ocp = ilqr::Ocp::new(path, ego, ctx);
             let best = ctx.time("traj_opt", || {
                 candidates
                     .iter()

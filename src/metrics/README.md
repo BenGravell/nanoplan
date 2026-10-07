@@ -3,14 +3,20 @@
 ## The shared metric objective
 
 Planners maximize forward progress subject to collision, road, and vehicle-dynamics constraints.
-`Constraints::point_cost(sample)` returns `1 - metrics::speed_score(...)` for feasible samples and `f64::INFINITY` for
+`Constraints::point_cost(sample)` returns `-metrics::progress_score(...)` for feasible samples and `f64::INFINITY` for
 collision or road-bound violations.
 There are no comfort weights or safety scores.
 The viewer displays normalized progress and its per-tick trajectory coloring.
 
-- **Progress** normalizes forward speed by the speed reachable under maximum thrust acceleration from the current speed,
-  including rolling resistance and drag.
-  Rollout scores average these per-tick values.
+- **Progress** is the actual Frenet station delta above zero-acceleration coasting: `(delta_s - v_ego * t) / (0.5 *
+  MAX_LON_ACCEL * t²)`.
+  Subtracting the coasting distance from both reference distances cancels the initial-speed term in the denominator.
+  `progress_score` requires `t > 0`, making the denominator positive; the numerator is signed.
+  Constant acceleration without resistance scores `acceleration / MAX_LON_ACCEL`.
+  Actual rollout progress retains road geometry and vehicle dynamics; the reference needs no friction simulation.
+  Braking or falling behind coasting scores negative, and exceeding maximum-acceleration reference progress scores above
+  1.
+  The trajectory score is the final sample's score; the initial sample scores zero.
 - **Collision and road constraints** reject samples inside the shared car-width actor clearance or outside the local
   drivable bounds.
   Planners with rectangular footprints additionally check actor and barrier contact.

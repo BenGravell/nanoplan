@@ -1,5 +1,6 @@
 //! Actor state prediction.
 
+use crate::common::types::FrenetPosition;
 use crate::simulation::State;
 use crate::track::Path;
 
@@ -11,7 +12,7 @@ const CENTERLINE_RETURN_TAU_S: f64 = 2.0;
 /// Longitudinal position advances at the actor's current speed while its
 /// current lateral offset decays smoothly toward the centerline.
 pub(crate) fn predict(actor: &State, track: &Path, t: f64) -> State {
-    let (s0, d0, _) = track.actor_projection(*actor);
+    let FrenetPosition { s: s0, d: d0 } = track.actor_projection(*actor);
     let s = s0 + actor.speed * t;
     let d = d0 * (-t / CENTERLINE_RETURN_TAU_S).exp();
     let (position, yaw) = (track.frenet_to_position(s, d), track.pose_at(s).1);
@@ -50,7 +51,7 @@ mod tests {
             10.0,
         );
         let predicted = predict(&actor, &track, 2.0);
-        let (s, d) = track.project(predicted.position());
+        let FrenetPosition { s, d } = track.project(predicted.position());
         assert!((s - 60.0).abs() < 1e-9);
         assert!((d - 2.0 / std::f64::consts::E).abs() < 1e-9);
         assert_eq!(predicted.pose.yaw, std::f64::consts::FRAC_PI_2);

@@ -43,6 +43,7 @@ pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
 pub(crate) use warm_start::take_warm;
 
+use crate::common::types::FrenetPosition;
 #[cfg(test)]
 use crate::simulation::Position;
 use crate::simulation::{Control, State};
@@ -91,7 +92,7 @@ impl<'a> Context<'a> {
         self.path.get_or_init(|| self.road.path())
     }
 
-    pub(crate) fn project_ego(&self, ego: State) -> (f64, f64) {
+    pub(crate) fn project_ego(&self, ego: State) -> FrenetPosition {
         match self.road.ego_projection_window {
             Some((hint, radius)) => self.path().project_near(ego.position(), hint, radius),
             None => self.path().project(ego.position()),

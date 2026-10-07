@@ -7,14 +7,16 @@ pub(crate) struct TrajectoryCost<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
     initial_speed: f64,
+    initial_station: f64,
 }
 
 impl<'a, 'b> TrajectoryCost<'a, 'b> {
-    pub(crate) fn new(path: &'a Path, ctx: &'a Context<'b>, initial_speed: f64) -> Self {
+    pub(crate) fn new(path: &'a Path, ctx: &'a Context<'b>, ego: State) -> Self {
         TrajectoryCost {
             path,
             ctx,
-            initial_speed,
+            initial_speed: ego.speed,
+            initial_station: ctx.project_ego(ego).s,
         }
     }
 
@@ -41,7 +43,7 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
             actors,
             self.path,
             self.initial_speed,
-            self.ctx.road.dt,
+            self.initial_station,
         );
         self.ctx.time("cost", || {
             if actors_are_predicted {

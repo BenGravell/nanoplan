@@ -159,9 +159,9 @@ mod tests {
                     let ego = State::from((position, yaw, speed));
                     let ctx = Context::new(&worker_view, &[], 100, ComputeBudget::NOMINAL, None, None);
                     let start = ctx.project_ego(ego);
-                    assert!((start.0 - road.ego_projection_window.unwrap().0).abs() < 0.1);
+                    assert!((start.s - road.ego_projection_window.unwrap().0).abs() < 0.1);
                     let path = ctx.path();
-                    assert!(path.project_near(position, start.0, 21.0).1.abs() < 0.1);
+                    assert!(path.project_near(position, start.s, 21.0).d.abs() < 0.1);
                     road.closest_centerline_segment(position).unwrap();
                     let trajectory = TrajectoryKinematics::new(vec![ego; 2], vec![Control::default(); 2], road.dt);
                     crate::metrics::evaluate(&trajectory, &road);

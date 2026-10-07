@@ -4,6 +4,7 @@
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp;
 use crate::common::kinematics::commanded_accel_for_net;
+use crate::common::types::FrenetPosition;
 use crate::constraints::Constraints;
 use crate::planning::controls::stop_controls;
 use crate::planning::steering::cubic_coeffs;
@@ -73,7 +74,7 @@ impl Planner for FrenetixPlanner {
             return Vec::new();
         }
         let path = ctx.time("route", || ctx.path());
-        let (s0, d0) = path.project(ego.position());
+        let FrenetPosition { s: s0, d: d0 } = path.project(ego.position());
         let heading = wrap_angle(ego.pose.yaw - path.heading_at(s0));
         let scale = 1.0 - path.curvature_at(s0) * d0;
         if scale <= 0.1 || ego.speed < 0.0 || heading.cos() < 0.0 {
@@ -143,7 +144,7 @@ fn grid(lo: f64, hi: f64, samples: usize) -> impl Iterator<Item = f64> + Clone {
 fn evaluate(ego: State, ctx: &Context, motion: &Motion, ticks: usize) -> Option<(f64, Vec<Control>)> {
     let path = ctx.path();
     let dt = ctx.road.dt;
-    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, dt);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.project_ego(ego).s);
     let mut actual = ego;
     let mut controls = Vec::with_capacity(ticks);
     let mut points = ctx.diagnostics.map(|_| vec![ego.position()]);

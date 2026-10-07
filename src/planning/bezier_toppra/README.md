@@ -27,8 +27,8 @@ would exhaust that window before the next normal road update.
 
 The compute-budget slider caps new path evaluations: 5 at minimum budget, 9 at nominal, and 45 at maximum.
 The five-candidate floor preserves centerline recovery and both passing directions even at minimum budget.
-If every new candidate is infeasible, the remaining controls of the previous selected plan provide one additional
-candidate without another TOPP-RA solve.
+The remaining controls of the previous selected plan always provide one additional candidate without another TOPP-RA
+solve.
 Alignment uses the nearest predicted state, allowing skipped live ticks; the suffix is extended with its last command
 and checked over the entire horizon from the actual current ego against current road and actor constraints.
 It is discarded if infeasible.

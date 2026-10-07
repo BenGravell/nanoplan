@@ -8,7 +8,7 @@ use collision::CollisionFree;
 use drivable_area::DrivableArea;
 use kinodynamic::Kinodynamic;
 
-use crate::metrics::speed_score;
+use crate::metrics::progress_score;
 use crate::simulation::{Control, Position, State};
 use crate::track::{Path, Road};
 
@@ -28,15 +28,11 @@ pub(crate) struct Sample {
     pub(crate) lateral: f64,
     /// Local signed road bounds when the planner retains varying widths.
     pub(crate) road_bounds: Option<(f64, f64)>,
-    /// Signed heading error from the lane direction at this point.
-    pub(crate) heading_err: f64,
-    pub(crate) speed: f64,
+    /// Frenet s coordinate along the track.
+    pub(crate) station: f64,
     /// Command and speed at its application, before integration. None for
     /// geometry-only target samples that have no associated command.
     pub(crate) control: Option<(Control, f64)>,
-    /// Frenet station rate when the planner tracks it directly. Geometry-only
-    /// planners leave this unset and use the heading-projected speed.
-    pub(crate) station_speed: Option<f64>,
     /// Seconds from now this sample is reached, for actor prediction.
     pub(crate) t: f64,
 }
@@ -66,18 +62,24 @@ pub(crate) struct Constraints<'a> {
     drivable: DrivableArea,
     collision: CollisionFree<'a>,
     initial_speed: f64,
-    dt: f64,
+    initial_station: f64,
 }
 
 impl<'a> Constraints<'a> {
-    pub(crate) fn new(road_half_width: f64, actors: &'a [State], track: &'a Path, initial_speed: f64, dt: f64) -> Self {
+    pub(crate) fn new(
+        road_half_width: f64,
+        actors: &'a [State],
+        track: &'a Path,
+        initial_speed: f64,
+        initial_station: f64,
+    ) -> Self {
         Constraints {
             drivable: DrivableArea {
                 half_width: road_half_width,
             },
             collision: CollisionFree { actors, track },
             initial_speed,
-            dt,
+            initial_station,
         }
     }
 
@@ -103,9 +105,10 @@ impl<'a> Constraints<'a> {
         {
             return f64::INFINITY;
         }
-        let forward_speed = sample.station_speed.unwrap_or(sample.speed * sample.heading_err.cos());
-        let tick = (sample.t / self.dt).round().max(0.0) as usize;
-        1.0 - speed_score(forward_speed, self.initial_speed, tick, self.dt)
+        if sample.t == 0.0 {
+            return 0.0;
+        }
+        -progress_score(sample.station - self.initial_station, self.initial_speed, sample.t)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.
@@ -155,13 +158,13 @@ mod tests {
 
     fn point_cost(sample: &Sample, actors: &[State]) -> f64 {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        Constraints::new(HALF_WIDTH_M, actors, &track, INITIAL_SPEED, DT).point_cost(sample)
+        Constraints::new(HALF_WIDTH_M, actors, &track, INITIAL_SPEED, 0.0).point_cost(sample)
     }
 
     #[test]
     fn kinodynamic_limits_reject_and_penalize_infeasible_commands() {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, DT);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 0.0);
         for speed in [0.0, 5.0, 30.0, -30.0] {
             for acceleration in [MIN_LON_ACCEL, MAX_LON_ACCEL] {
                 for curvature in [-curvature_limit(speed), curvature_limit(speed)] {
@@ -219,12 +222,11 @@ mod tests {
     fn transition_checks_footprint_and_sample_constraints() {
         let road = Road::new(vec![[-20.0, 0.0], [100.0, 0.0]], HALF_WIDTH_M, DT);
         let path = road.path();
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &path, INITIAL_SPEED, DT);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &path, INITIAL_SPEED, 0.0);
         let previous = State::from((Position::new(0.0, 0.0), 0.0, INITIAL_SPEED));
         let state = State::from((Position::new(1.0, 0.0), 0.0, INITIAL_SPEED));
         let sample = Sample {
             position: state.position(),
-            speed: state.speed,
             ..Default::default()
         };
         assert!(!constraints.is_transition_violated(previous, state, &road, &sample));
@@ -240,7 +242,7 @@ mod tests {
         assert!(constraints.is_transition_violated(previous, touching, &road, &sample));
 
         let actors = [state];
-        let constraints = Constraints::new(HALF_WIDTH_M, &actors, &path, INITIAL_SPEED, DT);
+        let constraints = Constraints::new(HALF_WIDTH_M, &actors, &path, INITIAL_SPEED, 0.0);
         let sample = Sample {
             position: state.position(),
             ..Default::default()
@@ -251,14 +253,23 @@ mod tests {
     #[test]
     fn feasible_cost_only_rewards_progress() {
         let mut sample = Sample {
-            speed: 10.0,
+            station: 10.0,
             t: 1.0,
             ..Default::default()
         };
         let cost = point_cost(&sample, &[]);
-        assert_eq!(cost, 1.0 - speed_score(10.0, INITIAL_SPEED, 10, DT));
-        sample.speed = 12.0;
+        assert_eq!(cost, -progress_score(10.0, INITIAL_SPEED, 1.0));
+        sample.station = 12.0;
         assert!(point_cost(&sample, &[]) < cost);
+        sample.station = 6.75;
+        assert_eq!(point_cost(&sample, &[]), 1.0);
+        sample.station = 16.5;
+        assert_eq!(point_cost(&sample, &[]), -2.0);
+
+        let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 30.0);
+        sample.station = 40.0;
+        assert_eq!(constraints.point_cost(&sample), cost);
     }
 
     #[test]
@@ -283,7 +294,7 @@ mod tests {
     #[test]
     fn soft_violation_cost_has_an_escape_slope() {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, DT);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 0.0);
         let near = Sample {
             lateral: HALF_WIDTH_M + 0.5,
             ..Default::default()

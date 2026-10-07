@@ -8,6 +8,7 @@ pub(crate) struct Position {
     pub(crate) y: f64,
 }
 
+/// Position in Cartesian coordinates.
 impl Position {
     pub(crate) const fn new(x: f64, y: f64) -> Self {
         Position { x, y }

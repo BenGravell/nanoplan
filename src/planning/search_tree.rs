@@ -8,6 +8,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::common::types::FrenetPosition;
 use crate::planning::{Context, PLANNING_HORIZON_S};
 use crate::simulation::{Position, State};
 use crate::track::Path;
@@ -23,7 +24,7 @@ pub(crate) struct RoadFrame<'a> {
 impl<'a> RoadFrame<'a> {
     pub(crate) fn new(ego: State, ctx: &'a Context) -> Self {
         let path = ctx.path();
-        let (s0, d0) = path.project(ego.position());
+        let FrenetPosition { s: s0, d: d0 } = path.project(ego.position());
         let speed = ego.speed.max(2.0);
         RoadFrame {
             path,

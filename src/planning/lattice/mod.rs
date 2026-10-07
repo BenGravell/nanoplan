@@ -15,6 +15,7 @@ use crate::common::interp::lerp;
 use crate::common::kinematics::{
     LOW_SPEED_LIMIT_MPS, commanded_accel_for_net, curvature_limit, net_longitudinal_accel,
 };
+use crate::common::types::FrenetPosition;
 use crate::constraints::{Constraints, Sample};
 use crate::planning::controls::stop_controls;
 use crate::planning::search_tree::{RoadFrame, best_first, parent_chain};
@@ -229,9 +230,12 @@ fn segment(
         };
         let before = actual;
         actual = world_step(actual, control, dt);
-        let (actual_s, actual_d) = path.project_near(actual.position(), target_s, 30.0);
+        let FrenetPosition {
+            s: actual_s,
+            d: actual_d,
+        } = path.project_near(actual.position(), target_s, 30.0);
         let body_center = EGO_FOOTPRINT.center(actual.pose());
-        let (body_s, body_d) = path.project_near(body_center, actual_s, 30.0);
+        let FrenetPosition { s: body_s, d: body_d } = path.project_near(body_center, actual_s, 30.0);
         let (right, left) = ctx.road.lateral_bounds_at(body_s);
         let (_, body_lane_yaw) = path.pose_at(body_s);
         let road_normal = Position::from_angle(body_lane_yaw + std::f64::consts::FRAC_PI_2).xy();
@@ -250,18 +254,12 @@ fn segment(
         }
         let (s, d) = (actual_s, actual_d);
         let position = actual.position();
-        let (_, lane_yaw) = path.pose_at(s);
-        let lane_curvature = path_curvature(path, s);
-        let heading_err = wrap_angle(actual.pose.yaw - lane_yaw);
-        let station_speed = actual.speed * heading_err.cos() / (1.0 - lane_curvature * d).max(0.1);
         samples.push(Sample {
             position,
             lateral: d,
             road_bounds: Some((right, left)),
-            heading_err,
-            speed: actual.speed,
+            station: s,
             control: Some((control, before.speed)),
-            station_speed: Some(station_speed),
             t: start_time + (tick + 1) as f64 * dt,
         });
         points.push(position);
@@ -285,7 +283,7 @@ impl Planner for LatticePlanner {
         debug_assert!((ctx.road.dt - PLANNING_DT_S).abs() < 1e-9);
         let RoadFrame { path, s0, d0, .. } = ctx.time("route", || RoadFrame::new(ego, ctx));
         let reach = reachable(ego.speed, ctx.road.dt);
-        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.road.dt);
+        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, s0);
         let max_evaluated_segments = ctx.compute_budget.scale(SEGMENTS_AT_100_MS, 100);
         let evaluated = Cell::new(0usize);
         let best_root_segment: RefCell<Option<(f64, Vec<Control>)>> = RefCell::new(None);
@@ -357,7 +355,10 @@ impl Planner for LatticePlanner {
                         let (_, yaw) = path.pose_at(s);
                         let nominal = State::from((path.frenet_to_position(s, d), yaw, v));
                         let start = node_states.borrow()[node].unwrap_or(nominal);
-                        let (actual_s, actual_d) = path.project_near(start.position(), s, 30.0);
+                        let FrenetPosition {
+                            s: actual_s,
+                            d: actual_d,
+                        } = path.project_near(start.position(), s, 30.0);
                         (layer, si, di, vi, actual_s, actual_d, start.speed, start)
                     };
                     let next_layer = if node == 0 { 0 } else { layer + 1 };
@@ -437,7 +438,7 @@ impl Planner for LatticePlanner {
                     break;
                 };
                 start = segment.end;
-                (sa, da) = path.project_near(start.position(), sb, 30.0);
+                FrenetPosition { s: sa, d: da } = path.project_near(start.position(), sb, 30.0);
                 va = start.speed;
                 controls.extend(segment.controls);
             }
@@ -472,7 +473,7 @@ mod tests {
                 ..Default::default()
             };
             let path = Path::new(road.centerline());
-            let (s0, d0) = path.project(ego.position());
+            let FrenetPosition { s: s0, d: d0 } = path.project(ego.position());
             let r = reachable(ego.speed, road.dt)[0];
             assert!(
                 segment(&path, &ctx, ego, s0, d0, ego.speed, s0 + r.max_s, 0.0, r.max_v, 0.0,).is_some(),
@@ -563,7 +564,7 @@ mod tests {
         let path = Path::new(road.centerline());
         let lateral_peak = trace
             .iter()
-            .map(|state| path.project(state.position()).1.abs())
+            .map(|state| path.project(state.position()).d.abs())
             .fold(0.0, f64::max);
         assert!(
             lateral_peak > 0.5,

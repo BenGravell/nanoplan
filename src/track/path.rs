@@ -5,13 +5,11 @@ use crate::common::{
     differencing::forward_difference,
     interp::{lerp, lerp_angle},
     measure::dot,
-    types::position::Position,
+    types::{FrenetPosition, Position},
 };
 use crate::simulation::State;
 
 use crate::common::geometry::segment_index::SegmentIndex;
-
-type Projection = (f64, f64, f64);
 
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +30,7 @@ pub(crate) struct PathGeometry {
 pub(crate) struct Path {
     data: std::sync::Arc<PathGeometry>,
     range: std::ops::Range<usize>,
-    actor_projections: std::cell::RefCell<Vec<(State, Projection)>>,
+    actor_projections: std::cell::RefCell<Vec<(State, FrenetPosition)>>,
 }
 
 impl Path {
@@ -165,7 +163,7 @@ impl Path {
         )
     }
 
-    pub(crate) fn project(&self, p: impl Into<Position>) -> (f64, f64) {
+    pub(crate) fn project(&self, p: impl Into<Position>) -> FrenetPosition {
         let p = p.into();
         let index = self
             .data
@@ -178,9 +176,9 @@ impl Path {
         self.project_range(p, i, i + 1)
     }
 
-    /// Projection and track heading cached for unchanged actor states that
+    /// Projection cached for unchanged actor states that
     /// are predicted repeatedly during one planner call.
-    pub(crate) fn actor_projection(&self, state: State) -> Projection {
+    pub(crate) fn actor_projection(&self, state: State) -> FrenetPosition {
         if let Some((_, projection)) = self
             .actor_projections
             .borrow()
@@ -189,9 +187,7 @@ impl Path {
         {
             return *projection;
         }
-        let (s, d) = self.project(state.position());
-        let (_, heading) = self.pose_at(s);
-        let projection = (s, d, heading);
+        let projection = self.project(state.position());
         self.actor_projections.borrow_mut().push((state, projection));
         projection
     }
@@ -201,7 +197,7 @@ impl Path {
         self.actor_projections.borrow().len()
     }
 
-    pub(crate) fn project_near(&self, p: impl Into<Position>, hint: f64, window: f64) -> (f64, f64) {
+    pub(crate) fn project_near(&self, p: impl Into<Position>, hint: f64, window: f64) -> FrenetPosition {
         let lo = self
             .stations()
             .partition_point(|&x| x < hint - window + self.origin())
@@ -213,7 +209,7 @@ impl Path {
         self.project_range(p.into(), lo, hi)
     }
 
-    fn project_range(&self, p: Position, lo: usize, hi: usize) -> (f64, f64) {
+    fn project_range(&self, p: Position, lo: usize, hi: usize) -> FrenetPosition {
         let (mut best_s, mut best_d) = (0.0, f64::INFINITY);
         for i in lo..hi.min(self.pts().len() - 1) {
             crate::planning::latency::geometry_work(1);
@@ -229,7 +225,7 @@ impl Path {
                 best_d = d.copysign(ab.cross(offset));
             }
         }
-        (best_s, best_d)
+        FrenetPosition { s: best_s, d: best_d }
     }
 
     pub(crate) fn frenet_to_position(&self, s: f64, d: f64) -> Position {
@@ -258,10 +254,10 @@ mod tests {
                     let expected = path.project_range(p, 0, points.len() - 1);
                     let actual = path.project(p);
                     assert!(
-                        (actual.0 - expected.0).abs() < 1e-8,
+                        (actual.s - expected.s).abs() < 1e-8,
                         "track {track_index}: {actual:?} != {expected:?}"
                     );
-                    assert!((actual.1 - expected.1).abs() < 1e-8);
+                    assert!((actual.d - expected.d).abs() < 1e-8);
                 }
             }
         }
@@ -273,7 +269,7 @@ mod tests {
             [0.0, 0.0].into(),
             [10.0, 0.0].into(),
         ]);
-        assert_eq!(path.project([5.0, -1.0]), (5.0, -1.0));
+        assert_eq!(path.project([5.0, -1.0]), FrenetPosition { s: 5.0, d: -1.0 });
     }
 
     #[test]
@@ -289,7 +285,7 @@ mod tests {
             lat.time("queries", || {
                 for i in 0..128 {
                     let x = (segments - 1) as f64 * i as f64 / 128.0 + 0.25;
-                    assert_eq!(path.project([x, 1.0]), (x, 1.0));
+                    assert_eq!(path.project([x, 1.0]), FrenetPosition { s: x, d: 1.0 });
                 }
             });
             let clocks = lat.take()[0].clocks;
@@ -304,11 +300,11 @@ mod tests {
     fn projection_and_frenet_offset_use_the_same_side() {
         let path = Path::new(&[Position::new(0.0, 0.0), Position::new(10.0, 0.0)]);
         let point = Position::new(3.0, 2.0);
-        let (s, d) = path.project(point);
+        let FrenetPosition { s, d } = path.project(point);
         assert!((s - 3.0).abs() < 1e-12);
         assert!((d - 2.0).abs() < 1e-12);
         assert!(path.frenet_to_position(s, d).distance(point) < 1e-12);
-        assert!((path.project(Position::new(3.0, -2.0)).1 + 2.0).abs() < 1e-12);
+        assert!((path.project(Position::new(3.0, -2.0)).d + 2.0).abs() < 1e-12);
     }
 
     #[test]

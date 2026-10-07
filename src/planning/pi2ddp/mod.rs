@@ -159,7 +159,7 @@ impl Planner for Pi2DdpPlanner {
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
         // rollout average a gradient back onto the road.
-        let trajectory_cost = TrajectoryCost::new(path, ctx, ego.speed);
+        let trajectory_cost = TrajectoryCost::new(path, ctx, ego);
         let state_cost = |x: &State, u: Control, speed: f64, j: usize| {
             let (_, sample) = crate::planning::planner_math::state_sample(path, x, j as f64 * ctx.road.dt, None);
             trajectory_cost.stage_sample(sample.with_control(u, speed), ctx.actors, false)

@@ -95,14 +95,24 @@ pub(crate) struct Ocp<'a, 'b> {
     /// treetop `Problem::initial_state`: where every rollout starts.
     pub(crate) start: State,
     pub(crate) ctx: &'a Context<'b>,
+    cost: TrajectoryCost<'a, 'b>,
 }
 
-impl Ocp<'_, '_> {
+impl<'a, 'b> Ocp<'a, 'b> {
+    pub(crate) fn new(path: &'a Path, start: State, ctx: &'a Context<'b>) -> Self {
+        Self {
+            path,
+            start,
+            ctx,
+            cost: TrajectoryCost::new(path, ctx, start),
+        }
+    }
+
     /// Running cost of being at `x` at tick `t` having applied `u`.
     /// `s_hint` narrows the Frenet projection during FD probing, where the
     /// state moves by ±[`H_COST`] around a known station.
     fn stage_cost(&self, x: &State, u: &Control, t: usize, s_hint: Option<f64>) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(x, *u, t, s_hint)
+        self.cost.stage(x, *u, t, s_hint)
     }
 
     fn stage_cost_with_predicted_actors(
@@ -113,17 +123,12 @@ impl Ocp<'_, '_> {
         s_hint: Option<f64>,
         predicted_actors: &[State],
     ) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage_with_predicted_actors(
-            x,
-            *u,
-            t,
-            s_hint,
-            predicted_actors,
-        )
+        self.cost
+            .stage_with_predicted_actors(x, *u, t, s_hint, predicted_actors)
     }
 
     fn terminal_cost(&self, x: &State) -> f64 {
-        TrajectoryCost::new(self.path, self.ctx, self.start.speed).stage(x, Control::default(), TICKS, None)
+        self.cost.stage(x, Control::default(), TICKS, None)
     }
 
     /// Total cost of a rolled-out trajectory (treetop `Loss::totalValue`).
@@ -161,7 +166,7 @@ struct StageDerivs {
 fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     // one projection of the unperturbed state anchors every probe's
     // Frenet lookup (the probes move by ±H_COST, far less than the window)
-    let s_hint = ocp.path.project(x.position()).0;
+    let s_hint = ocp.path.project(x.position()).s;
     let t_s = t as f64 * ocp.ctx.road.dt;
     let predicted_actors: Vec<State> = ocp.ctx.actors.iter().map(|a| predict(a, ocp.path, t_s)).collect();
     let eval = |z: [f64; 6]| {
@@ -350,7 +355,8 @@ fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Ga
 
         // regularize with treetop's gradient-norm scaling, then check PD
         // (2×2: positive leading element and determinant)
-        let r = reg * qu[0].hypot(qu[1]);
+        // A position-only objective can leave the final control gradient zero.
+        let r = reg * qu[0].hypot(qu[1]).max(1e-6);
         let m = [[quu[0][0] + r, quu[0][1]], [quu[1][0], quu[1][1] + r]];
         let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
         if !(m[0][0] > 0.0 && det > 0.0 && det.is_finite()) {
@@ -516,7 +522,7 @@ impl Planner for IlqrPlanner {
                 .unwrap_or_else(|| centerline_follow_controls(ego, path, ctx, TICKS))
         });
 
-        let ocp = Ocp { path, start: ego, ctx };
+        let ocp = Ocp::new(path, ego, ctx);
         // Offline calibration: twelve finite-difference passes is about 100 ms.
         let iterations = ctx.compute_budget.scale(SOLO_ITERS, 1);
         let sol = ctx.time("optimize", || solve(&ocp, &init, iterations));
@@ -594,11 +600,7 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
             6.0,
         );
-        let ocp = Ocp {
-            path: &path,
-            start: ego,
-            ctx: &ctx,
-        };
+        let ocp = Ocp::new(&path, ego, &ctx);
         // a lazy guess: coast straight, ignoring the lane offset and speed
         let init = vec![Control::default(); TICKS];
         let (xs0, us0) = rollout_constrained(ego, &init, ctx.road.dt);
@@ -617,11 +619,7 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let ocp = Ocp {
-            path: &path,
-            start: ego,
-            ctx: &ctx,
-        };
+        let ocp = Ocp::new(&path, ego, &ctx);
         let u = Control {
             acceleration: 3.0,
             curvature: -0.2,
@@ -643,7 +641,14 @@ mod tests {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
         let path = Path::new(road.centerline());
-        let tc = TrajectoryCost::new(&path, &ctx, 8.0);
+        let tc = TrajectoryCost::new(
+            &path,
+            &ctx,
+            State {
+                speed: 8.0,
+                ..Default::default()
+            },
+        );
         let x = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(5.0, 0.0), 0.0),
             8.0,

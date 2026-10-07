@@ -1,6 +1,7 @@
 //! Shared control generation and vehicle rollouts for planners.
 
 use crate::common::differencing::forward_difference;
+use crate::common::types::FrenetPosition;
 use crate::planning::Context;
 use crate::planning::policy::centerline_curvature;
 use crate::simulation::{Control, Position, State, world_step};
@@ -60,12 +61,12 @@ pub(crate) fn centerline_follow_controls(ego: State, path: &Path, ctx: &Context,
     let mut x = ego;
     let mut controls = Vec::with_capacity(horizon);
     for _ in 0..horizon {
-        let (s, _) = path.project(x.position());
+        let s = path.project(x.position()).s;
         let traffic_brake = ctx
             .actors
             .iter()
             .filter_map(|actor| {
-                let (actor_s, d) = path.project(actor.position());
+                let FrenetPosition { s: actor_s, d } = path.project(actor.position());
                 (d.abs() < 2.0 && actor_s > s)
                     .then(|| (actor.speed * actor.speed - x.speed * x.speed) / (2.0 * (actor_s - s - 5.0).max(1.0)))
             })
