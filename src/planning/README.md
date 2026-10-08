@@ -9,11 +9,10 @@ planning/
 ├── engine.rs      asynchronous planner execution for native threads and Web Workers
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
-├── basic/         cubic path planner
 ├── leeroy_jenkins/ maximum acceleration, zero steering
 ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
 ├── lattice/       Frenet lattice, high-res sampled grid + A* search
-├── frenetix/      lateral cubics × longitudinal cubics, shared horizon and cost
+├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
 ├── rrt_star/      RRT*, cubic differential-flatness steering
 ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
@@ -248,7 +247,6 @@ exception.
 
 ## Planner implementations
 
-- [Basic cubic](basic/README.md)
 - [Leeroy Jenkins](leeroy_jenkins/README.md)
 - [Bezier + TOPP-RA](bezier_toppra/README.md)
 - [Frenet lattice](lattice/README.md)

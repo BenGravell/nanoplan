@@ -13,5 +13,6 @@ pub(crate) mod kinematics;
 pub(crate) mod linalg;
 pub(crate) mod math;
 pub(crate) mod measure;
+pub(crate) mod polynomial;
 pub(crate) mod rng;
 pub(crate) mod types;

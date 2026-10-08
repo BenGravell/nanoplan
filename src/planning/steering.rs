@@ -5,8 +5,11 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
-use crate::common::kinematics::{commanded_accel_for_net, commanded_accel_to_stop};
-use crate::simulation::{Control, Position, State, clamp_control, world_step_unclamped};
+use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
+use crate::common::measure::dot;
+use crate::common::polynomial::CubicPolynomial;
+use crate::common::types::{Control, Position, State};
+use crate::simulation::world_step_unclamped;
 
 /// Cubic flat-output connector between two states/poses.
 ///
@@ -15,8 +18,8 @@ use crate::simulation::{Control, Position, State, clamp_control, world_step_uncl
 ///
 /// `p(t) = c0 + c1*t + c2*t^2 + c3*t^3`
 pub(crate) struct CubicSteer {
-    cx: [f64; 4],
-    cy: [f64; 4],
+    cx: CubicPolynomial,
+    cy: CubicPolynomial,
     duration: f64,
 }
 
@@ -27,8 +30,8 @@ impl CubicSteer {
         let v0 = state_velocity(start);
         let v1 = state_velocity(goal);
         Self {
-            cx: cubic_coeffs(start.position().x, v0[0], goal.position().x, v1[0], duration),
-            cy: cubic_coeffs(start.position().y, v0[1], goal.position().y, v1[1], duration),
+            cx: CubicPolynomial::from_boundary(start.position().x, v0[0], goal.position().x, v1[0], duration),
+            cy: CubicPolynomial::from_boundary(start.position().y, v0[1], goal.position().y, v1[1], duration),
             duration,
         }
     }
@@ -37,30 +40,28 @@ impl CubicSteer {
     /// derivative magnitude is tied to chord length.
     pub(crate) fn from_poses(p0: Position, yaw0: f64, p1: Position, yaw1: f64) -> Self {
         let k = p0.distance(p1).max(1e-3) / 2.0;
-        let boundary = |yaw: f64| {
-            let tangent = Position::from_angle(yaw);
-            [k * tangent.x, k * tangent.y]
-        };
+        let boundary = |yaw: f64| (Position::from_angle(yaw) * k).xy();
         let v0 = boundary(yaw0);
         let v1 = boundary(yaw1);
         Self {
-            cx: cubic_coeffs(p0.x, v0[0], p1.x, v1[0], 1.0),
-            cy: cubic_coeffs(p0.y, v0[1], p1.y, v1[1], 1.0),
+            cx: CubicPolynomial::from_boundary(p0.x, v0[0], p1.x, v1[0], 1.0),
+            cy: CubicPolynomial::from_boundary(p0.y, v0[1], p1.y, v1[1], 1.0),
             duration: 1.0,
         }
     }
 
     pub(crate) fn point(&self, t: f64) -> Position {
         let t = t.clamp(0.0, self.duration);
-        Position::new(eval(&self.cx, t), eval(&self.cy, t))
+        Position::new(self.cx.at(t)[0], self.cy.at(t)[0])
     }
 
     pub(crate) fn curvature(&self, t: f64) -> f64 {
         let t = t.clamp(0.0, self.duration);
-        let (dx, dy) = (eval_d1(&self.cx, t), eval_d1(&self.cy, t));
-        let (ddx, ddy) = (eval_d2(&self.cx, t), eval_d2(&self.cy, t));
-        let speed = dx.hypot(dy).max(1e-6);
-        (dx * ddy - dy * ddx) / speed.powi(3)
+        let [_, dx, ddx] = self.cx.at(t);
+        let [_, dy, ddy] = self.cy.at(t);
+        let velocity = Position::new(dx, dy);
+        let acceleration = Position::new(ddx, ddy);
+        velocity.cross(acceleration) / velocity.norm().max(1e-6).powi(3)
     }
 
     /// Flat-output action `(longitudinal acceleration, curvature)`.
@@ -74,14 +75,16 @@ impl CubicSteer {
 
     fn flat_motion(&self, t: f64) -> (f64, f64, f64) {
         let t = t.clamp(0.0, self.duration);
-        let (dx, dy) = (eval_d1(&self.cx, t), eval_d1(&self.cy, t));
-        let (ddx, ddy) = (eval_d2(&self.cx, t), eval_d2(&self.cy, t));
-        let speed = dx.hypot(dy);
+        let [_, dx, ddx] = self.cx.at(t);
+        let [_, dy, ddy] = self.cy.at(t);
+        let velocity = Position::new(dx, dy);
+        let acceleration = Position::new(ddx, ddy);
+        let speed = velocity.norm();
         if speed <= 0.01 {
-            return (speed, ddx.hypot(ddy), 0.0);
+            return (speed, acceleration.norm(), 0.0);
         }
-        let accel = (dx * ddx + dy * ddy) / speed;
-        let curvature = (dx * ddy - dy * ddx) / speed.powi(3);
+        let accel = dot(velocity.xy(), acceleration.xy()) / speed;
+        let curvature = velocity.cross(acceleration) / speed.powi(3);
         (speed, accel, curvature)
     }
 
@@ -89,7 +92,7 @@ impl CubicSteer {
         let p0 = self.point(0.0);
         let p1 = self.point(probe_t.min(self.duration));
         let forward = Position::from_angle(yaw);
-        if (p1.x - p0.x) * forward.x + (p1.y - p0.y) * forward.y >= 0.0 {
+        if dot((p1 - p0).xy(), forward.xy()) >= 0.0 {
             1.0
         } else {
             -1.0
@@ -136,30 +139,7 @@ pub(crate) fn steer_controls(
 }
 
 fn state_velocity(x: &State) -> [f64; 2] {
-    let tangent = Position::from_angle(x.pose.yaw);
-    [x.speed * tangent.x, x.speed * tangent.y]
-}
-
-pub(crate) fn cubic_coeffs(p0: f64, v0: f64, p1: f64, v1: f64, t: f64) -> [f64; 4] {
-    let (t2, t3) = (t * t, t * t * t);
-    [
-        p0,
-        v0,
-        (3.0 * (p1 - p0) - (2.0 * v0 + v1) * t) / t2,
-        (2.0 * (p0 - p1) + (v0 + v1) * t) / t3,
-    ]
-}
-
-fn eval(c: &[f64; 4], t: f64) -> f64 {
-    c[0] + t * (c[1] + t * (c[2] + t * c[3]))
-}
-
-fn eval_d1(c: &[f64; 4], t: f64) -> f64 {
-    c[1] + t * (2.0 * c[2] + t * 3.0 * c[3])
-}
-
-fn eval_d2(c: &[f64; 4], t: f64) -> f64 {
-    2.0 * c[2] + t * 6.0 * c[3]
+    (Position::from_angle(x.pose.yaw) * x.speed).xy()
 }
 
 #[cfg(test)]

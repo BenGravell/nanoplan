@@ -4,7 +4,7 @@ use super::{Constraint, Sample};
 use crate::common::kinematics::curvature_limit;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-pub(super) struct Kinodynamic;
+pub(crate) struct Kinodynamic;
 
 impl Constraint for Kinodynamic {
     fn is_violated(&self, sample: &Sample) -> bool {

@@ -9,7 +9,7 @@
 ## Actor planning
 
 -- Fix the actors.
-They should run a basic planner instead of using magic unphysical motion.
+They should run a motion planner instead of using magic unphysical motion.
 
 -- Left-menu tab with more options for the opponents:
 

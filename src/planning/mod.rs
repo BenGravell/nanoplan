@@ -2,7 +2,6 @@
 
 use std::cell::OnceCell;
 
-pub(crate) mod basic;
 pub(crate) mod bezier_toppra;
 mod catalog;
 mod compute_budget;
@@ -10,7 +9,7 @@ mod config;
 pub(crate) mod controls;
 pub(crate) mod diagnostics;
 pub(crate) mod engine;
-pub(crate) mod frenetix;
+pub(crate) mod frenet_sampling;
 pub(crate) mod latency;
 pub(crate) mod lattice;
 pub(crate) mod leeroy_jenkins;
@@ -26,13 +25,12 @@ mod trajectory_cost;
 pub(crate) mod treetop;
 mod warm_start;
 
-pub(crate) use basic::BasicPlanner;
 pub(crate) use bezier_toppra::BezierToppraPlanner;
 pub(crate) use catalog::PlannerKind;
 pub(crate) use compute_budget::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT};
 pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
-pub(crate) use frenetix::FrenetixPlanner;
+pub(crate) use frenet_sampling::FrenetSamplingPlanner;
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use lattice::LatticePlanner;
 pub(crate) use leeroy_jenkins::LeeroyJenkinsPlanner;

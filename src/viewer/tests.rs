@@ -6,7 +6,7 @@ use crate::viewer::ui::{Navigator, Page};
 fn visualization_defaults_show_only_track_stations() {
     let state = UiState::default();
     assert_eq!(Navigator::default().page(), Page::Start);
-    assert_eq!(state.planner, PlannerKind::Basic);
+    assert_eq!(state.planner, PlannerKind::FrenetSampling);
     assert!(state.show_stations);
     assert!(!state.show_centerline);
     assert!(!state.show_plan);

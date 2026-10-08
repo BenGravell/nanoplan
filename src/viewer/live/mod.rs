@@ -209,7 +209,7 @@ impl Live {
 
 impl Default for Live {
     fn default() -> Self {
-        let world = LiveWorld::with_track(0, 1, PlannerKind::Basic, DEFAULT_ACTORS, DT);
+        let world = LiveWorld::with_track(0, 1, PlannerKind::FrenetSampling, DEFAULT_ACTORS, DT);
         let road_surface = drawing::track::surface_mesh(world.track.prepared().collision.polygon());
         let previous = RenderSnapshot::capture(&world);
         let lap_stats = LapStats::new(world.track.lap_length());
@@ -226,7 +226,7 @@ impl Default for Live {
             friction_box: FrictionBox::new(FRICTION_TRAIL_HORIZON_S),
             lap_stats,
             previous,
-            planner: PlannerKind::Basic,
+            planner: PlannerKind::FrenetSampling,
             recorder: Latency::default(),
             acc: 0.0,
             preparation: None,

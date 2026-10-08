@@ -70,6 +70,8 @@ fn planner_overrun_warning_is_visible_only_while_slow() {
             if !state.configured {
                 configure(ui.ctx());
                 state.configured = true;
+                // Exercise the warning state independently of planner runtime.
+                state.live.world.planner_slow = false;
                 ui.ctx().request_repaint();
                 return;
             }

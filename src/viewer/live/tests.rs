@@ -435,7 +435,7 @@ fn regenerating_resets_lap_stats() {
     live.lap_stats.current_s = 12.0;
     live.lap_stats.completed = 3;
 
-    live.regenerate_with_actor_count(2, PlannerKind::Basic, 0, DEFAULT_ACTORS);
+    live.regenerate_with_actor_count(2, PlannerKind::FrenetSampling, 0, DEFAULT_ACTORS);
 
     assert_eq!(live.lap_stats.current_s, 0.0);
     assert_eq!(live.lap_stats.completed, 0);

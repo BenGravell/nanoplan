@@ -1,5 +1,5 @@
 use super::{
-    BasicPlanner, BezierToppraPlanner, Cem, FrenetixPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
+    BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
     Pi2DdpPlanner, Planner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, TreetopPlanner,
 };
 
@@ -10,10 +10,9 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlannerKind {
     LeeroyJenkins,
-    Basic,
     BezierToppra,
     Lattice,
-    Frenetix,
+    FrenetSampling,
     Pi2Ddp,
     RrtStar,
     PredictiveSampling,
@@ -31,18 +30,12 @@ struct PlannerSpec {
     has_diagnostics: bool,
 }
 
-const SPECS: [PlannerSpec; 13] = [
+const SPECS: [PlannerSpec; 12] = [
     PlannerSpec {
         kind: PlannerKind::LeeroyJenkins,
         name: "Leeroy Jenkins",
         build: || Box::new(LeeroyJenkinsPlanner),
         has_diagnostics: false,
-    },
-    PlannerSpec {
-        kind: PlannerKind::Basic,
-        name: "basic cubic",
-        build: || Box::new(BasicPlanner),
-        has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::BezierToppra,
@@ -57,9 +50,9 @@ const SPECS: [PlannerSpec; 13] = [
         has_diagnostics: true,
     },
     PlannerSpec {
-        kind: PlannerKind::Frenetix,
-        name: "FRENETIX",
-        build: || Box::new(FrenetixPlanner),
+        kind: PlannerKind::FrenetSampling,
+        name: "Frenet sampling",
+        build: || Box::new(FrenetSamplingPlanner::default()),
         has_diagnostics: true,
     },
     PlannerSpec {
@@ -113,12 +106,11 @@ const SPECS: [PlannerSpec; 13] = [
 ];
 
 impl PlannerKind {
-    pub(crate) const ALL: [PlannerKind; 13] = [
+    pub(crate) const ALL: [PlannerKind; 12] = [
         PlannerKind::LeeroyJenkins,
-        PlannerKind::Basic,
         PlannerKind::BezierToppra,
         PlannerKind::Lattice,
-        PlannerKind::Frenetix,
+        PlannerKind::FrenetSampling,
         PlannerKind::Pi2Ddp,
         PlannerKind::RrtStar,
         PlannerKind::PredictiveSampling,

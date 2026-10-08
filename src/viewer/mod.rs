@@ -85,7 +85,7 @@ impl Default for UiState {
         Self {
             show_frame_time: false,
             track: 0,
-            planner: PlannerKind::Basic,
+            planner: PlannerKind::FrenetSampling,
             compute_budget_percent: NOMINAL_COMPUTE_BUDGET_PERCENT,
             preview_s: PLANNING_HORIZON_S as f32,
             opponents: 5,

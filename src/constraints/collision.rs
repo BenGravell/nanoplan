@@ -3,7 +3,7 @@
 use super::{Constraint, Sample};
 use crate::common::geometry::barrier::collide_with_road_barriers;
 use crate::common::geometry::{
-    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, footprints_overlap,
+    CAR_COLLISION_RADIUS_M, CAR_FOOTPRINT, EGO_COLLISION_RADIUS_M, EGO_FOOTPRINT, Footprint, footprints_overlap,
 };
 use crate::planning::Context;
 use crate::prediction::predict;
@@ -51,8 +51,8 @@ impl CollisionFree<'_> {
 }
 
 /// Check the swept ego footprint without applying the collision response.
-pub(super) fn road_barrier_collision(previous: State, state: State, road: &Road) -> bool {
-    collide_with_road_barriers(previous, state, EGO_FOOTPRINT, road) != state
+pub(super) fn road_barrier_collision(previous: State, state: State, footprint: Footprint, road: &Road) -> bool {
+    collide_with_road_barriers(previous, state, footprint, road) != state
 }
 
 pub(crate) fn actor_collision(pose: Pose, time: f64, ctx: &Context) -> bool {

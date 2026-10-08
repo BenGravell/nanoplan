@@ -6,8 +6,9 @@ mod kinodynamic;
 
 use collision::CollisionFree;
 use drivable_area::DrivableArea;
-use kinodynamic::Kinodynamic;
+pub(crate) use kinodynamic::Kinodynamic;
 
+use crate::common::geometry::Footprint;
 use crate::metrics::progress_score;
 use crate::simulation::{Control, Position, State};
 use crate::track::{Path, Road};
@@ -89,8 +90,15 @@ impl<'a> Constraints<'a> {
     }
 
     /// Reject an ego transition for swept road-barrier contact or sample violations.
-    pub(crate) fn is_transition_violated(&self, previous: State, state: State, road: &Road, sample: &Sample) -> bool {
-        collision::road_barrier_collision(previous, state, road) || self.is_violated(sample)
+    pub(crate) fn is_transition_violated(
+        &self,
+        previous: State,
+        state: State,
+        footprint: Footprint,
+        road: &Road,
+        sample: &Sample,
+    ) -> bool {
+        collision::road_barrier_collision(previous, state, footprint, road) || self.is_violated(sample)
     }
 
     /// Progress cost for a feasible sample; hard violations return infinity.
@@ -229,7 +237,13 @@ mod tests {
             position: state.position(),
             ..Default::default()
         };
-        assert!(!constraints.is_transition_violated(previous, state, &road, &sample));
+        assert!(!constraints.is_transition_violated(
+            previous,
+            state,
+            crate::common::geometry::EGO_FOOTPRINT,
+            &road,
+            &sample
+        ));
 
         // The center remains on the road, but the footprint reaches the barrier.
         let touching = State::from((Position::new(1.0, HALF_WIDTH_M - 0.1), 0.0, INITIAL_SPEED));
@@ -239,7 +253,13 @@ mod tests {
             ..Default::default()
         };
         assert!(!constraints.is_violated(&sample));
-        assert!(constraints.is_transition_violated(previous, touching, &road, &sample));
+        assert!(constraints.is_transition_violated(
+            previous,
+            touching,
+            crate::common::geometry::EGO_FOOTPRINT,
+            &road,
+            &sample
+        ));
 
         let actors = [state];
         let constraints = Constraints::new(HALF_WIDTH_M, &actors, &path, INITIAL_SPEED, 0.0);
@@ -247,7 +267,13 @@ mod tests {
             position: state.position(),
             ..Default::default()
         };
-        assert!(constraints.is_transition_violated(previous, state, &road, &sample));
+        assert!(constraints.is_transition_violated(
+            previous,
+            state,
+            crate::common::geometry::EGO_FOOTPRINT,
+            &road,
+            &sample
+        ));
     }
 
     #[test]
