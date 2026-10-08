@@ -1,8 +1,7 @@
-//! The planner interface and one module per planner.
+//! The planner interface, shared infrastructure, and concrete implementations in [`planners`].
 
 use std::cell::OnceCell;
 
-pub(crate) mod bezier_toppra;
 mod catalog;
 mod compute_budget;
 mod config;
@@ -10,38 +9,26 @@ pub(crate) mod controls;
 pub(crate) mod diagnostics;
 pub(crate) mod engine;
 pub(crate) mod frenet;
-pub(crate) mod frenet_sampling;
 pub(crate) mod latency;
-pub(crate) mod lattice;
-pub(crate) mod leeroy_jenkins;
-pub(crate) mod pi2ddp;
 pub(crate) mod planner_math;
+pub(crate) mod planners;
 pub(crate) mod policy;
-pub(crate) mod rrt_star;
 pub(crate) mod sampling;
-pub(crate) mod sampling_mpc;
 pub(crate) mod search_tree;
 pub(crate) mod steering;
 mod trajectory_cost;
-pub(crate) mod tree;
-pub(crate) mod treetop;
 mod warm_start;
 
-pub(crate) use bezier_toppra::BezierToppraPlanner;
 pub(crate) use catalog::PlannerKind;
 pub(crate) use compute_budget::{COMPUTE_BUDGET_BREAKPOINTS, ComputeBudget, NOMINAL_COMPUTE_BUDGET_PERCENT};
 pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
-pub(crate) use frenet_sampling::FrenetSamplingPlanner;
 pub(crate) use latency::{Latency, LatencyStats, Span};
-pub(crate) use lattice::LatticePlanner;
-pub(crate) use leeroy_jenkins::LeeroyJenkinsPlanner;
-pub(crate) use pi2ddp::Pi2DdpPlanner;
-pub(crate) use rrt_star::RrtStarPlanner;
-pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
+pub(crate) use planners::{
+    BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
+    Pi2DdpPlanner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, TreetopPlanner,
+};
 pub(crate) use trajectory_cost::TrajectoryCost;
-pub(crate) use tree::RrtPlanner;
-pub(crate) use treetop::{IlqrPlanner, TreetopPlanner};
 pub(crate) use warm_start::take_warm;
 
 use crate::common::types::FrenetPosition;

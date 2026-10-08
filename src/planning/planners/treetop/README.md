@@ -89,7 +89,7 @@ solution.
 
 **Finite differences everywhere, per the port's design brief.** treetop carries ~200 lines of hand-derived loss
 gradients/Hessians and a closed-form dynamics Jacobian; nanoplan deliberately provides neither (see
-[the shared metric objective](../../metrics/README.md#the-shared-metric-objective)).
+[the shared metric objective](../../../metrics/README.md#the-shared-metric-objective)).
 So this solver differentiates numerically: central differences over the packed `(x, y, yaw, v, accel, curvature)` vector
 for the cost gradient and (symmetrized) Hessian — 73 probes of the black-box scalar per timestep — and central
 differences on `simulation::world_step` for the dynamics Jacobians `A`, `B` (pinned against the known closed form by

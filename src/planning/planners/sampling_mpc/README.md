@@ -56,7 +56,7 @@ optimizer; here the generic driver supplies them the nanoplan way, so each optim
   made finite (`constraints::HARD_VIOLATION_PENALTY`) so MPPI's and CEM's reward aggregation can't divide by an infinity —
   exactly PI²-DDP's reasoning.
   No planner-local outcome terms are added.
-- **The shared QMC sampler.** The knot noise is drawn from [`sampling::qmc_normals`](../README.md#shared-qmc-sampling),
+- **The shared QMC sampler.** The knot noise is drawn from [`sampling::qmc_normals`](../../README.md#shared-qmc-sampling),
   the *same* low-discrepancy sequence RRT\* samples targets from — so these planners are deterministic pure functions of
   the ego state (`*_is_a_pure_function_of_state`), unlike judo's pseudo-random `np.random.randn`.
 - **Warm start.** The winning deviations are carried to the next tick when the ego followed the plan, so each 0.1 s replan

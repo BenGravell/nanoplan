@@ -1,7 +1,7 @@
 //! Time-layered motion tree with Frenet sampling and cubic Frenet steering.
 //! Reuses the sampling envelopes and Cartesian transformations in
 //! [`crate::planning::frenet`], and supplies initial guesses to
-//! [`crate::planning::treetop::TreetopPlanner`].
+//! [`crate::planning::planners::treetop::TreetopPlanner`].
 
 use crate::common::geometry::wrap_angle;
 use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
@@ -10,10 +10,10 @@ use crate::constraints::Constraints;
 use crate::planning::controls::{repeat_last_controls, rollout_constrained};
 use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
 use crate::planning::planner_math;
+use crate::planning::planners::treetop::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::parent_chain;
 use crate::planning::take_warm;
-use crate::planning::treetop::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;

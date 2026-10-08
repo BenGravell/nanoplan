@@ -10,15 +10,16 @@ planning/
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── frenet.rs      shared Frenet cubics, Cartesian transforms, and reachable target sampling
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
-├── leeroy_jenkins/ maximum acceleration, zero steering
-├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
-├── lattice/       Frenet lattice, high-res sampled grid + A* search
-├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
-├── pi2ddp/        sampling-based DDP (PI²-DDP)
-├── rrt_star/      RRT*, cubic differential-flatness steering
-├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
-├── tree/          RRT motion tree with Frenet sampling and cubic segments
-└── treetop/       finite-difference iLQR and the RRT+iLQR treetop planner
+└── planners/      concrete planner implementations
+    ├── leeroy_jenkins/ maximum acceleration, zero steering
+    ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
+    ├── lattice/       Frenet lattice, high-res sampled grid + A* search
+    ├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
+    ├── pi2ddp/        sampling-based DDP (PI²-DDP)
+    ├── rrt_star/      RRT*, cubic differential-flatness steering
+    ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
+    ├── tree/          RRT motion tree with Frenet sampling and cubic segments
+    └── treetop/       finite-difference iLQR and the RRT+iLQR treetop planner
 ```
 
 ## The `Planner` trait
@@ -249,10 +250,10 @@ exception.
 
 ## Planner implementations
 
-- [Leeroy Jenkins](leeroy_jenkins/README.md)
-- [Bezier + TOPP-RA](bezier_toppra/README.md)
-- [Frenet lattice](lattice/README.md)
-- [PI²-DDP](pi2ddp/README.md)
-- [RRT\*](rrt_star/README.md)
-- [Sampling MPC](sampling_mpc/README.md)
-- [Treetop](treetop/README.md)
+- [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
+- [Bezier + TOPP-RA](planners/bezier_toppra/README.md)
+- [Frenet lattice](planners/lattice/README.md)
+- [PI²-DDP](planners/pi2ddp/README.md)
+- [RRT\*](planners/rrt_star/README.md)
+- [Sampling MPC](planners/sampling_mpc/README.md)
+- [Treetop](planners/treetop/README.md)

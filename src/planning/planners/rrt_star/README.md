@@ -86,9 +86,9 @@ Trying identical candidates every tick means the tree finds (and keeps refining,
 detour every time.
 
 **Feasibility and edge cost both go through the
-[shared metric objective](../../metrics/README.md#the-shared-metric-objective).** `feasible` additionally enforces its
-own tighter margins before ever calling it — `drivable_bound` (the road's own `half_width` less `DRIVABLE_MARGIN_M` =
-0.5 m, so it holds just inside the shared function's road-edge reject on whatever road is being driven) and
+[shared metric objective](../../../metrics/README.md#the-shared-metric-objective).** `feasible` additionally enforces
+its own tighter margins before ever calling it — `drivable_bound` (the road's own `half_width` less `DRIVABLE_MARGIN_M`
+= 0.5 m, so it holds just inside the shared function's road-edge reject on whatever road is being driven) and
 `COLLISION_MARGIN_M` (3.0 m, ahead of the shared car-width point proxy) — headroom for the fact that a curve is only
 checked at `STEER_SAMPLES` discrete points, so the true closest approach between samples can dip a little further than
 what gets tested.

@@ -71,4 +71,4 @@ objective:
 - [Optimal trajectory generation for dynamic street scenarios in a Frenet Frame](https://ieeexplore.ieee.org/abstract/document/5509799).
 
 Cubic motion, Cartesian transformations, and reachable target sampling are shared with the tree planner in
-[`planning::frenet`](../frenet.rs).
+[`planning::frenet`](../../frenet.rs).

@@ -47,11 +47,11 @@
 //!   like RRT* and the judo planners — pinned by the
 //!   `*_is_a_pure_function_of_state` tests.
 //!
-//! See `src/planning/treetop/README.md` for the design write-up.
+//! See `src/planning/planners/treetop/README.md` for the design write-up.
 
 pub(crate) mod ilqr;
 
-use crate::planning::tree;
+use crate::planning::planners::tree;
 pub(crate) use ilqr::IlqrPlanner;
 
 use crate::planning::controls::repeat_last_controls;
@@ -135,7 +135,7 @@ const OPT_ITERS: usize = 6;
 /// candidates, iLQR ([`ilqr`]) optimizes each, the best optimized
 /// trajectory is the plan — and its action sequence warm-starts the tree
 /// next tick (treetop's `Planner::plan` loop). See the module doc and
-/// `src/planning/treetop/README.md`.
+/// `src/planning/planners/treetop/README.md`.
 ///
 /// **Seams**: `route`, `warm_start`, then treetop's own two-phase timing
 /// split (`TimingInfo { tree_exp, traj_opt }`) as `tree` (grow + candidate

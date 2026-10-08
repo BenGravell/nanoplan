@@ -33,8 +33,8 @@ This is a deliberate design constraint, not an oversight: nanoplan never *provid
 — both are black-box scalars, and nothing may demand an analytic gradient of either.
 Most planners live entirely within that constraint by sampling and comparing candidates.
 The one family that genuinely optimizes —
-[treetop's iLQR](../planning/treetop/README.md#ilqr-treetop-finite-differences) — respects it at the interface: it
-consumes exactly the same black-box scalars and differentiates them **numerically** (central finite differences),
+[treetop's iLQR](../planning/planners/treetop/README.md#ilqr-treetop-finite-differences) — respects it at the interface:
+it consumes exactly the same black-box scalars and differentiates them **numerically** (central finite differences),
 probing `point_cost` and `step` a few dozen times per timestep instead of once.
 The scalar interface stays the single source of truth for what "good" means; no second, analytically-differentiated
 definition of the cost can drift away from it.
