@@ -238,7 +238,7 @@ Two things live here:
 
 **Parity is enforced at the interface, not by convention.** RRT\* calls `road_frame_samples::<Halton>` for its Frenet
 targets; the judo optimizers call `qmc_normals::<Halton>` (Halton coordinates pushed through an inverse-normal-CDF,
-`inv_normal_cdf`) for their Gaussian control-knot noise.
+`inv_normal_cdf`) for their Gaussian Frenet endpoint noise.
 Both go through the same `QuasiMonteCarlo` trait, so the parity is *structural* (a type-level share, checked at compile
 time).
 On top of that, RRT\*'s `rrt_targets_match_shared_sampler` test pins the *numeric* parity — that lifting its old inline

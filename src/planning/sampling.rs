@@ -1,7 +1,7 @@
 //! Shared quasi-Monte-Carlo low-discrepancy sampling and the road-frame
 //! hybrid sampler, drawn from by *every* sampling planner in this codebase:
 //! RRT* samples (station, lateral) targets from it, and the judo-derived
-//! optimizers ([`super::sampling_mpc`]) draw their control-knot noise from
+//! optimizers ([`super::sampling_mpc`]) draw their Frenet endpoint noise from
 //! it. Both once carried their own copy of the radical-inverse code; this
 //! module is the single owner, so "the whole codebase samples from one QMC
 //! interface" is checked by the compiler rather than kept in sync by hand.

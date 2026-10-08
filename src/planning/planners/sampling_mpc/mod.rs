@@ -1,57 +1,6 @@
-//! Sampling-based predictive-control optimizers ported from **judo**
-//! (<https://github.com/rai-opensource/judo>): predictive sampling, the
-//! cross-entropy method (CEM), and MPPI. All three share judo's structure —
-//! an [`Optimizer`] samples control-knot perturbations around a nominal
-//! trajectory, the caller rolls each one out and scores it, and the
-//! optimizer folds the scores back into a new nominal — and differ *only*
-//! in how they sample ([`Optimizer::sample_control_knots`]) and how they
-//! aggregate ([`Optimizer::update_nominal_knots`]), exactly as in judo's
-//! `base.py` / `ps.py` / `cem.py` / `mppi.py`.
-//!
-//! ## Fitting judo into the nanoplan framework
-//!
-//! judo's optimizers are pure array math over `(num_rollouts, num_nodes,
-//! nu)` knot tensors; a separate simulator turns knots into rollouts and
-//! rewards. [`SamplingPlanner`] is that surrounding machinery, adapted to
-//! nanoplan's [`Planner`] trait:
-//!
-//! - **Knots are deviations from a road-model base policy.** The single
-//!   most important adaptation. judo's knots *are* the raw controls, applied
-//!   open-loop over the horizon. That works for judo's short-horizon,
-//!   feedback-stabilized tasks but not for tracking a lane over 10 s: a
-//!   car's lateral dynamics integrate curvature twice, so raw open-loop
-//!   knots diverge metres off-road over the horizon and every candidate
-//!   scores as garbage. Instead each interpolated knot is a *deviation*
-//!   added to a critically-damped PD lane-keeping + speed-hold **base
-//!   policy** (`base_policy`) evaluated on the current
-//!   rollout state — genuine feedback, so every rollout stays on the road
-//!   and the QMC exploration prices real maneuvers (an obstacle swerve)
-//!   rather than open-loop drift. This mirrors PI²-DDP, which likewise rolls
-//!   out with feedback gains rather than raw nominal controls, and is the
-//!   "hybrid road model" the sampling explores around. The nominal starts at
-//!   *zero* deviation — the bare base policy — the judo-typical zero nominal.
-//! - **Control knots -> controls.** The `num_nodes` deviation knots
-//!   (`[acceleration, curvature]`) are spread over the planning horizon and
-//!   linearly interpolated to a per-tick sequence (`control_at`) — judo's
-//!   spline interpolation, at its simplest order.
-//! - **The planner-internal forward model.** Every rollout advances through
-//!   [`crate::simulation::world_step`] — shared memoryless simulation physics
-//!   with vehicle limits and drag, but without actuator memory or collisions.
-//! - **The shared metric objective.** Each rolled-out state is priced through
-//!   [`crate::constraints::Constraints`], the same cost interface the
-//!   Frenet lattice, PI²-DDP, and RRT* agree on, with hard violations made
-//!   finite by the shared constraint escape slope since MPPI's and CEM's reward
-//!   aggregation can't absorb an infinity — the same reason PI²-DDP makes
-//!   that swap. No planner-local outcome terms are added.
-//! - **The shared QMC sampler.** The knot noise comes from
-//!   [`crate::planning::sampling::qmc_normals`], the *same* low-discrepancy
-//!   sequence RRT* draws its targets from (see that module's parity note),
-//!   not judo's pseudo-random `np.random.randn`. These optimizers are
-//!   therefore deterministic pure functions of the ego state, like RRT* and
-//!   unlike PI²-DDP — pinned by `*_is_a_pure_function_of_state`.
-//! - **Warm start across ticks.** The winning deviations are carried to the
-//!   next tick when the ego followed the plan, so each 0.1 s replan refines
-//!   the last rather than restarting from the base policy.
+//! Predictive sampling, CEM, and MPPI over piecewise cubic Frenet motion.
+//! Knots specify position and velocity at each segment endpoint; the ego
+//! fixes the initial boundary. All optimizers share the same cubic rollout.
 
 mod cem;
 mod mppi;
@@ -61,66 +10,36 @@ pub(crate) use cem::Cem;
 pub(crate) use mppi::Mppi;
 pub(crate) use ps::PredictiveSampling;
 
+use crate::common::kinematics::commanded_accel_for_net;
+use crate::common::polynomial::CubicPolynomial;
 use crate::constraints::Constraints;
-use crate::planning::policy::centerline_curvature;
+use crate::planning::controls::{repeat_last_controls, stop_controls};
+use crate::planning::frenet::{Motion, frenet_boundary, longitudinal_targets};
+use crate::planning::planner_math::state_sample;
 use crate::planning::sampling::{self, Halton};
-use crate::planning::{Context, PLANNING_TICKS, Planner, take_warm};
+use crate::planning::{Context, PLANNING_HORIZON_S, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
-/// Control dimension: `[acceleration, curvature]`. judo's `nu`.
-pub(crate) const NU: usize = 2;
-
-/// Planning horizon in ticks: 10 s at the simulator's 0.1 s tick rate, the
-/// same look-ahead the lattice, PI²-DDP, and RRT* use
-/// ([`crate::planning::PLANNING_HORIZON_S`]). The knots span this whole horizon; the
-/// returned control trajectory is sampled from it.
-const HORIZON: usize = PLANNING_TICKS;
-
-/// Physical std the dimensionless judo `sigma` multiplies, per action
-/// dimension: `[acceleration, curvature]` — but of the knot *deviation* from the
-/// base policy (see [`SamplingPlanner::base_policy`]), not an absolute
-/// control. judo normalizes its controls to roughly `[-1, 1]`, so its
-/// `sigma` values (0.05–0.1) are unitless; here a `sigma` of 1 means an
-/// accel-deviation std of 0.5 m/s² and a curvature-deviation std of 0.08.
-/// The base policy already holds speed and centers the lane, so the
-/// acceleration deviation is explored only narrowly — the interesting
-/// decisions (lane tracking, obstacle swerves) live in curvature, which
-/// carries the bulk of the exploration, sized (like PI²-DDP's
-/// lane-width-derived `sigma_kappa`) to span roughly the lane width over the
-/// look-ahead. A wider acceleration std mainly gave MPPI's and CEM's
-/// reward-weighted averages room to drift the speed off target for no gain.
-pub(crate) const SIGMA_SCALE: [f64; NU] = [4.0, 0.08];
-
-/// One control knot: `[acceleration, curvature]`.
+pub(crate) const NU: usize = 4;
+/// Noise scales in metres, m/s, metres, m/s, respectively.
+pub(crate) const SIGMA_SCALE: Knot = [4.0, 2.0, 2.0, 0.5];
+/// Cubic endpoint: [station relative to ego, station speed, lateral offset, lateral speed].
 pub(crate) type Knot = [f64; NU];
 
-/// Base configuration shared by every optimizer — judo's `OptimizerConfig`.
-/// Each optimizer wraps this with its own sampling/aggregation parameters
-/// (sigma, temperature, elite count).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OptimizerConfig {
-    /// Number of sampled rollouts per iteration (judo's `num_rollouts`).
-    /// The first is always the un-noised nominal.
     pub(crate) num_rollouts: usize,
-    /// Number of control knots per trajectory (judo's `num_nodes`).
+    /// Number of cubic segments, each ending at a sampled knot.
     pub(crate) num_nodes: usize,
-    /// Whether to ramp the sampling std up along the horizon (judo's
-    /// `use_noise_ramp`): near knots are perturbed less than far ones.
     pub(crate) use_noise_ramp: bool,
-    /// Ramp magnitude when `use_noise_ramp` is set (judo's `noise_ramp`).
     pub(crate) noise_ramp: f64,
-    /// How many sample→rollout→update iterations to run per `plan()` call.
-    /// judo runs one optimizer step per control cycle and relies on the
-    /// controller's replan rate; nanoplan replans every tick but affords a
-    /// few refinement iterations, mirroring PI²-DDP's `GENERATIONS`. Not a
-    /// judo field — a nanoplan adaptation of judo's controller loop.
     pub(crate) iterations: usize,
 }
 
 impl Default for OptimizerConfig {
     fn default() -> Self {
-        OptimizerConfig {
+        Self {
             num_rollouts: 32,
             num_nodes: 4,
             use_noise_ramp: false,
@@ -130,44 +49,22 @@ impl Default for OptimizerConfig {
     }
 }
 
-/// A judo optimizer: the two-method sampling/aggregation strategy, with
-/// everything else (rollout, cost, warm start) supplied by
-/// [`SamplingPlanner`]. Mirrors judo's abstract `Optimizer` base — the
-/// three concrete optimizers are `impl`s of this and nothing more.
+/// Judo-style sampling and reward aggregation, independent of the motion model.
 pub(crate) trait Optimizer: Default + Send {
-    /// Display name for the planner registry.
     const NAME: &'static str;
-
-    /// This optimizer's base configuration.
     fn config(&self) -> OptimizerConfig;
-
-    /// judo `sample_control_knots`: `num_rollouts` candidate knot-sets, the
-    /// first the un-noised `nominal` itself and the rest `nominal` plus
-    /// low-discrepancy Gaussian noise (scaled by the optimizer's own
-    /// sigma). `sample_base` is the [`sampling::qmc_normals`] index this
-    /// iteration draws from, kept distinct across iterations by the caller.
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>>;
-
-    /// judo `update_nominal_knots`: fold the sampled knot-sets and their
-    /// rewards (higher is better) into the next nominal. `&mut self` because
-    /// CEM adapts its per-node sigma here; PS and MPPI don't touch `self`.
+    /// Include the unperturbed nominal as the first candidate.
+    fn sample_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>>;
     fn update_nominal_knots(&mut self, sampled: &[Vec<Knot>], rewards: &[f64]) -> Vec<Knot>;
 }
 
-/// Shared body of judo's `sample_control_knots` (PS and MPPI use it
-/// verbatim; CEM supplies its own per-node adaptive sigma through the same
-/// `sigma` closure): prepend the un-noised nominal, then add
-/// `sigma(node) * SIGMA_SCALE * z` to a copy for each of the remaining
-/// `num_rollouts - 1` rollouts, `z` a low-discrepancy standard normal from
-/// the shared QMC sequence.
 pub(crate) fn noised_knots(
     nominal: &[Knot],
     num_rollouts: usize,
     sample_base: usize,
     sigma: impl Fn(usize) -> Knot,
 ) -> Vec<Vec<Knot>> {
-    let num_nodes = nominal.len();
-    let z = sampling::qmc_normals::<Halton>(sample_base, num_rollouts - 1, num_nodes * NU);
+    let z = sampling::qmc_normals::<Halton>(sample_base, num_rollouts - 1, nominal.len() * NU);
     let mut out = Vec::with_capacity(num_rollouts);
     out.push(nominal.to_vec());
     for zk in z {
@@ -183,9 +80,6 @@ pub(crate) fn noised_knots(
     out
 }
 
-/// The per-node noise ramp judo optionally applies: knots near the ego are
-/// perturbed less than distant ones. Returns a scalar multiplier for node
-/// `n` of `num_nodes`; `1.0` when the ramp is off.
 pub(crate) fn ramp(cfg: &OptimizerConfig, n: usize) -> f64 {
     if cfg.use_noise_ramp {
         cfg.noise_ramp * (n + 1) as f64 / cfg.num_nodes as f64
@@ -194,45 +88,120 @@ pub(crate) fn ramp(cfg: &OptimizerConfig, n: usize) -> f64 {
     }
 }
 
-/// Interpolated control at tick `t` from `knots` spread over `span` ticks:
-/// knot `i` sits at tick `i·(span-1)/(num_nodes-1)`, and the control
-/// between knots is a linear blend — judo's spline reconstruction at first
-/// order. Beyond the last knot it holds the last value.
-fn control_at(knots: &[Knot], t: usize, span: usize) -> Knot {
-    let num_nodes = knots.len();
-    if num_nodes == 1 {
-        return knots[0];
-    }
-    let pos = t as f64 / (span - 1).max(1) as f64 * (num_nodes - 1) as f64;
-    let i = pos.floor() as usize;
-    if i >= num_nodes - 1 {
-        return knots[num_nodes - 1];
-    }
-    let u = pos - i as f64;
-    [
-        crate::common::interp::lerp(knots[i][0], knots[i + 1][0], u),
-        crate::common::interp::lerp(knots[i][1], knots[i + 1][1], u),
-    ]
+/// Fit adjacent endpoints with shared position and velocity (C1 continuity).
+/// The initial boundary has absolute station; sampled knots have relative station.
+fn segments(initial: Knot, knots: &[Knot]) -> Vec<Motion> {
+    let duration = PLANNING_HORIZON_S / knots.len() as f64;
+    let mut start = initial;
+    knots
+        .iter()
+        .map(|&knot| {
+            let end = [initial[0] + knot[0], knot[1], knot[2], knot[3]];
+            let motion = Motion {
+                longitudinal: CubicPolynomial::from_boundary(start[0], start[1], end[0], end[1], duration),
+                lateral: CubicPolynomial::from_boundary(start[2], start[3], end[2], end[3], duration),
+            };
+            start = end;
+            motion
+        })
+        .collect()
 }
 
-/// A receding-horizon sampling planner parameterized by its judo optimizer:
-/// `SamplingPlanner<PredictiveSampling>`, `SamplingPlanner<Cem>`, and
-/// `SamplingPlanner<Mppi>` are the three planners the registry exposes. The
-/// generic holds all the machinery judo keeps outside the optimizer —
-/// rollout, cost, the road-informed nominal, warm start — so each optimizer
-/// stays a two-method strategy.
+fn motion_at(motions: &[Motion], path: &Path, t: f64) -> Option<(State, Control)> {
+    let duration = PLANNING_HORIZON_S / motions.len() as f64;
+    let index = ((t / duration).floor() as usize).min(motions.len() - 1);
+    motions[index].at(path, t - index as f64 * duration)
+}
+
+fn initial_boundary(path: &Path, ego: State, station: f64) -> Option<Knot> {
+    let (lon, lat) = frenet_boundary(path, ego, station)?;
+    Some([lon[0], lon[1], lat[0], lat[1]])
+}
+
+/// Seed the endpoints from one road-following cubic with a reachable acceleration.
+fn initial_knots(initial: Knot, ego: State, path: &Path, ctx: &Context, count: usize) -> Vec<Knot> {
+    let lateral = CubicPolynomial::from_boundary(initial[2], initial[3], 0.0, 0.0, PLANNING_HORIZON_S);
+    let targets = longitudinal_targets(
+        ego.speed,
+        ctx.road.dt,
+        ctx.compute_budget,
+        PLANNING_HORIZON_S,
+        (path, initial[0], &lateral),
+    );
+    let &(distance, speed) = targets
+        .iter()
+        .rev()
+        .find(|&&(distance, _)| initial[0] + distance <= path.length())
+        .unwrap_or(&targets[0]);
+    let longitudinal = CubicPolynomial::from_boundary(0.0, initial[1], distance, speed, PLANNING_HORIZON_S);
+    (1..=count)
+        .map(|n| {
+            let t = n as f64 * PLANNING_HORIZON_S / count as f64;
+            let [s, sv, _] = longitudinal.at(t);
+            let [d, dv, _] = lateral.at(t);
+            [s, sv, d, dv]
+        })
+        .collect()
+}
+
+struct Rollout {
+    states: Vec<State>,
+    controls: Vec<Control>,
+    reward: f64,
+}
+
+/// Integrate cubic-derived commands through the same plant used for execution.
+/// Physical violations retain the shared soft costs; invalid Frenet charts are rejected.
+fn rollout(knots: &[Knot], initial: Knot, ego: State, path: &Path, ctx: &Context) -> Option<Rollout> {
+    let motions = segments(initial, knots);
+    let duration = PLANNING_HORIZON_S / knots.len() as f64;
+    for motion in &motions {
+        motion.at(path, 0.0)?;
+        motion.at(path, duration)?;
+    }
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, initial[0]);
+    let ticks = (PLANNING_HORIZON_S / ctx.road.dt).ceil() as usize;
+    let mut result = Rollout {
+        states: vec![ego],
+        controls: Vec::with_capacity(ticks),
+        reward: 0.0,
+    };
+    let mut state = ego;
+    let mut station = initial[0];
+    for tick in 0..ticks {
+        ctx.work(1);
+        let t = ((tick as f64 + 0.5) * ctx.road.dt).min(PLANNING_HORIZON_S);
+        let (_, mut control) = motion_at(&motions, path, t)?;
+        control.acceleration = commanded_accel_for_net(control.acceleration, state.speed);
+        let speed = state.speed;
+        state = world_step(state, control, ctx.road.dt);
+        let (s, sample) = state_sample(
+            path,
+            &state,
+            (tick + 1) as f64 * ctx.road.dt,
+            Some(station + speed * ctx.road.dt),
+        );
+        station = s;
+        result.reward -= ctx.time("cost", || {
+            constraints.soft_point_cost(&sample.with_control(control, speed))
+        });
+        result.states.push(state);
+        result.controls.push(control);
+    }
+    result.reward.is_finite().then_some(result)
+}
+
 pub(crate) struct SamplingPlanner<O: Optimizer> {
     opt: O,
-    /// Last tick's winning nominal knots, carried forward as this tick's
-    /// starting nominal when the ego followed the plan (warm start).
-    nominal: Option<Vec<Knot>>,
-    /// Predicted next ego state, to check the warm start is still valid.
+    /// Cubic endpoints shifted by one tick, stored in world coordinates so a
+    /// moving road window cannot change their meaning on the next plan call.
+    nominal: Option<Vec<State>>,
     expected_next: State,
 }
 
 impl<O: Optimizer> Default for SamplingPlanner<O> {
     fn default() -> Self {
-        SamplingPlanner {
+        Self {
             opt: O::default(),
             nominal: None,
             expected_next: State::default(),
@@ -242,153 +211,87 @@ impl<O: Optimizer> Default for SamplingPlanner<O> {
 
 impl<O: Optimizer> SamplingPlanner<O> {
     pub(crate) const NAME: &'static str = O::NAME;
-
-    /// The road-model base policy the knots deviate from — the "hybrid road
-    /// model" half of the sampling, and what makes the open-loop knot
-    /// rollout stable. A **pure-pursuit** steer toward the centerline plus a
-    /// proportional speed hold, both computed from the *current* rollout
-    /// state, i.e. genuine feedback (the same tracker PI²-DDP initializes
-    /// from and Bezier+TOPP-RA follows).
-    ///
-    /// The knots don't replace this policy, they *add* to it
-    /// ([`SamplingPlanner::command`]). This is the crucial adaptation of judo's
-    /// otherwise open-loop knot sampling to a 10 s driving horizon: a car's
-    /// lateral dynamics integrate curvature twice, so raw open-loop knots
-    /// diverge metres off-lane over the horizon (the feedback-free rollout
-    /// has nothing to correct a small early heading error), and every
-    /// candidate then scores as garbage. Sampling *deviations from a
-    /// stabilizing feedback base* keeps every rollout on the road — exactly
-    /// why PI²-DDP rolls out with its feedback gains `K` rather than raw
-    /// nominal controls — so the QMC exploration prices real maneuvers
-    /// (an obstacle swerve) instead of open-loop drift.
-    fn base_policy(path: &Path, x: &State) -> Knot {
-        // Nominal throttle is a search seed; the progress cost selects deviations.
-        [1.5, centerline_curvature(path, x)]
-    }
-
-    /// The action commanded at rollout state `x` for knot-deviation `dev`:
-    /// the base policy plus the deviation. It is not clamped here — `step`
-    /// applies the shared action/state limits exactly as the plant will.
-    fn command(path: &Path, x: &State, dev: Knot) -> Control {
-        let base = Self::base_policy(path, x);
-        Control {
-            acceleration: base[0] + dev[0],
-            curvature: base[1] + dev[1],
-        }
-    }
-
-    /// Roll a knot-set out from the ego over the full horizon, applying each
-    /// interpolated knot as a *deviation* from the base policy (`command`),
-    /// and return the visited states (for diagnostics) and the reward
-    /// (negated total cost; judo maximizes reward). The terminal state is
-    /// weighted like PI²-DDP's, pricing position and speed once more at the
-    /// end.
-    fn rollout(&self, knots: &[Knot], path: &Path, ego: State, ctx: &Context) -> (Vec<State>, f64) {
-        let mut x = ego;
-        let mut xs = vec![ego];
-        let mut total = 0.0;
-        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.project_ego(ego).s);
-
-        for t in 0..HORIZON {
-            let dev = control_at(knots, t, HORIZON);
-            let u = Self::command(path, &x, dev);
-            let speed = x.speed;
-            x = world_step(x, u, ctx.road.dt);
-            let (_, sample) = crate::planning::planner_math::state_sample(path, &x, (t + 1) as f64 * ctx.road.dt, None);
-            total += ctx.time("cost", || constraints.soft_point_cost(&sample.with_control(u, speed)));
-            xs.push(x);
-        }
-        (xs, -total)
-    }
 }
 
 impl<O: Optimizer> Planner for SamplingPlanner<O> {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
+        if ctx.horizon == 0 {
+            return Vec::new();
+        }
         let cfg = self.opt.config();
-        let num_nodes = cfg.num_nodes;
-        // Offline calibration: the default 4 × 32 rollouts is about 100 ms.
         let total_rollouts = ctx.compute_budget.scale(cfg.iterations * cfg.num_rollouts, 6);
-        // Keep enough candidates for CEM's six-member elite set; at small
-        // budgets fewer refinement rounds degrade more gracefully.
         let iterations = cfg.iterations.min(total_rollouts / 6).max(1);
         let num_rollouts = (total_rollouts / iterations).max(6);
         let path = ctx.time("route", || ctx.path());
-
-        // Warm start: reuse last tick's nominal knot-deviations when the ego
-        // followed the plan (they still describe a good maneuver to refine),
-        // otherwise start from zero deviation — the bare base policy, which
-        // already tracks the lane and holds speed. Custom seam like
-        // PI²-DDP's, mirroring its warm-start-or-reinit split.
+        let Some(initial) = initial_boundary(path, ego, ctx.project_ego(ego).s) else {
+            self.nominal = None;
+            return stop_controls(ego, ctx, ctx.horizon);
+        };
         let mut nominal = ctx.time("warm_start", || {
-            match take_warm(&mut self.nominal, self.expected_next, ego) {
-                Some(n) if n.len() == num_nodes => n,
-                _ => vec![[0.0; NU]; num_nodes],
-            }
+            take_warm(&mut self.nominal, self.expected_next, ego)
+                .filter(|states| states.len() == cfg.num_nodes)
+                .and_then(|states| {
+                    states
+                        .into_iter()
+                        .map(|state| {
+                            let mut knot = initial_boundary(path, state, path.project(state.position()).s)?;
+                            knot[0] -= initial[0];
+                            Some(knot)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .unwrap_or_else(|| initial_knots(initial, ego, path, ctx, cfg.num_nodes))
         });
 
-        // judo's optimize loop: sample knot-sets, roll each out and score
-        // it, fold the scores into a new nominal — repeated `iterations`
-        // times, each iteration drawing a fresh, non-overlapping slice of
-        // the shared QMC sequence.
-        let mut last_rollouts: Vec<Vec<State>> = Vec::new();
         ctx.time("optimize", || {
             for it in 0..iterations {
-                let sample_base = 1 + it * num_rollouts;
-                let sampled = self.opt.sample_control_knots(&nominal, sample_base, num_rollouts);
-                let mut rewards = Vec::with_capacity(sampled.len());
-                let mut states = Vec::with_capacity(sampled.len());
-                for knots in &sampled {
-                    let (xs, reward) = self.rollout(knots, path, ego, ctx);
-                    rewards.push(reward);
-                    states.push(xs);
+                let sampled = self.opt.sample_knots(&nominal, 1 + it * num_rollouts, num_rollouts);
+                let mut valid = Vec::new();
+                let mut rewards = Vec::new();
+                for knots in sampled {
+                    let Some(candidate) = rollout(&knots, initial, ego, path, ctx) else {
+                        continue;
+                    };
+                    if it == iterations - 1
+                        && let Some(diag) = ctx.diagnostics
+                    {
+                        let points: Vec<_> = candidate.states.iter().map(|state| state.position()).collect();
+                        for &point in &points {
+                            diag.record_point(point);
+                        }
+                        diag.record_trajectory(points);
+                    }
+                    valid.push(knots);
+                    rewards.push(candidate.reward);
                 }
-                let updated = self.opt.update_nominal_knots(&sampled, &rewards);
-                let best = (0..rewards.len())
-                    .max_by(|&a, &b| rewards[a].total_cmp(&rewards[b]))
-                    .unwrap();
-                // Averaging safe controls need not produce a better or safe rollout.
-                nominal = if updated == sampled[best] || self.rollout(&updated, path, ego, ctx).1 >= rewards[best] {
+                // Never feed invalid motions/infinities into CEM or MPPI statistics.
+                let Some(best) = (0..rewards.len()).max_by(|&a, &b| rewards[a].total_cmp(&rewards[b])) else {
+                    break;
+                };
+                let updated = self.opt.update_nominal_knots(&valid, &rewards);
+                nominal = if updated == valid[best]
+                    || rollout(&updated, initial, ego, path, ctx).is_some_and(|r| r.reward >= rewards[best])
+                {
                     updated
                 } else {
-                    sampled[best].clone()
+                    valid[best].clone()
                 };
-                if it == iterations - 1 {
-                    last_rollouts = states;
-                }
             }
         });
 
-        // Diagnostics: the final iteration's sampled rollouts, both as a
-        // point cloud and as trajectories — mirroring PI²-DDP.
-        if let Some(diag) = ctx.diagnostics {
-            for xs in &last_rollouts {
-                let pts: Vec<crate::simulation::Position> = xs.iter().map(Into::into).collect();
-                for &p in &pts {
-                    diag.record_point(p);
-                }
-                diag.record_trajectory(pts);
-            }
-        }
-
-        // Extract: roll the winning deviations forward through the base
-        // policy and the shared forward model from the true ego state (both
-        // the base policy and the actuation limiting are feedback, so each
-        // control depends on the state and applied control the previous one
-        // reached) and emit the actually-applied control sequence.
-        let controls = ctx.time("extract", || {
-            let mut x = ego;
-            (0..ctx.horizon)
-                .map(|t| {
-                    let u = Self::command(path, &x, control_at(&nominal, t, HORIZON));
-                    x = world_step(x, u, ctx.road.dt);
-                    u
-                })
-                .collect::<Vec<_>>()
-        });
-
-        self.expected_next = world_step(ego, controls[0], ctx.road.dt);
-        self.nominal = Some(nominal);
-        controls
+        let Some(winner) = ctx.time("extract", || rollout(&nominal, initial, ego, path, ctx)) else {
+            self.nominal = None;
+            return stop_controls(ego, ctx, ctx.horizon);
+        };
+        let motions = segments(initial, &nominal);
+        self.nominal = (1..=cfg.num_nodes)
+            .map(|n| {
+                let t = n as f64 * PLANNING_HORIZON_S / cfg.num_nodes as f64 + ctx.road.dt;
+                motion_at(&motions, path, t).map(|(state, _)| state)
+            })
+            .collect();
+        self.expected_next = winner.states[1];
+        repeat_last_controls(&winner.controls, ctx.horizon)
     }
 }
 
@@ -402,30 +305,132 @@ mod tests {
     use super::*;
 
     #[test]
-    fn control_at_interpolates_between_knots() {
-        let knots = [[0.0, 0.0], [2.0, 0.2]];
-        // start and end land on the knots
-        assert_eq!(control_at(&knots, 0, 11), [0.0, 0.0]);
-        assert_eq!(control_at(&knots, 10, 11), [2.0, 0.2]);
-        // midpoint is the average
-        let mid = control_at(&knots, 5, 11);
-        assert!((mid[0] - 1.0).abs() < 1e-9 && (mid[1] - 0.1).abs() < 1e-9);
+    fn cubic_segments_match_endpoints_and_share_velocity() {
+        let initial = [20.0, 8.0, 2.0, 0.3];
+        let knots = [[40.0, 9.0, -1.0, -0.2], [90.0, 11.0, 1.0, 0.5]];
+        let motions = segments(initial, &knots);
+        let duration = PLANNING_HORIZON_S / knots.len() as f64;
+        let mut start = initial;
+        for (motion, end) in motions.iter().zip(knots) {
+            let lon = motion.longitudinal.at(0.0);
+            let lat = motion.lateral.at(0.0);
+            assert_eq!([lon[0], lon[1], lat[0], lat[1]], start);
+            let lon = motion.longitudinal.at(duration);
+            let lat = motion.lateral.at(duration);
+            start = [initial[0] + end[0], end[1], end[2], end[3]];
+            for (actual, expected) in [lon[0], lon[1], lat[0], lat[1]].into_iter().zip(start) {
+                assert!((actual - expected).abs() < 1e-10);
+            }
+        }
     }
 
     #[test]
-    fn base_policy_steers_toward_the_lane() {
+    fn cubic_controls_follow_curved_frenet_reference() {
+        let radius = 80.0;
+        let points: Vec<_> = (0..2000)
+            .map(|i| {
+                let angle = i as f64 * 0.001;
+                crate::simulation::Position::new(radius * angle.sin(), radius * (1.0 - angle.cos()))
+            })
+            .collect();
+        let path = Path::new(&points);
+        let knots = [[40.0, 8.0, 2.0, 0.0], [80.0, 8.0, 2.0, 0.0]];
+        let motions = segments([10.0, 8.0, 2.0, 0.0], &knots);
+        for t in [0.0, 1.25, 5.0, 7.5, 10.0] {
+            let (state, control) = motion_at(&motions, &path, t).unwrap();
+            assert!((state.position().x.hypot(state.position().y - radius) - 78.0).abs() < 1e-4);
+            assert!((state.speed - 7.8).abs() < 1e-8);
+            assert!((control.curvature - 1.0 / 78.0).abs() < 1e-8);
+        }
+    }
+
+    #[test]
+    fn invalid_frenet_segments_are_rejected() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let path = Path::new(road.centerline());
-        // from y = +2 (left of the lane), the base policy steers right
-        // (negative curvature). The nominal throttle keeps weighted-average
-        // optimizers stable; progress, not a speed-tracking cost, pays for it.
-        let x = State::new(
-            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
-            8.0,
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let initial = [20.0, 8.0, 0.0, 0.0];
+        for knot in [
+            [40.0, -8.0, 0.0, 0.0],
+            [500.0, 8.0, 0.0, 0.0],
+            [f64::NAN, 8.0, 0.0, 0.0],
+        ] {
+            assert!(rollout(&[knot], initial, ego, ctx.path(), &ctx).is_none());
+        }
+    }
+
+    #[test]
+    fn output_length_does_not_change_optimization_horizon() {
+        let mut road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        for dt in [0.1, 0.2, 0.3] {
+            road.dt = dt;
+            let mut ctx = crate::planning::test_ctx(&road, &[]);
+            let short = SamplingPlanner::<PredictiveSampling>::default().plan(State::default(), &ctx);
+            assert!(short[0].acceleration > 0.0);
+            ctx.horizon = (PLANNING_HORIZON_S / dt).ceil() as usize;
+            let long = SamplingPlanner::<PredictiveSampling>::default().plan(State::default(), &ctx);
+            assert_eq!(short, long[..short.len()]);
+            assert_eq!(long.len(), ctx.horizon);
+            ctx.horizon = 0;
+            assert!(
+                SamplingPlanner::<PredictiveSampling>::default()
+                    .plan(State::default(), &ctx)
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn warm_start_survives_a_new_road_origin_and_rejects_divergence() {
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let mut planner = SamplingPlanner::<PredictiveSampling>::default();
+        let controls = planner.plan(ego, &ctx);
+        let next = world_step(ego, controls[0], road.dt);
+        assert_eq!(next, planner.expected_next);
+        let shifted_targets = planner.nominal.clone().unwrap();
+        let mut other = SamplingPlanner::<PredictiveSampling> {
+            nominal: Some(shifted_targets),
+            expected_next: next,
+            ..Default::default()
+        };
+        let shifted_road = crate::planning::test_road(&[[-10.0, 0.0], [2000.0, 0.0]]);
+        let a = planner.plan(next, &ctx);
+        let b = other.plan(next, &crate::planning::test_ctx(&shifted_road, &[]));
+        for (a, b) in a.iter().zip(b) {
+            assert!((a.acceleration - b.acceleration).abs() < 1e-8);
+            assert!((a.curvature - b.curvature).abs() < 1e-8);
+        }
+
+        // Replanning from an unrelated position must discard the old endpoints.
+        let teleported = State::from((crate::simulation::Position::new(100.0, 0.0), 0.0, 8.0));
+        assert_eq!(
+            planner.plan(teleported, &ctx),
+            SamplingPlanner::<PredictiveSampling>::default().plan(teleported, &ctx)
         );
-        let base = SamplingPlanner::<PredictiveSampling>::base_policy(&path, &x);
-        assert!(base[1] < 0.0, "curvature {}", base[1]);
-        assert!(base[0] > 0.0, "accel {}", base[0]);
+    }
+
+    #[test]
+    fn seed_fits_a_finite_road_window_at_cruising_speed() {
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [250.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let ego = State {
+            speed: 20.0,
+            ..Default::default()
+        };
+        let initial = initial_boundary(ctx.path(), ego, 20.0).unwrap();
+        let knots = initial_knots(initial, ego, ctx.path(), &ctx, 4);
+        assert!(rollout(&knots, initial, ego, ctx.path(), &ctx).is_some());
+        let controls = SamplingPlanner::<PredictiveSampling>::default().plan(ego, &ctx);
+        assert_eq!(controls.len(), ctx.horizon);
+        assert!(controls[0].acceleration > crate::vehicle::MIN_LON_ACCEL);
     }
 
     // --- closed-loop tests, one battery per optimizer -----------------
@@ -480,7 +485,7 @@ mod tests {
     }
 
     /// The knot noise is QMC (a pure function of the sample index), the
-    /// nominal is a deterministic road tracker, and there is no `Rng`: two
+    /// nominal is a deterministic Frenet cubic, and there is no `Rng`: two
     /// fresh planners replanning from the identical state must produce the
     /// identical plan, like RRT* and unlike PI²-DDP.
     fn is_a_pure_function_of_state<O: Optimizer>() {
@@ -552,12 +557,12 @@ mod tests {
         ctx.diagnostics = Some(&diag);
         SamplingPlanner::<Mppi>::default().plan(ego, &ctx);
         let data = diag.take();
-        // the final iteration's num_rollouts sampled trajectories, each a
-        // full HORIZON + 1 state polyline, and every state flattened into
-        // the point cloud
+        // Valid final-iteration samples span the full optimization horizon.
         let cfg = OptimizerConfig::default();
-        assert_eq!(data.trajectories.len(), cfg.num_rollouts);
-        assert!(data.trajectories.iter().all(|t| t.len() == HORIZON + 1));
-        assert_eq!(data.points.len(), cfg.num_rollouts * (HORIZON + 1));
+        assert!(!data.trajectories.is_empty());
+        assert!(data.trajectories.len() <= cfg.num_rollouts);
+        let horizon = (PLANNING_HORIZON_S / road.dt).ceil() as usize;
+        assert!(data.trajectories.iter().all(|t| t.len() == horizon + 1));
+        assert_eq!(data.points.len(), data.trajectories.len() * (horizon + 1));
     }
 }

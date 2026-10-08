@@ -8,7 +8,7 @@ use super::{Knot, Optimizer, OptimizerConfig, noised_knots, ramp};
 /// `sampled_knots[rewards.argmax()]`).
 pub(crate) struct PredictiveSampling {
     cfg: OptimizerConfig,
-    /// Dimensionless sampling std (judo's `sigma`), scaled per control
+    /// Dimensionless sampling std (judo's `sigma`), scaled per endpoint
     /// dimension by [`super::SIGMA_SCALE`] at sampling time.
     sigma: f64,
 }
@@ -29,12 +29,12 @@ impl Optimizer for PredictiveSampling {
         self.cfg
     }
 
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
+    fn sample_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
         let sigma = self.sigma;
         let cfg = self.cfg;
         noised_knots(nominal, num_rollouts, sample_base, |n| {
             let r = ramp(&cfg, n) * sigma;
-            [r, r]
+            [r; super::NU]
         })
     }
 

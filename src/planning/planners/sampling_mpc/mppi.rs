@@ -36,12 +36,12 @@ impl Optimizer for Mppi {
         self.cfg
     }
 
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
+    fn sample_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
         let sigma = self.sigma;
         let cfg = self.cfg;
         noised_knots(nominal, num_rollouts, sample_base, |n| {
             let r = ramp(&cfg, n) * sigma;
-            [r, r]
+            [r; super::NU]
         })
     }
 
@@ -57,9 +57,8 @@ impl Optimizer for Mppi {
         // sampled rollouts cost orders of magnitude more than the rest, and
         // an outlier-dominated `max − min` flattens the weights toward a
         // uniform average — which, for a reward-weighted *mean*, just
-        // regresses the nominal back to itself and stalls the optimization
-        // (the acceleration deviation then drifts until it cancels the base
-        // policy's speed hold). The median spread reflects the good cluster
+        // regresses the nominal back to itself and stalls the optimization.
+        // The median spread reflects the good cluster
         // and is immune to the outliers, so the weighting stays sharp.
         let costs: Vec<f64> = rewards.iter().map(|r| -r).collect();
         let lo = costs.iter().copied().fold(f64::INFINITY, f64::min);

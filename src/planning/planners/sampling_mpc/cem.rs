@@ -10,7 +10,7 @@ use super::{Knot, NU, Optimizer, OptimizerConfig, SIGMA_SCALE, noised_knots, ram
 /// contracts around whatever region keeps scoring well.
 pub(crate) struct Cem {
     cfg: OptimizerConfig,
-    /// Per-node dimensionless sampling std, `[acceleration, curvature]` each,
+    /// Per-node dimensionless sampling std, `[station, station speed, lateral offset, lateral speed]` each,
     /// scaled by [`SIGMA_SCALE`] at sampling time. Adapted in
     /// `update_nominal_knots`; there is one entry per knot.
     sigma: Vec<[f64; NU]>,
@@ -45,7 +45,7 @@ impl Optimizer for Cem {
         self.cfg
     }
 
-    fn sample_control_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
+    fn sample_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
         // guard against a warm-started nominal whose node count no longer
         // matches this optimizer's adapted-sigma vector
         if self.sigma.len() != nominal.len() {
@@ -56,7 +56,7 @@ impl Optimizer for Cem {
         let sigma = self.sigma.clone();
         noised_knots(nominal, num_rollouts, sample_base, |n| {
             let r = ramp(&cfg, n);
-            [sigma[n][0] * r, sigma[n][1] * r]
+            sigma[n].map(|s| s * r)
         })
     }
 
@@ -76,7 +76,7 @@ impl Optimizer for Cem {
                 let var: f64 =
                     elites.iter().map(|&e| (sampled[e][n][c] - mean).powi(2)).sum::<f64>() / elites.len() as f64;
                 nominal[n][c] = mean;
-                // the elite std is in physical control units; store it back
+                // the elite std is in physical endpoint units; store it back
                 // in the dimensionless units SIGMA_SCALE re-inflates at
                 // sampling time, then clip to the configured bounds
                 self.sigma[n][c] = (var.sqrt() / SIGMA_SCALE[c]).clamp(self.sigma_min, self.sigma_max);
