@@ -446,7 +446,7 @@ fn steer_actions(path: &Path, start: &State, goal: &State, duration: f64, dt: f6
 /// consecutive replans refine one detour instead of rediscovering a
 /// different one each tick.
 #[derive(Default)]
-pub(crate) struct RrtPlanner {
+pub(crate) struct TreePlanner {
     prev: Option<Vec<Control>>,
     expected_next: State,
 }
@@ -456,7 +456,7 @@ pub(crate) struct RrtPlanner {
 /// the optimization pass.
 const SAMPLES: usize = 150;
 
-impl Planner for RrtPlanner {
+impl Planner for TreePlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || ctx.path());
         let goal = goal_state(path, ego, ctx);
@@ -612,7 +612,7 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
             6.0,
         );
-        let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[], 150);
+        let trace = crate::planning::test_run(&mut TreePlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
         assert!(end.position().y.abs() < 4.5, "offset {}", end.position().y);
         assert!(end.speed > 10.0, "speed {}", end.speed);
@@ -628,7 +628,7 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
             0.0,
         );
-        let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[obstacle], 150);
+        let trace = crate::planning::test_run(&mut TreePlanner::default(), ego, &[obstacle], 150);
         let min_gap = trace
             .iter()
             .map(|s| (s.position().x - 40.0).hypot(s.position().y))
@@ -654,8 +654,8 @@ mod tests {
         let actors = [obstacle];
         let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &actors);
-        let a = RrtPlanner::default().plan(ego, &ctx);
-        let b = RrtPlanner::default().plan(ego, &ctx);
+        let a = TreePlanner::default().plan(ego, &ctx);
+        let b = TreePlanner::default().plan(ego, &ctx);
         assert_eq!(a, b);
     }
 }

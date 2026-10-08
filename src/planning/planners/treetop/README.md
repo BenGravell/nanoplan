@@ -1,6 +1,6 @@
 # Treetop (RRT / iLQR / RRT+iLQR)
 
-`treetop/` — `RrtPlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
+`treetop/` — `TreePlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
 A port of [**treetop**](https://github.com/BenGravell/treetop), a tree-initialized trajectory-optimizing planner: an ego
 motion sampling tree provides a strong, collision-aware initial guess at a good path to the goal, and iLQR (iterative
@@ -30,7 +30,7 @@ candidate through `simulation::world_step`.
 
 ## RRT (treetop tree)
 
-`tree/mod.rs` — `RrtPlanner`
+`tree/mod.rs` — `TreePlanner`
 
 An RRT variant shaped by its downstream job — feeding a trajectory optimizer — rather than by asymptotic optimality
 (contrast [RRT\*](../rrt_star/README.md), which rewires toward the shortest path):

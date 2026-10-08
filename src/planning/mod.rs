@@ -26,7 +26,7 @@ pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use planners::{
     BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, TreetopPlanner,
+    Pi2DdpPlanner, PredictiveSampling, RrtStarPlanner, SamplingPlanner, TreePlanner, TreetopPlanner,
 };
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use warm_start::take_warm;

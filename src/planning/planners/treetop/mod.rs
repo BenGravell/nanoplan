@@ -9,7 +9,7 @@
 //! directory (the same one-port-many-planners shape as
 //! [`super::sampling_mpc`]):
 //!
-//! - [`tree::RrtPlanner`] (`../tree/mod.rs`) — the motion sampling tree alone
+//! - [`tree::TreePlanner`] (`../tree/mod.rs`) — the motion sampling tree alone
 //!   (treetop's `tree/`), taking the tree's best path candidate as the
 //!   plan with no optimization pass.
 //! - [`IlqrPlanner`] (`ilqr.rs`) — the iLQR solver alone (treetop's

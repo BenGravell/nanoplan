@@ -17,5 +17,5 @@ pub(crate) use leeroy_jenkins::LeeroyJenkinsPlanner;
 pub(crate) use pi2ddp::Pi2DdpPlanner;
 pub(crate) use rrt_star::RrtStarPlanner;
 pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
-pub(crate) use tree::RrtPlanner;
+pub(crate) use tree::TreePlanner;
 pub(crate) use treetop::{IlqrPlanner, TreetopPlanner};

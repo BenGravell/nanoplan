@@ -1,6 +1,6 @@
 use super::{
     BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, Planner, PredictiveSampling, RrtPlanner, RrtStarPlanner, SamplingPlanner, TreetopPlanner,
+    Pi2DdpPlanner, Planner, PredictiveSampling, RrtStarPlanner, SamplingPlanner, TreePlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -88,7 +88,7 @@ const SPECS: [PlannerSpec; 12] = [
     PlannerSpec {
         kind: PlannerKind::Rrt,
         name: "RRT (treetop tree)",
-        build: || Box::new(RrtPlanner::default()),
+        build: || Box::new(TreePlanner::default()),
         has_diagnostics: true,
     },
     PlannerSpec {
