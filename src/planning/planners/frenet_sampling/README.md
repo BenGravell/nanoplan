@@ -44,6 +44,8 @@ project's existing vehicle limits and progress objective:
 1. Check cached Cartesian rollouts against road boundaries, swept footprint barriers, and predicted actors in cost order.
    Return the first feasible candidate; do not collision-check the remaining candidates.
 
+Vehicle rollout lives in `simulation::integration`, with the shared `common::types::Trajectory` result.
+Candidate validation and collision checks live in `planning::feasibility`.
 Collision checks cover the full planning horizon, independently of the requested control prefix.
 Road checks retain footprint clearance at rolling-window seams, and actor checks include supplied poses at the first
 step.

@@ -6,9 +6,13 @@ Planners maximize forward progress subject to collision, road, and vehicle-dynam
 `Constraints::point_cost(sample)` returns `-metrics::progress_score(...)` for feasible samples and `f64::INFINITY` for
 collision or road-bound violations.
 There are no comfort weights or safety scores.
-The viewer displays the final normalized progress score; station carpet coloring uses cached path stations.
-`TrajectoryKinematics` caches full Frenet projections (station `s` and lateral offset `d`) once at construction; metric
-evaluation uses only the first and last stations and the final cached time.
+The viewer displays the final normalized progress score.
+`evaluate` takes a state slice, timestep, reference path, and optional endpoint station hints; it projects only the
+first and last states.
+Hints preserve the intended branch on overlapping road segments.
+Scoring does not construct `TrajectoryKinematics` or any per-state projection arrays.
+`TrajectoryKinematics` stores states, controls, time, and lateral acceleration without road projections.
+The viewer computes the full station sequence only when Station carpet coloring is selected.
 
 - **Progress** is the actual Frenet station delta above zero-acceleration coasting: `(delta_s - v_ego * t) / (0.5 *
   MAX_LON_ACCEL * t²)`.

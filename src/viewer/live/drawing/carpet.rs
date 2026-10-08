@@ -10,6 +10,7 @@ use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp_state;
 use crate::common::kinematics::TrajectoryKinematics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, Position, State};
+use crate::track::Road;
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 #[cfg(test)]
 use crate::viewer::colors::GUPPY_ORANGE;
@@ -111,11 +112,12 @@ pub(crate) fn draw(
     ego: State,
     trajectory: &TrajectoryKinematics,
     visualization: CarpetVisualization,
+    road: &Road,
 ) -> u64 {
     let plan = trajectory.states.get(1..).expect("carpet trajectory is non-empty");
     let footprints = sample_footprints(ego, plan, trajectory.dt);
     let (patches, intersection_clocks) = carpet_patches_clocked(&footprints);
-    let values = visualization_values(trajectory, visualization);
+    let values = visualization_values(trajectory, visualization, road);
     let colormap = match visualization {
         CarpetVisualization::Time | CarpetVisualization::Station => &*GUPPY_BLUE,
         CarpetVisualization::Speed => &*GUPPY_BLUE,
@@ -164,7 +166,11 @@ pub(crate) fn clear(meshes: &mut Assets<Mesh>, carpet: &mut EgoCarpetMesh) {
     }
 }
 
-fn visualization_values(trajectory: &TrajectoryKinematics, visualization: CarpetVisualization) -> Vec<f64> {
+fn visualization_values(
+    trajectory: &TrajectoryKinematics,
+    visualization: CarpetVisualization,
+    road: &Road,
+) -> Vec<f64> {
     let raw = match visualization {
         CarpetVisualization::Speed => trajectory.states.iter().map(|state| state.speed).collect(),
         CarpetVisualization::Time => trajectory.time.clone(),
@@ -173,7 +179,14 @@ fn visualization_values(trajectory: &TrajectoryKinematics, visualization: Carpet
         }
         CarpetVisualization::LateralAcceleration => trajectory.lateral_acceleration.clone(),
         CarpetVisualization::Curvature => trajectory.controls.iter().map(|control| control.curvature).collect(),
-        CarpetVisualization::Station => trajectory.projections.iter().map(|projection| projection.s).collect(),
+        CarpetVisualization::Station => {
+            let path = road.path();
+            trajectory
+                .states
+                .iter()
+                .map(|state| path.project(state.position()).s)
+                .collect()
+        }
     };
     let range = match visualization {
         CarpetVisualization::Speed => (0.0, *MAX_TERMINAL_SPEED_MPS),
@@ -182,13 +195,10 @@ fn visualization_values(trajectory: &TrajectoryKinematics, visualization: Carpet
         CarpetVisualization::LateralAcceleration => (-MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
         CarpetVisualization::Curvature => (-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE),
         CarpetVisualization::Station => {
-            let initial = trajectory.projections.first().map_or(0.0, |projection| projection.s);
-            trajectory
-                .projections
-                .iter()
-                .fold((initial, initial), |(min, max), projection| {
-                    (min.min(projection.s), max.max(projection.s))
-                })
+            let initial = raw.first().copied().unwrap_or(0.0);
+            raw.iter().fold((initial, initial), |(min, max), &station| {
+                (min.min(station), max.max(station))
+            })
         }
     };
     raw.into_iter()
@@ -419,19 +429,17 @@ mod tests {
     use super::*;
     use crate::planning::{Latency, LatencyStats};
     use crate::simulation::Control;
-    use crate::track::Path;
     use crate::viewer::DT;
     use bevy::mesh::VertexAttributeValues;
+
+    fn road() -> Road {
+        Road::new(vec![Position::new(0.0, 0.0), Position::new(100.0, 0.0)], 5.5, DT)
+    }
 
     fn trajectory(ego: State, plan: &[State], dt: f64) -> TrajectoryKinematics {
         let states: Vec<_> = std::iter::once(ego).chain(plan.iter().copied()).collect();
         let len = states.len();
-        TrajectoryKinematics::new(
-            states,
-            vec![Control::default(); len],
-            dt,
-            &Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]),
-        )
+        TrajectoryKinematics::new(states, vec![Control::default(); len], dt)
     }
 
     #[test]
@@ -463,6 +471,7 @@ mod tests {
             rendered_ego,
             &trajectory(planned_ego, &plan, 1.0),
             CarpetVisualization::Time,
+            &road(),
         );
 
         let mesh = meshes.get(&carpet.handle).unwrap();
@@ -734,6 +743,7 @@ mod tests {
                 ego,
                 &trajectory(ego, &plan, DT),
                 CarpetVisualization::Time,
+                &road(),
             );
             assert_eq!(clocks, expected, "{name}");
         }
@@ -802,6 +812,7 @@ mod tests {
                 ego,
                 &trajectory(ego, plan, DT),
                 CarpetVisualization::Time,
+                &road(),
             );
         }
 
@@ -815,6 +826,7 @@ mod tests {
                     ego,
                     &trajectory(ego, plan, DT),
                     CarpetVisualization::Time,
+                    &road(),
                 );
                 recorder.work(clocks);
             });
@@ -847,7 +859,7 @@ mod tests {
                 let patch_count = patches.len();
                 let values = recorder.time("carpet.values", || {
                     let trajectory = trajectory(ego, plan, DT);
-                    let values = visualization_values(&trajectory, CarpetVisualization::Time);
+                    let values = visualization_values(&trajectory, CarpetVisualization::Time, &road());
                     recorder.work(plan.len() as u64);
                     values
                 });
@@ -921,7 +933,7 @@ mod tests {
             let states = stations.map(|s| State::from(Position::new(s, 0.0)));
             let trajectory = trajectory(states[0], &states[1..], DT);
             assert_eq!(
-                visualization_values(&trajectory, CarpetVisualization::Station),
+                visualization_values(&trajectory, CarpetVisualization::Station, &road()),
                 expected
             );
         }
@@ -944,7 +956,6 @@ mod tests {
                 },
             ],
             DT,
-            &Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]),
         );
         for visualization in [
             CarpetVisualization::Speed,
@@ -954,26 +965,37 @@ mod tests {
             CarpetVisualization::Curvature,
             CarpetVisualization::Station,
         ] {
-            let values = visualization_values(&trajectory, visualization);
+            let road = road();
+            let latency = Latency::default();
+            let values = latency.time("values", || visualization_values(&trajectory, visualization, &road));
+            let projection_work = latency.take()[0].clocks;
+            if matches!(visualization, CarpetVisualization::Station) {
+                assert!(projection_work > 0);
+            } else {
+                assert_eq!(projection_work, 0);
+            }
             assert_eq!(values.len(), plan.len());
             assert!(values.iter().all(|value| (0.0..=1.0).contains(value)));
         }
         let normalize = |value: f64, min: f64, max: f64| (value - min) / (max - min);
         assert_eq!(
-            visualization_values(&trajectory, CarpetVisualization::LongitudinalAcceleration),
+            visualization_values(&trajectory, CarpetVisualization::LongitudinalAcceleration, &road()),
             [
                 normalize(-1.0, MIN_LON_ACCEL, MAX_LON_ACCEL),
                 normalize(2.0, MIN_LON_ACCEL, MAX_LON_ACCEL),
             ]
         );
         assert_eq!(
-            visualization_values(&trajectory, CarpetVisualization::LateralAcceleration),
+            visualization_values(&trajectory, CarpetVisualization::LateralAcceleration, &road()),
             [
                 normalize(0.0, -MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
                 normalize(0.18, -MAX_ABS_LAT_ACCEL, MAX_ABS_LAT_ACCEL),
             ]
         );
-        assert_eq!(visualization_values(&trajectory, CarpetVisualization::Time), [0.0, 1.0]);
+        assert_eq!(
+            visualization_values(&trajectory, CarpetVisualization::Time, &road()),
+            [0.0, 1.0]
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use super::{Control, State};
 use crate::common::kinematics::{clamp_control, net_longitudinal_accel};
+use crate::common::types::Trajectory;
+use crate::constraints::{Constraint, Kinodynamic, Sample};
 
 /// Speed reached after `ticks` maximum-acceleration integration steps.
 #[cfg(test)]
@@ -35,6 +37,34 @@ pub(crate) fn world_step_unclamped(s: State, u: Control, dt: f64) -> State {
         s.speed + net_accel * dt,
     )
         .into()
+}
+
+/// Roll out controls without clipping, rejecting invalid commands or states.
+pub(crate) fn rollout(
+    ego: State,
+    dt: f64,
+    ticks: usize,
+    mut control_at: impl FnMut(usize, State) -> Option<Control>,
+) -> Option<Trajectory> {
+    let mut trajectory = Trajectory {
+        states: Vec::with_capacity(ticks + 1),
+        controls: Vec::with_capacity(ticks),
+    };
+    trajectory.states.push(ego);
+    let mut state = ego;
+    for tick in 0..ticks {
+        let control = control_at(tick, state)?;
+        if Kinodynamic.is_violated(&Sample::default().with_control(control, state.speed)) {
+            return None;
+        }
+        state = world_step_unclamped(state, control, dt);
+        if !state.speed.is_finite() || !state.pose.yaw.is_finite() || !state.position().is_finite() {
+            return None;
+        }
+        trajectory.controls.push(control);
+        trajectory.states.push(state);
+    }
+    Some(trajectory)
 }
 
 /// Stores the statically limited control currently applied by the simulator.
@@ -203,6 +233,10 @@ mod tests {
             1.0,
         );
         assert!(reversed.speed < 0.0, "speed was {}", reversed.speed);
+
+        let trajectory = rollout(reversed, 0.1, 2, |_, _| Some(Control::default())).unwrap();
+        assert!(trajectory.states[2].speed < 0.0);
+        assert!(trajectory.states[2].position().x < reversed.position().x);
 
         let coasting = world_step(reversed, Control::default(), 0.1);
         assert!(

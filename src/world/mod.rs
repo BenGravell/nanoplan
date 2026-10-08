@@ -98,7 +98,7 @@ impl LiveWorld {
         let mut planner_road = track.prepared().planning.clone();
         planner_road.dt = dt;
         let planner_engine = PlannerEngine::new(planner, track_index, planner_road, start.speed);
-        let trajectory = TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt, &road.path());
+        let trajectory = TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt);
         Self {
             track,
             track_progress: start.progress,
@@ -345,7 +345,7 @@ impl LiveWorld {
         } else {
             plan_controls
         };
-        self.trajectory = TrajectoryKinematics::new(states, controls, self.dt(), &self.road.path());
+        self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
         self.tick += 1;
         true
     }

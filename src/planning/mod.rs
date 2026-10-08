@@ -8,6 +8,7 @@ mod config;
 pub(crate) mod controls;
 pub(crate) mod diagnostics;
 pub(crate) mod engine;
+pub(crate) mod feasibility;
 pub(crate) mod frenet;
 pub(crate) mod latency;
 pub(crate) mod planner_math;

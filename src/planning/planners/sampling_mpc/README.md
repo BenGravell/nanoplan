@@ -3,41 +3,63 @@
 `SamplingPlanner<PredictiveSampling>`, `SamplingPlanner<Cem>`, and `SamplingPlanner<Mppi>` optimize piecewise cubic
 motion in Frenet coordinates.
 The sampling and aggregation strategies are adapted from judo; the shared planner supplies trajectory construction,
-vehicle rollout, costs, and warm starts.
+vehicle rollout, and selection.
 
-Each knot is a cubic endpoint with four values:
-`[station relative to ego, station speed, lateral offset, lateral speed]`.
-The ego's projected position and velocity fix the first boundary.
+Each knot is a cubic endpoint: `[station relative to ego, station speed, lateral offset, lateral speed]`.
+The ego fixes the initial boundary.
 Four segments span the shared 10-second planning horizon, with knots at 2.5, 5, 7.5, and 10 seconds.
-Adjacent segments share position and velocity, giving C1 continuity.
+Adjacent segments share position and velocity (C1 continuity).
 `CubicPolynomial::from_boundary` fits each coordinate, and `planning::frenet::Motion` converts its derivatives into
-Cartesian state, acceleration, and curvature.
+Cartesian motion.
+Commands are sampled at tick midpoints and compensated for drag before integrating through the shared plant.
 
-The initial nominal samples a single centerline-recovery cubic using a reachable sustained-acceleration target from
-`planning::frenet::longitudinal_targets`.
-Deterministic Gaussian QMC noise perturbs all four endpoint dimensions:
+## Search and execution feasibility
 
-- **Predictive sampling** keeps the best sampled trajectory.
-- **CEM** fits the mean and per-dimension standard deviation to its best candidates.
-- **MPPI** averages endpoints with Boltzmann reward weights, scaled by the median cost spread.
+Search rewards use the shared finite soft constraint costs.
+This lets Gaussian exploration move out of infeasible regions.
+A separate feasibility flag checks whether a rollout can actually be selected for execution:
 
-Each optimization pass includes the unchanged nominal.
-An averaged update is rolled out and retained only if it scores at least as well as the best sample.
-Invalid Frenet motions (backwards station motion, singular charts, or points outside the road window) are excluded from
-optimizer statistics.
+- Requested commands satisfy vehicle limits before any plant clamping.
+- States are finite and do not reverse or exceed the available road window.
+- The swept vehicle footprint clears road barriers, with the same clearance padding used by the Frenet sampler.
+- Local, asymmetric road bounds and predicted actor footprints are respected.
 
-Controls are evaluated at tick midpoints, compensated for drag, and integrated through `world_step`.
-The shared soft constraint costs score those actual vehicle states and the requested commands.
-The winning rollout supplies the returned controls, so extraction uses the same motion and plant as scoring.
-The requested output length does not change the optimization horizon.
-If no valid motion is found, the planner returns braking controls.
+These checks live in `planning::feasibility`, shared with `frenet_sampling`.
+They cover the whole planning horizon even when only one control is requested.
+Requests longer than the planning horizon are evaluated for their entire length; controls are never extended by
+unchecked repetition.
 
-For warm starts, the winning cubic is sampled at each endpoint time plus one tick; the final segment is extrapolated by
-that tick.
-These targets are stored in world coordinates and projected into the next road window, relative to the new ego.
-Warm starts are discarded if the ego diverges from its predicted next position or the shifted targets no longer have a
-valid Frenet representation.
+Feasible trajectories always outrank infeasible ones.
+Among feasible trajectories, the shared progress objective determines the winner.
+The best feasible executable rollout is retained across all seeds and optimization iterations.
 
-Compute budget scales the number of rollouts and refinement iterations.
-Diagnostics record the valid final-iteration rollouts as trajectories and points.
-Timing spans are `route`, `warm_start`, `optimize`, `cost`, and `extract`.
+- **Predictive sampling** keeps the best sample in the current feasible set.
+- **CEM** fits its mean and standard deviation to feasible elites when available.
+- **MPPI** uses only feasible samples for its reward-weighted mean when available.
+
+If an iteration has no feasible samples, finite rewards still guide its search, but those samples cannot replace the
+feasible executable incumbent.
+Every averaged endpoint sequence is rolled out and validated again: safe inputs do not imply a safe mean.
+Invalid Frenet charts are excluded from optimizer statistics entirely.
+
+## Seeds, continuation, and fallback
+
+The planner includes an accelerating Frenet seed, slower acceleration, coasting, moderate braking, and full
+road-following braking.
+Controller-generated seeds are converted to cubic endpoints for optimization; their original validated control sequences
+also remain eligible for execution.
+With actors present, left and right detour seeds let the search explore passing as well as stopping.
+
+Warm endpoints come from the selected plant rollout, shifted forward one tick and stored in world coordinates.
+The last validated control sequence is separately shifted and rechecked against the current road and actors.
+Both are discarded when the ego diverges from its predicted position.
+
+Road-following braking undergoes the same full-horizon validation as any other candidate.
+If no validated trajectory exists, the planner issues emergency road-following braking without caching it as safe.
+An already unavoidable collision is not made safe by assigning it a finite optimization cost.
+
+Compute budget scales sampled rollouts and refinement iterations.
+Conservative seeds and fallback validation are always performed.
+Diagnostics display the finite final-iteration rollouts, including infeasible exploration candidates.
+Tests check swept contacts before collision response, unsafe averages, stale-plan revalidation, full-horizon
+predictions, and live curved-track contact counts.

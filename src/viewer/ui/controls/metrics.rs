@@ -23,7 +23,8 @@ pub(super) fn section_heading(ui: &mut egui::Ui, heading: &str) {
 }
 
 pub(crate) fn preview_score(live: &Live) -> f64 {
-    evaluate(&live.world.trajectory)
+    let trajectory = &live.world.trajectory;
+    evaluate(&trajectory.states, trajectory.dt, &live.world.road.path(), None)
 }
 
 #[cfg(test)]

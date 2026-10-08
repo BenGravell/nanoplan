@@ -163,9 +163,8 @@ mod tests {
                     let path = ctx.path();
                     assert!(path.project_near(position, start.s, 21.0).d.abs() < 0.1);
                     road.closest_centerline_segment(position).unwrap();
-                    let trajectory =
-                        TrajectoryKinematics::new(vec![ego; 2], vec![Control::default(); 2], road.dt, &road.path());
-                    crate::metrics::evaluate(&trajectory);
+                    let trajectory = TrajectoryKinematics::new(vec![ego; 2], vec![Control::default(); 2], road.dt);
+                    crate::metrics::evaluate(&trajectory.states, trajectory.dt, &road.path(), None);
                     let visible = prepared.visible_polygon(anchor);
                     assert!(visible.centerline().len() > 2);
                 }

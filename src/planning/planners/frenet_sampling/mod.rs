@@ -1,33 +1,20 @@
 //! Frenet cubic sampling with kinodynamic rejection, cost sorting, then collision checks.
 
-use crate::common::geometry::barrier::collides_with_road_barrier;
-use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
 use crate::common::kinematics::{commanded_accel_for_net, commanded_accel_to_stop};
-use crate::common::measure::dot;
 use crate::common::polynomial::CubicPolynomial;
-use crate::common::types::{Control, Position, State};
-use crate::constraints::collision::actor_collision;
-use crate::constraints::{Constraint, Constraints, Kinodynamic, Sample};
+use crate::common::types::{Control, State, Trajectory};
+use crate::constraints::{Constraint, Kinodynamic, Sample};
 use crate::metrics;
+use crate::planning::feasibility::{feasible_candidate_trajectory, road_and_collision_feasible};
 use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
-use crate::planning::planner_math::{STATE_SAMPLE_PROJECTION_RADIUS_M, state_sample};
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
-use crate::simulation::{world_step, world_step_unclamped};
+use crate::simulation::{rollout, world_step};
 use crate::track::Path;
 use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 
-const REVERSE_SPEED_TOLERANCE_MPS: f64 = 1e-9;
-const ROAD_END_TOLERANCE_M: f64 = 1e-6;
 // Below this speed, establish the initial heading with a straight acceleration prefix.
 const CUBIC_LAUNCH_SPEED_MPS: f64 = 2.0;
-// Match the existing Bezier planner's clearance for rolling-window/circuit seams.
-const ROAD_LENGTH_PADDING_M: f64 = 0.1;
-const ROAD_WIDTH_PADDING_M: f64 = 0.2;
-const ROAD_FOOTPRINT: Footprint = Footprint::new(
-    EGO_FOOTPRINT.length + ROAD_LENGTH_PADDING_M,
-    EGO_FOOTPRINT.width + ROAD_WIDTH_PADDING_M,
-);
 
 #[derive(Default)]
 pub(crate) struct FrenetSamplingPlanner {
@@ -44,7 +31,7 @@ impl Planner for FrenetSamplingPlanner {
             best_candidate(ego, path, ctx, s0)
                 .or_else(|| {
                     let braking = fallback_controls(ego, path, ctx);
-                    if feasible_candidate_trajectory(ego, &braking, path, ctx).is_some() {
+                    if feasible_candidate_trajectory(ego, &braking, ctx).is_some() {
                         return Some(braking);
                     }
                     // A fresh grid can miss a safe continuation on the next tick.
@@ -56,7 +43,7 @@ impl Planner for FrenetSamplingPlanner {
                         error(a).total_cmp(&error(b))
                     })?;
                     let controls: Vec<_> = self.previous[index..].iter().map(|&(_, u)| u).collect();
-                    feasible_candidate_trajectory(ego, &controls, path, ctx)?;
+                    feasible_candidate_trajectory(ego, &controls, ctx)?;
                     Some(controls)
                 })
                 .unwrap_or_else(|| fallback_controls(ego, path, ctx))
@@ -90,11 +77,6 @@ fn fallback_controls(mut state: State, path: &Path, ctx: &Context) -> Vec<Contro
             control
         })
         .collect()
-}
-
-struct Candidate {
-    states: Vec<State>,
-    controls: Vec<Control>,
 }
 
 fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64) -> Option<Vec<Control>> {
@@ -135,7 +117,8 @@ fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64) -> Option<Vec
                 lateral: CubicPolynomial(lateral.0),
             };
             let candidate = ctx.time("kinodynamic", || {
-                rollout(ego, ctx, ticks, |tick, actual| {
+                rollout(ego, ctx.road.dt, ticks, |tick, actual| {
+                    ctx.work(1);
                     if tick < launch_ticks {
                         return Some(launch[tick]);
                     }
@@ -160,14 +143,21 @@ fn best_candidate(ego: State, path: &Path, ctx: &Context, s0: f64) -> Option<Vec
     let candidates = candidates
         .into_iter()
         .filter_map(|(station, candidate)| {
-            let cost = ctx.time("cost", || -compute_score(&candidate, path, ctx, station));
+            let cost = ctx.time("cost", || {
+                -metrics::evaluate(
+                    &candidate.states,
+                    ctx.road.dt,
+                    path,
+                    Some([ctx.project_ego(ego).s, station]),
+                )
+            });
             cost.is_finite().then_some((cost, candidate))
         })
         .collect();
-    select_candidate(candidates, path, ctx)
+    select_candidate(candidates, ctx)
 }
 
-fn select_candidate(mut candidates: Vec<(f64, Candidate)>, path: &Path, ctx: &Context) -> Option<Vec<Control>> {
+fn select_candidate(mut candidates: Vec<(f64, Trajectory)>, ctx: &Context) -> Option<Vec<Control>> {
     // Stable order preserves sampling order for equal costs.
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
     if let Some(diagnostics) = ctx.diagnostics {
@@ -177,102 +167,17 @@ fn select_candidate(mut candidates: Vec<(f64, Candidate)>, path: &Path, ctx: &Co
         }
     }
     for (_, candidate) in candidates {
-        if ctx.time("collision", || road_and_collision_feasible(&candidate, path, ctx)) {
+        if ctx.time("collision", || road_and_collision_feasible(&candidate, ctx)) {
             return Some(candidate.controls);
         }
     }
     None
 }
 
-/// Cheap first pass: check unclipped commands and cache their Cartesian rollout once.
-fn rollout(
-    ego: State,
-    ctx: &Context,
-    ticks: usize,
-    mut control_at: impl FnMut(usize, State) -> Option<Control>,
-) -> Option<Candidate> {
-    let mut candidate = Candidate {
-        states: Vec::with_capacity(ticks + 1),
-        controls: Vec::with_capacity(ticks),
-    };
-    candidate.states.push(ego);
-    let mut state = ego;
-    for tick in 0..ticks {
-        ctx.work(1);
-        let control = control_at(tick, state)?;
-        if Kinodynamic.is_violated(&Sample::default().with_control(control, state.speed)) {
-            return None;
-        }
-        state = world_step_unclamped(state, control, ctx.road.dt);
-        if state.speed < -REVERSE_SPEED_TOLERANCE_MPS
-            || !state.speed.is_finite()
-            || !state.pose.yaw.is_finite()
-            || !state.position().is_finite()
-        {
-            return None;
-        }
-        candidate.controls.push(control);
-        candidate.states.push(state);
-    }
-    Some(candidate)
-}
-
-fn feasible_candidate_trajectory(ego: State, controls: &[Control], path: &Path, ctx: &Context) -> Option<Candidate> {
-    let candidate = rollout(ego, ctx, controls.len(), |tick, _| Some(controls[tick]))?;
-    if !road_and_collision_feasible(&candidate, path, ctx) {
-        return None;
-    }
-    if let Some(diag) = ctx.diagnostics {
-        diag.record_trajectory(candidate.states.iter().map(|state| state.position()).collect());
-    }
-    Some(candidate)
-}
-
-/// Expensive last pass, using cached Cartesian states in increasing cost order.
-fn road_and_collision_feasible(candidate: &Candidate, path: &Path, ctx: &Context) -> bool {
-    let ego = candidate.states[0];
-    let mut station = ctx.project_ego(ego).s;
-    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, station);
-    let (end, end_yaw) = path.pose_at(path.length());
-    let forward = Position::from_angle(end_yaw);
-    for (tick, pair) in candidate.states.windows(2).enumerate() {
-        ctx.work(1);
-        let [prev, state] = [pair[0], pair[1]];
-        let (s, mut sample) = state_sample(
-            path,
-            &state,
-            (tick + 1) as f64 * ctx.road.dt,
-            Some(station + prev.speed * ctx.road.dt),
-        );
-        station = s;
-        sample.road_bounds = Some(ctx.road.lateral_bounds_at(station));
-        let beyond_end =
-            dot((state.position() - end).xy(), forward.xy()) > 0.0 && station >= path.length() - ROAD_END_TOLERANCE_M;
-        if beyond_end
-            || collides_with_road_barrier(state, ctx.road)
-            || constraints.is_transition_violated(prev, state, ROAD_FOOTPRINT, ctx.road, &sample)
-            || actor_collision(state.pose(), sample.t, ctx)
-        {
-            return false;
-        }
-    }
-    true
-}
-
-fn compute_score(candidate: &Candidate, path: &Path, ctx: &Context, end_station_hint: f64) -> f64 {
-    let ego = candidate.states[0];
-    let end = candidate.states.last().unwrap();
-    let progress = path
-        .project_near(end.position(), end_station_hint, STATE_SAMPLE_PROJECTION_RADIUS_M)
-        .s
-        - ctx.project_ego(ego).s;
-    // The shared objective only needs endpoint progress, not all trajectory projections.
-    metrics::progress_score(progress, ego.speed, candidate.controls.len() as f64 * ctx.road.dt)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::geometry::barrier::collides_with_road_barrier;
     use crate::planning::{ComputeBudget, Diagnostics, test_ctx, test_road, test_run, test_run_on};
     use crate::simulation::Position;
     use crate::simulation::world_step;
@@ -344,7 +249,7 @@ mod tests {
         ] {
             let mut calls = 0;
             assert!(
-                rollout(ego, &ctx, 100, |_, _| {
+                rollout(ego, ctx.road.dt, 100, |_, _| {
                     calls += 1;
                     Some(control)
                 })
@@ -391,7 +296,7 @@ mod tests {
             ..test_ctx(&road, &actors)
         };
         let ticks = (PLANNING_HORIZON_S / road.dt).ceil() as usize;
-        let accelerating = rollout(ego, &ctx, ticks, |_, _| {
+        let accelerating = rollout(ego, ctx.road.dt, ticks, |_, _| {
             Some(Control {
                 acceleration: MAX_LON_ACCEL,
                 curvature: 0.0,
@@ -399,10 +304,10 @@ mod tests {
         })
         .unwrap();
         let braking = fallback_controls(ego, ctx.path(), &ctx);
-        let clear = rollout(ego, &ctx, ticks, |tick, _| Some(braking[tick])).unwrap();
-        let unvisited = rollout(ego, &ctx, ticks, |tick, _| Some(braking[tick])).unwrap();
+        let clear = rollout(ego, ctx.road.dt, ticks, |tick, _| Some(braking[tick])).unwrap();
+        let unvisited = rollout(ego, ctx.road.dt, ticks, |tick, _| Some(braking[tick])).unwrap();
         let candidates = vec![(3.0, unvisited), (1.0, accelerating), (2.0, clear)];
-        let chosen = select_candidate(candidates, ctx.path(), &ctx).unwrap();
+        let chosen = select_candidate(candidates, &ctx).unwrap();
         assert_eq!(chosen, braking);
         assert_eq!(latency.take().iter().filter(|span| span.name == "collision").count(), 2);
     }
@@ -564,7 +469,7 @@ mod tests {
                 "speed {speed}: {:?}",
                 controls[0]
             );
-            assert!(rollout(ego, &ctx, controls.len(), |tick, _| Some(controls[tick])).is_some());
+            assert!(rollout(ego, ctx.road.dt, controls.len(), |tick, _| Some(controls[tick])).is_some());
         }
     }
 
@@ -677,31 +582,28 @@ mod tests {
         };
         let controls = [Control::default(); 3];
         let ctx = test_ctx(&road, &[]);
-        let trajectory = feasible_candidate_trajectory(ego, &controls, ctx.path(), &ctx).unwrap();
+        let trajectory = feasible_candidate_trajectory(ego, &controls, &ctx).unwrap();
         assert_eq!(trajectory.states.len(), controls.len() + 1);
         assert_eq!(trajectory.states[0], ego);
         assert_eq!(trajectory.controls.len() + 1, trajectory.states.len());
-        let score = compute_score(&trajectory, ctx.path(), &ctx, 23.0);
-        let aligned = trajectory
-            .controls
-            .iter()
-            .copied()
-            .chain([*trajectory.controls.last().unwrap()])
-            .collect();
-        let kinematics = crate::common::kinematics::TrajectoryKinematics::new(
-            trajectory.states.clone(),
-            aligned,
+        let score = metrics::evaluate(
+            &trajectory.states,
             road.dt,
             ctx.path(),
+            Some([ctx.project_ego(ego).s, 23.0]),
         );
-        assert_eq!(score, metrics::evaluate(&kinematics));
 
         let accelerated = [Control {
             acceleration: MAX_LON_ACCEL,
             ..Default::default()
         }; 3];
-        let trajectory = feasible_candidate_trajectory(ego, &accelerated, ctx.path(), &ctx).unwrap();
-        let accelerated_score = compute_score(&trajectory, ctx.path(), &ctx, 23.0);
+        let trajectory = feasible_candidate_trajectory(ego, &accelerated, &ctx).unwrap();
+        let accelerated_score = metrics::evaluate(
+            &trajectory.states,
+            road.dt,
+            ctx.path(),
+            Some([ctx.project_ego(ego).s, 23.0]),
+        );
         // The analytic baseline ignores the drag present in the rollout.
         assert!(accelerated_score < 1.0);
         assert!(accelerated_score > score);
@@ -712,7 +614,7 @@ mod tests {
             diagnostics: Some(&diagnostics),
             ..test_ctx(&road, &actors)
         };
-        assert!(feasible_candidate_trajectory(ego, &controls, blocked.path(), &blocked).is_none());
+        assert!(feasible_candidate_trajectory(ego, &controls, &blocked).is_none());
         assert!(diagnostics.take().trajectories.is_empty());
 
         // The footprint hits the barrier even while the center is inside the road.
@@ -721,22 +623,21 @@ mod tests {
             diagnostics: Some(&diagnostics),
             ..test_ctx(&road, &[])
         };
-        assert!(feasible_candidate_trajectory(near_barrier, &controls, clear.path(), &clear).is_none());
+        assert!(feasible_candidate_trajectory(near_barrier, &controls, &clear).is_none());
         assert!(diagnostics.take().trajectories.is_empty());
-        assert!(feasible_candidate_trajectory(ego, &controls, clear.path(), &clear).is_some());
+        assert!(feasible_candidate_trajectory(ego, &controls, &clear).is_some());
         assert_eq!(diagnostics.take().trajectories[0].len(), controls.len() + 1);
 
         let infeasible = [Control {
             acceleration: MAX_LON_ACCEL + 1.0,
             curvature: 0.0,
         }];
-        assert!(feasible_candidate_trajectory(ego, &infeasible, clear.path(), &clear).is_none());
+        assert!(feasible_candidate_trajectory(ego, &infeasible, &clear).is_none());
         assert!(diagnostics.take().trajectories.is_empty());
     }
 
     #[test]
     fn baked_track_predictions_stay_inside_road_for_full_horizon() {
-        use crate::common::geometry::barrier::collides_with_road_barrier;
         use crate::track::{Road, TRACK_PRESETS};
 
         for track_index in 0..TRACK_PRESETS.len() {

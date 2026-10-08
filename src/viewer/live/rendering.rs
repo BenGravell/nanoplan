@@ -116,6 +116,7 @@ pub(crate) fn draw(
             ego,
             trajectory,
             state.carpet_visualization,
+            &world.road,
         )
     } else {
         carpet::clear(&mut meshes, &mut carpet_mesh);

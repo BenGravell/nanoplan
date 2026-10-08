@@ -1,7 +1,6 @@
 //! Shared vehicle kinematics, resistance, and control limits.
 
-use crate::common::types::{Control, FrenetPosition, State};
-use crate::track::Path;
+use crate::common::types::{Control, State};
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
     ROLLING_RESISTANCE_ACCEL,
@@ -19,16 +18,14 @@ pub(crate) struct TrajectoryKinematics {
     pub(crate) states: Vec<State>,
     pub(crate) controls: Vec<Control>,
     pub(crate) time: Vec<f64>,
-    pub(crate) projections: Vec<FrenetPosition>,
     pub(crate) lateral_acceleration: Vec<f64>,
     pub(crate) dt: f64,
 }
 
 impl TrajectoryKinematics {
-    pub(crate) fn new(states: Vec<State>, controls: Vec<Control>, dt: f64, path: &Path) -> Self {
+    pub(crate) fn new(states: Vec<State>, controls: Vec<Control>, dt: f64) -> Self {
         assert_eq!(states.len(), controls.len());
         let time = (0..states.len()).map(|i| i as f64 * dt).collect();
-        let projections = states.iter().map(|state| path.project(state.position())).collect();
         let lateral_acceleration = states
             .iter()
             .zip(&controls)
@@ -38,7 +35,6 @@ impl TrajectoryKinematics {
             states,
             controls,
             time,
-            projections,
             lateral_acceleration,
             dt,
         }
@@ -159,14 +155,9 @@ mod tests {
             },
         ];
 
-        let path = Path::new(&[[-10.0, 0.0].into(), [0.0, 0.0].into(), [0.0, 100.0].into()]);
-        let trajectory = TrajectoryKinematics::new(states, controls, 0.1, &path);
+        let trajectory = TrajectoryKinematics::new(states, controls, 0.1);
 
         assert_eq!(trajectory.time, [0.0, 0.1]);
-        assert_eq!(
-            trajectory.projections,
-            [FrenetPosition { s: 15.0, d: 2.0 }, FrenetPosition { s: 25.0, d: -3.0 }]
-        );
         assert_eq!(
             trajectory.controls,
             [

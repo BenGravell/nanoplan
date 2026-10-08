@@ -193,12 +193,12 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
         ("bezier_fit", 284, 258_156, 909),
         ("extract", 284, 7_638_867, 60_414),
         ("optimize", 284, 22_898_106, 182_706),
-        ("cost", 284, 18_510_599, 84_439),
-        ("planner.total", 284, 41_716_241, 268_200),
+        ("cost", 284, 14_962_268, 70_880),
+        ("planner.total", 284, 38_167_910, 254_641),
         ("simulation.preview", 284, 8_520, 30),
         ("simulation.ego", 284, 284, 1),
         ("simulation.collisions", 284, 37_178, 198),
-        ("simulation.total", 284, 192_464, 966),
+        ("simulation.total", 284, 49_181, 240),
         ("simulation.roads", 75, 75, 1),
     ] {
         let seam = latency

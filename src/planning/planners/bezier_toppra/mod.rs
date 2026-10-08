@@ -5,9 +5,7 @@ use crate::common::geometry::wrap_angle;
 #[cfg(test)]
 use crate::common::geometry::{CAR_FOOTPRINT, footprints_overlap};
 use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
-use crate::common::kinematics::{
-    TrajectoryKinematics, commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel,
-};
+use crate::common::kinematics::{commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel};
 use crate::common::math::smoothstep;
 use crate::common::types::FrenetPosition;
 use crate::constraints::Constraints;
@@ -465,14 +463,7 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
     if !feasible {
         return f64::INFINITY;
     }
-    // Include the initial state for the progress baseline and the final interval.
-    let controls = controls
-        .iter()
-        .copied()
-        .chain([controls.last().copied().unwrap_or_default()])
-        .collect();
-    let trajectory = TrajectoryKinematics::new(states, controls, ctx.road.dt, ctx.path());
-    -metrics::evaluate(&trajectory)
+    -metrics::evaluate(&states, ctx.road.dt, path, None)
 }
 
 fn brake(ego: State, ctx: &Context) -> Vec<Control> {
@@ -856,7 +847,7 @@ mod tests {
         for &control in &controls {
             states.push(world_step(*states.last().unwrap(), control, road.dt));
         }
-        let score = metrics::evaluate_trace(&states, &vec![Control::default(); states.len()], &road);
+        let score = metrics::evaluate(&states, road.dt, &road.path(), None);
         assert_eq!(candidate_cost(ego, &ctx, &controls), -score);
 
         let off_road = State::from((Position::new(0.0, road.half_width + 1.0), 0.0, 8.0));
