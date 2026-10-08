@@ -1,6 +1,6 @@
 # Treetop (RRT / iLQR / RRT+iLQR)
 
-`treetop/` — `RrtPlanner` (`rrt.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
+`treetop/` — `RrtPlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
 A port of [**treetop**](https://github.com/BenGravell/treetop), a tree-initialized trajectory-optimizing planner: an ego
 motion sampling tree provides a strong, collision-aware initial guess at a good path to the goal, and iLQR (iterative
@@ -12,7 +12,6 @@ so the tree and the optimizer are each measurable *alone* before the coordinatio
 ```
 treetop/
 ├── mod.rs   shared OCP core (treetop core/: limits, constrained rollout, goal) + TreetopPlanner glue (treetop planner.h)
-├── rrt.rs   the ego motion sampling tree (treetop tree/) — RrtPlanner
 └── ilqr.rs  the iLQR solver (treetop ilqr/), finite-difference derivatives — IlqrPlanner
 ```
 
@@ -31,7 +30,7 @@ candidate through `simulation::world_step`.
 
 ## RRT (treetop tree)
 
-`treetop/rrt.rs` — `RrtPlanner`
+`tree/mod.rs` — `RrtPlanner`
 
 An RRT variant shaped by its downstream job — feeding a trajectory optimizer — rather than by asymptotic optimality
 (contrast [RRT\*](../rrt_star/README.md), which rewires toward the shortest path):
@@ -41,10 +40,11 @@ An RRT variant shaped by its downstream job — feeding a trajectory optimizer �
   precisely the input the iLQR pass wants.
   Moving obstacles come free: a layer's states have a known absolute time, so collision checks price actors where they
   *will be*.
-- **Steering in action space.** `steer_actions` fits the shared cubic flat-output connector between two states' position
-  and velocity boundary conditions, reads acceleration and curvature off the polynomial derivatives — the same
-  differential-flatness idea as RRT\*'s `CubicSteer` — and realizes those direct commands through the shared rollout.
-  A secant against the start heading infers forward/reverse.
+- **Frenet cubic steering.** `steer_actions` fits cubic station and lateral coordinates to position and velocity
+  boundaries.
+  It reuses `planning::frenet::Motion` to transform derivatives into Cartesian acceleration and curvature, then realizes
+  bounded commands through the shared rollout.
+  Invalid Frenet charts reject ordinary edges.
   The steer executes only its first segment; goal-directed samples steer along a cubic spanning the whole remaining
   horizon and keep just the first second of it.
 - **Zero-action-point parenting.** A sample attaches to the previous layer's node whose coasting endpoint is nearest in
@@ -53,8 +53,8 @@ An RRT variant shaped by its downstream job — feeding a trajectory optimizer �
   *and* faster than building the index.
 - **Layered sampling, three ways** (treetop's goal 0.1 / warm 0.2 / cold 0.7 split, drawn against a Halton coordinate
   instead of an RNG): *goal* samples steer toward the goal, *warm* samples perturb around the previous solution's
-  trajectory, *cold* samples cover a road-frame `(station, lateral, heading error, speed)` box — treetop's axis-aligned
-  world-frame box bent into the road frame so it follows a curved road.
+  trajectory in Frenet coordinates, and *cold* samples reuse `planning::frenet` lateral targets and reachable
+  station/speed envelopes for each layer.
 - **A zero-action fallback chain** guarantees every layer is non-empty (so a full-length path always exists), deliberately
   ignoring collisions — treetop's `growZap`.
   Such nodes carry a `collides` flag and price violating stages at `HARD_VIOLATION_PENALTY`, so they lose to any genuine

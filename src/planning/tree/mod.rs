@@ -1,80 +1,22 @@
-//! The treetop ego motion sampling tree (`tree/{tree,node,sampling,steer}.h`),
-//! exposed standalone as [`RrtPlanner`] and reused by
-//! [`TreetopPlanner`](super::TreetopPlanner) as its initial-guess engine.
-//!
-//! An RRT variant shaped by its job — feeding a trajectory optimizer —
-//! rather than by asymptotic optimality (contrast [`crate::planning::rrt_star`]):
-//!
-//! - **Time-layered, fixed-depth growth.** The tree has exactly
-//!   [`SEGMENTS`] layers past the root, each one steering segment
-//!   ([`STEER_TICKS`] ticks) later in time, so *any* leaf in the final
-//!   layer closes a full-horizon action sequence of exactly [`TICKS`]
-//!   controls — precisely what the iLQR pass needs as input. Moving
-//!   obstacles come free: a layer's states have a known absolute time, so
-//!   collision checks price actors where they will be, not where they are.
-//! - **Steering in action space.** [`steer_actions`] fits the shared
-//!   cubic flat-output connector between two states' position and velocity
-//!   boundary conditions, reads acceleration and curvature off the polynomial
-//!   derivatives, then rolls those direct commands out
-//!   ([`rollout_constrained`]).
-//! - **Zero-action-point parenting.** A sample attaches to the previous
-//!   layer's node whose coasting endpoint ([`zero_action_point`]) is
-//!   nearest in `(x, y, yaw, v)` — "who reaches me with the least effort",
-//!   under simplifying kinematic assumptions. treetop builds a kd-tree
-//!   (nanoflann) per layer for this; here a layer holds a few dozen nodes,
-//!   so a linear scan is both simpler and faster than building the index.
-//! - **A zero-action fallback chain** guarantees every layer is non-empty
-//!   (so a full-length path always exists), *ignoring collisions* —
-//!   treetop's `growZap`. Such nodes carry a `collides` flag and price
-//!   their violating stages at the shared depth-scaled hard-violation
-//!   penalty, so they lose to any genuine alternative and surface only as a
-//!   better-than-nothing brace when the tree finds nothing else.
-//! - **Layered sampling, three ways** (treetop `sampling.h`): *goal*
-//!   samples steer gently toward the goal over the remaining horizon,
-//!   *warm* samples perturb around the previous solution's trajectory, and
-//!   *cold* samples cover the road-frame box — with treetop's RNG replaced
-//!   by the shared Halton sequence (see the module doc in
-//!   [`super`]), and treetop's axis-aligned `(x, y, yaw, v)` search-space
-//!   box bent into the road frame: cold samples draw `(station, lateral,
-//!   heading error, speed)` and map through the shared road-frame grid+QMC
-//!   sampler, so the box follows a curved road instead of assuming the
-//!   corridor is straight.
-//!
-//! **Seams**: `route`, `warm_start` (revalidate + shift the previous
-//! solution), `optimize` (the whole grow), `extract`; `cost` (the shared
-//! cost function, once per sampled point of every edge) nests inside
-//! `optimize` and the warm-start replay alike.
-//!
-//! **Diagnostics**: every tree node as a point and every edge's rollout
-//! polyline as a trajectory — the whole search considered, mirroring RRT*.
+//! Time-layered motion tree with Frenet sampling and cubic Frenet steering.
+//! Reuses the sampling envelopes and Cartesian transformations in
+//! [`crate::planning::frenet`], and supplies initial guesses to
+//! [`crate::planning::treetop::TreetopPlanner`].
 
-use super::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::common::geometry::wrap_angle;
+use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
+use crate::common::polynomial::CubicPolynomial;
 use crate::constraints::Constraints;
 use crate::planning::controls::{repeat_last_controls, rollout_constrained};
+use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
 use crate::planning::planner_math;
-use crate::planning::sampling::{self, Halton, QuasiMonteCarlo};
+use crate::planning::sampling::{Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::parent_chain;
-use crate::planning::steering::{CubicSteer, steer_controls};
 use crate::planning::take_warm;
+use crate::planning::treetop::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
 use crate::planning::{Context, Planner};
-use crate::simulation::{Control, Position, State, world_step};
+use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
-
-/// Lateral half-width cold samples span. Wide enough to let the optimizer
-/// pull an aggressive detour back in; the shared per-plan `road_half_width`
-/// reject still discards any sample past the true edge, so this fixed span
-/// only bounds where candidates are *drawn*, never what counts as on-road.
-const SAMPLE_LATERAL_M: f64 = 4.5;
-
-/// Cold samples' heading spread around the lane direction (rad).
-/// Speeds span zero to the reachable speed at each layer. treetop samples yaw over
-/// ±π/2 and speed over the full signed limit range; lane driving has no
-/// use for near-perpendicular or reversing states, which would only steer
-/// unreachable segments.
-const SAMPLE_YAW_SPREAD: f64 = 0.5;
-const COLD_GRID_STATIONS: usize = SEGMENTS - 1;
-const COLD_GRID_LATERALS: usize = 5;
 
 // treetop's category probabilities (`sampling.h`): goal 0.1, warm 0.2,
 // cold the rest. Drawn against a Halton coordinate instead of an RNG, so
@@ -83,10 +25,10 @@ const GOAL_PROBA: f64 = 0.1;
 const WARM_PROBA: f64 = 0.2;
 
 /// Warm samples' perturbation half-widths around the previous solution's
-/// state: ±2 m position, ±0.3 rad heading, ±2 m/s speed (treetop's
-/// `sampleNear`, with its ±π/2 yaw spread tightened for lane driving).
+/// Frenet state: ±2 m station/lateral position, ±30% of speed in lateral
+/// velocity, and ±2 m/s station velocity.
 const WARM_D_POS: f64 = 2.0;
-const WARM_D_YAW: f64 = 0.3;
+const WARM_LATERAL_SPEED_FRACTION: f64 = 0.3;
 const WARM_D_SPEED: f64 = 2.0;
 
 /// One tree node: a state, its parent, and the steering-segment edge that
@@ -196,20 +138,15 @@ impl Tree {
         // in place of the RNG. One global sample index keeps every draw —
         // category selector and state coordinates alike — deterministic.
         let per_layer = samples / (SEGMENTS - 1).max(1);
-        let s0 = path.project(start.position()).s;
-        let s_goal = path.project(goal.position()).s;
-        let cold_samples = sampling::road_frame_samples::<Halton>(
-            s0,
-            (s_goal - s0).max(1.0),
-            SAMPLE_LATERAL_M,
-            COLD_GRID_STATIONS,
-            COLD_GRID_LATERALS,
-            samples,
+        let boundary = frenet_boundary(path, start, g.initial_station);
+        let laterals = lateral_targets(
+            path.project(start.position()).d,
+            ctx.road.half_width,
+            ctx.compute_budget,
         );
         let mut ix = 1usize;
         for layer in 1..SEGMENTS {
             for _ in 0..per_layer {
-                let sample_id = ix;
                 let selector = Halton::coordinate(ix, 4);
                 let c: [f64; 4] = std::array::from_fn(|d| Halton::coordinate(ix, d));
                 ix += 1;
@@ -219,26 +156,47 @@ impl Tree {
                 } else if selector < GOAL_PROBA + WARM_PROBA && warm_traj.is_some() {
                     let (wxs, _) = warm_traj.as_ref().unwrap();
                     let w = wxs[layer * STEER_TICKS];
-                    let target = State::from((
-                        Position::new(
-                            w.position().x + (c[0] - 0.5) * 2.0 * WARM_D_POS,
-                            w.position().y + (c[1] - 0.5) * 2.0 * WARM_D_POS,
-                        ),
-                        w.pose.yaw + (c[2] - 0.5) * 2.0 * WARM_D_YAW,
-                        (w.speed + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0),
-                    ));
+                    let Some((mut lon, mut lat)) = frenet_boundary(path, w, path.project(w.position()).s) else {
+                        continue;
+                    };
+                    lon[0] += (c[0] - 0.5) * 2.0 * WARM_D_POS;
+                    lat[0] += (c[1] - 0.5) * 2.0 * WARM_D_POS;
+                    lon[1] = (lon[1] + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0);
+                    lat[1] += (c[2] - 0.5) * 2.0 * WARM_LATERAL_SPEED_FRACTION * w.speed;
+                    let motion = Motion {
+                        longitudinal: CubicPolynomial([lon[0], lon[1], 0.0, 0.0]),
+                        lateral: CubicPolynomial([lat[0], lat[1], 0.0, 0.0]),
+                    };
+                    let Some((target, _)) = motion.at(path, 0.0) else {
+                        continue;
+                    };
                     (target, Reason::Sample)
                 } else {
-                    // Cold: the shared road-frame grid+QMC box (see the
-                    // module doc).
-                    let (s, d) = cold_samples[(sample_id - 1) % cold_samples.len()];
-                    let xy = path.frenet_to_position(s, d);
-                    let (_, lane_yaw) = path.pose_at(s);
-                    let target = State::from((
-                        xy,
-                        lane_yaw + (2.0 * c[2] - 1.0) * SAMPLE_YAW_SPREAD,
-                        c[3] * crate::simulation::speed_after_max_accel(start.speed, layer * STEER_TICKS, ctx.road.dt),
-                    ));
+                    let Some((lon, lat)) = boundary else { continue };
+                    let duration = layer as f64 * steer_dur;
+                    let (d, dv) = laterals[(c[1] * laterals.len() as f64) as usize];
+                    let lateral = CubicPolynomial::from_boundary(lat[0], lat[1], d, dv, duration);
+                    let targets = longitudinal_targets(
+                        start.speed,
+                        ctx.road.dt,
+                        ctx.compute_budget,
+                        duration,
+                        (path, lon[0], &lateral),
+                    );
+                    let (distance, speed) = targets[(c[0] * targets.len() as f64) as usize];
+                    let motion = Motion {
+                        longitudinal: CubicPolynomial::from_boundary(
+                            lon[0],
+                            lon[1],
+                            lon[0] + distance,
+                            speed,
+                            duration,
+                        ),
+                        lateral,
+                    };
+                    let Some((target, _)) = motion.at(path, duration) else {
+                        continue;
+                    };
                     (target, Reason::Sample)
                 };
 
@@ -415,9 +373,12 @@ impl Grower<'_, '_> {
         duration: f64,
         layer: usize,
     ) -> (Vec<Control>, Vec<State>, EdgeEval) {
-        let actions = steer_actions(&from, &target, duration, self.ctx.road.dt);
+        let actions = steer_actions(self.path, &from, &target, duration, self.ctx.road.dt);
+        let invalid = actions.is_none();
+        let actions = actions.unwrap_or_else(|| vec![Control::default(); STEER_TICKS]);
         let (xs, us) = rollout_constrained(from, &actions, self.ctx.road.dt);
-        let ee = self.edge_eval(&xs, &us, layer);
+        let mut ee = self.edge_eval(&xs, &us, layer);
+        ee.collides |= invalid;
         (us, xs, ee)
     }
 
@@ -457,16 +418,26 @@ impl Grower<'_, '_> {
 
 // ---- The steering function (treetop `steer.h`) --------------------------
 
-/// treetop's steering action generator: fit the shared cubic flat-output
-/// connector matching both states' position and velocity vector, then read
-/// direct acceleration/curvature commands off the curve, sampling each segment
-/// at its midpoint. A secant against the start heading infers whether the curve
-/// is driven forward or in reverse, flipping curvature accordingly.
-/// Returns [`STEER_TICKS`] bounded actions.
-fn steer_actions(start: &State, goal: &State, duration: f64, dt: f64) -> Vec<Control> {
-    let steer = CubicSteer::from_states(start, goal, duration);
-    let dir = steer.forward_sign(start.pose.yaw, dt);
-    steer_controls(*start, &steer, dt, STEER_TICKS, dir, true).0
+/// Fit cubic station/lateral segments, transform their derivatives into
+/// Cartesian commands, and realize the first segment under actuation limits.
+fn steer_actions(path: &Path, start: &State, goal: &State, duration: f64, dt: f64) -> Option<Vec<Control>> {
+    let (lon, lat) = frenet_boundary(path, *start, path.project(start.position()).s)?;
+    let (end_lon, end_lat) = frenet_boundary(path, *goal, path.project(goal.position()).s)?;
+    let motion = Motion {
+        longitudinal: CubicPolynomial::from_boundary(lon[0], lon[1], end_lon[0], end_lon[1], duration),
+        lateral: CubicPolynomial::from_boundary(lat[0], lat[1], end_lat[0], end_lat[1], duration),
+    };
+    let mut state = *start;
+    (0..STEER_TICKS)
+        .map(|tick| {
+            let (_, mut control) = motion.at(path, (tick as f64 + 0.5) * dt)?;
+            control.acceleration = commanded_accel_for_net(control.acceleration, state.speed)
+                .max(commanded_accel_to_stop(state.speed, dt));
+            control = clamp_control(control, state.speed);
+            state = world_step(state, control, dt);
+            Some(control)
+        })
+        .collect()
 }
 
 /// The standalone tree planner: grow, take the best path candidate, drive
@@ -528,7 +499,8 @@ mod tests {
         let dt = 0.1;
         let dur = STEER_TICKS as f64 * dt;
         let target = zero_action_point(from, dur);
-        let actions = steer_actions(&from, &target, dur, dt);
+        let path = Path::new(&[[-20.0, 0.0].into(), [400.0, 0.0].into()]);
+        let actions = steer_actions(&path, &from, &target, dur, dt).unwrap();
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
         assert!(
@@ -563,12 +535,44 @@ mod tests {
             crate::simulation::Pose::new(crate::simulation::Position::new(10.0, 0.8), 0.0),
             10.0,
         );
-        let actions = steer_actions(&from, &target, dur, dt);
+        let path = Path::new(&[[-20.0, 0.0].into(), [400.0, 0.0].into()]);
+        let actions = steer_actions(&path, &from, &target, dur, dt).unwrap();
         let (xs, _) = rollout_constrained(from, &actions, dt);
         let end = xs.last().unwrap();
         // the constrained rollout won't hit it exactly, but must get close
         assert!((end.position().x - 10.0).abs() < 1.0, "x {}", end.position().x);
         assert!((end.position().y - 0.8).abs() < 0.3, "y {}", end.position().y);
+    }
+
+    #[test]
+    fn steering_follows_a_constant_frenet_offset_on_a_bend() {
+        let points: Vec<_> = (0..1800)
+            .map(|i| {
+                let angle = i as f64 * 0.002;
+                crate::simulation::Position::new(40.0 * angle.cos(), 40.0 * angle.sin())
+            })
+            .collect();
+        let path = Path::new(&points);
+        let motion = Motion {
+            longitudinal: CubicPolynomial([10.0, 8.0, 0.0, 0.0]),
+            lateral: CubicPolynomial([2.0, 0.0, 0.0, 0.0]),
+        };
+        let start = motion.at(&path, 0.0).unwrap().0;
+        let goal = motion.at(&path, 1.0).unwrap().0;
+        let actions = steer_actions(&path, &start, &goal, 1.0, 0.1).unwrap();
+        for action in &actions {
+            // Projection uses road chords, so allow their finite resolution.
+            assert!(
+                (action.curvature - 1.0 / 38.0).abs() < 1e-4,
+                "curvature {}",
+                action.curvature
+            );
+        }
+        let (states, _) = rollout_constrained(start, &actions, 0.1);
+        assert!(states.last().unwrap().position().distance(goal.position()) < 0.1);
+        // Invalid Frenet boundaries must reject steering, leaving fallback to the tree.
+        let reverse = State { speed: -1.0, ..start };
+        assert!(steer_actions(&path, &reverse, &goal, 1.0, 0.1).is_none());
     }
 
     #[test]
@@ -610,7 +614,7 @@ mod tests {
         );
         let trace = crate::planning::test_run(&mut RrtPlanner::default(), ego, &[], 150);
         let end = trace.last().unwrap();
-        assert!(end.position().y.abs() < SAMPLE_LATERAL_M, "offset {}", end.position().y);
+        assert!(end.position().y.abs() < 4.5, "offset {}", end.position().y);
         assert!(end.speed > 10.0, "speed {}", end.speed);
     }
 

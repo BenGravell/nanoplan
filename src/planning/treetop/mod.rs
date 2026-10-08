@@ -9,7 +9,7 @@
 //! directory (the same one-port-many-planners shape as
 //! [`super::sampling_mpc`]):
 //!
-//! - [`RrtPlanner`] (`rrt.rs`) — the motion sampling tree alone
+//! - [`tree::RrtPlanner`] (`../tree/mod.rs`) — the motion sampling tree alone
 //!   (treetop's `tree/`), taking the tree's best path candidate as the
 //!   plan with no optimization pass.
 //! - [`IlqrPlanner`] (`ilqr.rs`) — the iLQR solver alone (treetop's
@@ -50,10 +50,9 @@
 //! See `src/planning/treetop/README.md` for the design write-up.
 
 pub(crate) mod ilqr;
-pub(crate) mod rrt;
 
+use crate::planning::tree;
 pub(crate) use ilqr::IlqrPlanner;
-pub(crate) use rrt::RrtPlanner;
 
 use crate::planning::controls::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, take_warm};
@@ -132,7 +131,7 @@ const CANDIDATES: usize = 2;
 /// a handful of iterations anyway.
 const OPT_ITERS: usize = 6;
 
-/// The treetop planner: the motion sampling tree ([`rrt`]) provides path
+/// The treetop planner: the motion sampling tree ([`tree`]) provides path
 /// candidates, iLQR ([`ilqr`]) optimizes each, the best optimized
 /// trajectory is the plan — and its action sequence warm-starts the tree
 /// next tick (treetop's `Planner::plan` loop). See the module doc and
@@ -184,7 +183,7 @@ impl Planner for TreetopPlanner {
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = rrt::Tree::grow(ego, goal, warm.as_deref(), tree_samples, path, ctx);
+                let tree = tree::Tree::grow(ego, goal, warm.as_deref(), tree_samples, path, ctx);
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });

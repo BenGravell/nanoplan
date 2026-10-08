@@ -17,7 +17,8 @@ planning/
 ├── pi2ddp/        sampling-based DDP (PI²-DDP)
 ├── rrt_star/      RRT*, cubic differential-flatness steering
 ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
-└── treetop/       treetop-derived: RRT motion sampling tree, finite-difference iLQR, and the RRT+iLQR treetop planner
+├── tree/          RRT motion tree with Frenet sampling and cubic segments
+└── treetop/       finite-difference iLQR and the RRT+iLQR treetop planner
 ```
 
 ## The `Planner` trait

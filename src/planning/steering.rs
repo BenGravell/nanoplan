@@ -5,10 +5,15 @@
 //! their derivatives. The curve matches only pose and velocity: acceleration
 //! stays a control, not hidden planner state.
 
+#[cfg(test)]
 use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
+#[cfg(test)]
 use crate::common::measure::dot;
 use crate::common::polynomial::CubicPolynomial;
-use crate::common::types::{Control, Position, State};
+use crate::common::types::Position;
+#[cfg(test)]
+use crate::common::types::{Control, State};
+#[cfg(test)]
 use crate::simulation::world_step_unclamped;
 
 /// Cubic flat-output connector between two states/poses.
@@ -25,6 +30,7 @@ pub(crate) struct CubicSteer {
 
 impl CubicSteer {
     /// Fit a time-parametrized connector between full vehicle states.
+    #[cfg(test)]
     pub(crate) fn from_states(start: &State, goal: &State, duration: f64) -> Self {
         let duration = duration.max(1e-6);
         let v0 = state_velocity(start);
@@ -65,6 +71,7 @@ impl CubicSteer {
     }
 
     /// Flat-output action `(longitudinal acceleration, curvature)`.
+    #[cfg(test)]
     pub(crate) fn control(&self, t: f64) -> Control {
         let (_, acceleration, curvature) = self.flat_motion(t);
         Control {
@@ -73,6 +80,7 @@ impl CubicSteer {
         }
     }
 
+    #[cfg(test)]
     fn flat_motion(&self, t: f64) -> (f64, f64, f64) {
         let t = t.clamp(0.0, self.duration);
         let [_, dx, ddx] = self.cx.at(t);
@@ -88,17 +96,6 @@ impl CubicSteer {
         (speed, accel, curvature)
     }
 
-    pub(crate) fn forward_sign(&self, yaw: f64, probe_t: f64) -> f64 {
-        let p0 = self.point(0.0);
-        let p1 = self.point(probe_t.min(self.duration));
-        let forward = Position::from_angle(yaw);
-        if dot((p1 - p0).xy(), forward.xy()) >= 0.0 {
-            1.0
-        } else {
-            -1.0
-        }
-    }
-
     /// Sample `n` points from start to end inclusive.
     pub(crate) fn sample(&self, n: usize) -> Vec<Position> {
         (0..n)
@@ -112,6 +109,7 @@ impl CubicSteer {
 /// callers flip the curve when they intentionally drive it in reverse.
 /// Disable `clamp` to retain infeasible commands and integrate them without
 /// limits, leaving feasibility checks to the caller.
+#[cfg(test)]
 pub(crate) fn steer_controls(
     start: State,
     steer: &CubicSteer,
@@ -138,6 +136,7 @@ pub(crate) fn steer_controls(
     (controls, x)
 }
 
+#[cfg(test)]
 fn state_velocity(x: &State) -> [f64; 2] {
     (Position::from_angle(x.pose.yaw) * x.speed).xy()
 }

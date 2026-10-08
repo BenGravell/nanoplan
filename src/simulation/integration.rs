@@ -2,6 +2,7 @@ use super::{Control, State};
 use crate::common::kinematics::{clamp_control, net_longitudinal_accel};
 
 /// Speed reached after `ticks` maximum-acceleration integration steps.
+#[cfg(test)]
 pub(crate) fn speed_after_max_accel(mut speed: f64, ticks: usize, dt: f64) -> f64 {
     if dt <= 0.0 {
         return speed;

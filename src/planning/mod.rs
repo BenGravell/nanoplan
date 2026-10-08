@@ -23,6 +23,7 @@ pub(crate) mod sampling_mpc;
 pub(crate) mod search_tree;
 pub(crate) mod steering;
 mod trajectory_cost;
+pub(crate) mod tree;
 pub(crate) mod treetop;
 mod warm_start;
 
@@ -39,7 +40,8 @@ pub(crate) use pi2ddp::Pi2DdpPlanner;
 pub(crate) use rrt_star::RrtStarPlanner;
 pub(crate) use sampling_mpc::{Cem, Mppi, PredictiveSampling, SamplingPlanner};
 pub(crate) use trajectory_cost::TrajectoryCost;
-pub(crate) use treetop::{IlqrPlanner, RrtPlanner, TreetopPlanner};
+pub(crate) use tree::RrtPlanner;
+pub(crate) use treetop::{IlqrPlanner, TreetopPlanner};
 pub(crate) use warm_start::take_warm;
 
 use crate::common::types::FrenetPosition;
