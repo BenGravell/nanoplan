@@ -28,11 +28,11 @@ Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100` ticks (1
 split into `SEGMENTS = 10` steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that advances every
 candidate through `simulation::world_step`.
 
-## RRT (treetop tree)
+## Tree
 
 `tree/mod.rs` — `TreePlanner`
 
-An RRT variant shaped by its downstream job — feeding a trajectory optimizer — rather than by asymptotic optimality
+A motion tree shaped by its downstream job — feeding a trajectory optimizer — rather than by asymptotic optimality
 (contrast [RRT\*](../rrt_star/README.md), which rewires toward the shortest path):
 
 - **Time-layered, fixed-depth growth.** The tree has exactly `SEGMENTS` layers past the root, each one steering segment

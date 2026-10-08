@@ -87,7 +87,7 @@ const SPECS: [PlannerSpec; 12] = [
     },
     PlannerSpec {
         kind: PlannerKind::Rrt,
-        name: "RRT (treetop tree)",
+        name: "Tree",
         build: || Box::new(TreePlanner::default()),
         has_diagnostics: true,
     },
