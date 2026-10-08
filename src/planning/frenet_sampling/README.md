@@ -8,15 +8,24 @@ Fitting and evaluation reuse `common::polynomial::CubicPolynomial`, also used by
 Vector operations, angle differences, and finite-position checks reuse the shared `common` helpers.
 Terminal station and speed are sampled independently around a zero-thrust rollout, bounded by braking and acceleration
 rollouts including resistance.
+For each lateral cubic, the bounds integrate station progress using the changing reference curvature and offset: `ds/dt
+<= v / (1 - curvature * offset)`.
+This conservative distance envelope leaves room for lateral recovery; terminal station speed accounts for terminal
+lateral velocity.
+The generated cubic's actual Cartesian motion must still pass the strict kinodynamic filter.
 Squared spacing above the nominal rollout retains slow rolling candidates on tight bends.
 
-At nominal budget there are 18 station samples, 10 speed samples, and 11 lateral offsets across the usable road width.
-Each offset is crossed with lateral velocities −0.5, 0, and +0.5 m/s.
-Each station/speed pair also includes a reflected lateral endpoint for stronger centerline recovery.
-The three variable sample counts scale with the cube root of the compute budget; lateral counts stay odd to include the
+Station, speed, and lateral sample counts are configured by the module-level sampling constants.
+Lateral offsets span the usable road width and are crossed with `TERMINAL_LATERAL_SPEEDS_MPS`.
+A reflected lateral endpoint strengthens centerline recovery.
+Each lateral cubic also gets paired station/speed targets from `SUSTAINED_ACCELERATION_FRACTIONS`, relative to the
+strongest sustained constant net acceleration allowed by terminal drag.
+On a straight centerline these fit a quadratic exactly, avoiding cubic acceleration overshoot from full-thrust
+endpoints.
+The variable sample counts scale with the cube root of the compute budget; lateral counts stay odd to include the
 centerline.
 
-Below 2 m/s, a straight acceleration prefix establishes the vehicle heading.
+Below `CUBIC_LAUNCH_SPEED_MPS`, a straight acceleration prefix establishes the vehicle heading.
 Cubics start from the projected state after that prefix and use the remaining duration of `PLANNING_HORIZON_S`.
 The sampling rollout uses that same remaining duration.
 

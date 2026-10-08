@@ -6,7 +6,7 @@ use crate::simulation::State;
 use crate::track::Path;
 
 /// Station radius for trajectory-state projection around a supplied hint.
-const STATE_SAMPLE_PROJECTION_RADIUS_M: f64 = 15.0;
+pub(crate) const STATE_SAMPLE_PROJECTION_RADIUS_M: f64 = 15.0;
 
 pub(crate) fn state_sample(path: &Path, x: &State, t_s: f64, s_hint: Option<f64>) -> (f64, Sample) {
     let p = x.position();
