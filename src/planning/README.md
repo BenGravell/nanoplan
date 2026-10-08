@@ -8,6 +8,7 @@ planning/
 ├── mod.rs         Planner trait, Context, PlannerKind + PlannerSpec registry, test harness
 ├── engine.rs      asynchronous planner execution for native threads and Web Workers
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
+├── frenet.rs      shared Frenet cubics, Cartesian transforms, and reachable target sampling
 ├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
 ├── leeroy_jenkins/ maximum acceleration, zero steering
 ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed

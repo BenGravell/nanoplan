@@ -9,6 +9,7 @@ mod config;
 pub(crate) mod controls;
 pub(crate) mod diagnostics;
 pub(crate) mod engine;
+pub(crate) mod frenet;
 pub(crate) mod frenet_sampling;
 pub(crate) mod latency;
 pub(crate) mod lattice;
