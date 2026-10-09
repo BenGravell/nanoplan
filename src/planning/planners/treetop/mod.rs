@@ -9,7 +9,7 @@
 //! directory (the same one-port-many-planners shape as
 //! [`super::sampling_mpc`]):
 //!
-//! - [`tree::TreePlanner`] (`../tree/mod.rs`) — the motion sampling tree alone
+//! - [`GraphPlanner`](super::motion_graph::GraphPlanner) (`../motion_graph/mod.rs`) — the motion sampling tree alone
 //!   (treetop's `tree/`), taking the tree's best path candidate as the
 //!   plan with no optimization pass.
 //! - [`IlqrPlanner`] (`ilqr.rs`) — the iLQR solver alone (treetop's
@@ -20,9 +20,8 @@
 //!   best-candidate selection → solution fed back to warm-start the next
 //!   tree.
 //!
-//! This file also owns what treetop keeps in `core/` — the pieces *both*
-//! halves stand on: the trajectory-length constants and coasting rollout
-//! (shared rollout lives in [`crate::planning::controls`]). nanoplan's
+//! The shared motion graph owns the steering-layer constants and coasting
+//! rollout; plant rollouts live in [`crate::planning::controls`]. nanoplan's
 //! kinematic model keeps only pose/speed in state and uses direct
 //! acceleration/curvature commands, so the treetop port reads those commands
 //! from its flat-output curves before every rollout.
@@ -51,42 +50,18 @@
 
 pub(crate) mod ilqr;
 
-use crate::planning::planners::tree;
+use crate::planning::planners::motion_graph::{Connections, Graph};
 pub(crate) use ilqr::IlqrPlanner;
 
 use crate::planning::controls::repeat_last_controls;
-use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, take_warm};
+use crate::planning::warm_start::shift_actions;
+use crate::planning::{Context, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
 
 /// Planning-horizon length in ticks — treetop's `TRAJ_LENGTH_OPT`, here
 /// 10 s at the simulator's 0.1 s tick rate, the same look-ahead every other
 /// receding-horizon planner uses.
 pub(crate) const TICKS: usize = PLANNING_TICKS;
-
-/// Ticks per steering segment (one tree edge) — treetop's
-/// `TRAJ_LENGTH_STEER`, scaled to the same 1 s of driving (treetop: 5 ticks
-/// of 0.2 s). treetop's comment on the trade-off applies unchanged: longer
-/// segments lean harder on the steering function and cover state space
-/// faster; shorter ones handle cusps better.
-pub(crate) const STEER_TICKS: usize = 10;
-
-/// Steering segments per trajectory — treetop's `NUM_STEER_SEGMENTS`; also
-/// the number of tree layers past the root.
-pub(crate) const SEGMENTS: usize = TICKS / STEER_TICKS;
-
-/// Where the vehicle ends up coasting (zero action) for `t` seconds. The
-/// tree attaches each sample to the previous layer's node whose zero-action
-/// point is nearest, a cheap proxy for "the parent that needs the least
-/// steering effort to get there."
-pub(crate) fn zero_action_point(x: State, t: f64) -> State {
-    let steps = (t / PLANNING_DT_S).ceil().max(1.0) as usize;
-    let dt = t / steps as f64;
-    let mut x = x;
-    for _ in 0..steps {
-        x = world_step(x, Control::default(), dt);
-    }
-    x
-}
 
 /// How many samples the tree spends per `plan()` call, spread across the
 /// layers. treetop's interactive default is 5000 across 19 layers; a 10 Hz
@@ -107,7 +82,7 @@ const CANDIDATES: usize = 2;
 /// a handful of iterations anyway.
 const OPT_ITERS: usize = 6;
 
-/// The treetop planner: the motion sampling tree ([`tree`]) provides path
+/// The treetop planner: the motion sampling tree ([`Graph`]) provides path
 /// candidates, iLQR ([`ilqr`]) optimizes each, the best optimized
 /// trajectory is the plan — and its action sequence warm-starts the tree
 /// next tick (treetop's `Planner::plan` loop). See the module doc and
@@ -134,17 +109,6 @@ pub(crate) struct TreetopPlanner {
     expected_next: State,
 }
 
-/// Shift a warm-start action sequence one tick forward (the simulator
-/// executed its first control), holding the last action — shared by every
-/// planner in this directory.
-pub(crate) fn shift_actions(mut actions: Vec<Control>) -> Vec<Control> {
-    if !actions.is_empty() {
-        actions.remove(0);
-        actions.push(*actions.last().unwrap());
-    }
-    actions
-}
-
 impl Planner for TreetopPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || ctx.path());
@@ -158,7 +122,7 @@ impl Planner for TreetopPlanner {
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = tree::Tree::grow(ego, warm.as_deref(), tree_samples, path, ctx);
+                let tree = Graph::grow(ego, warm.as_deref(), tree_samples, path, ctx, Connections::NearestZap);
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });
@@ -187,7 +151,7 @@ impl Planner for TreetopPlanner {
                 .chain(
                     candidates[cand_ix]
                         .iter()
-                        .flat_map(|&n| tree.nodes[n].states.iter().skip(1).map(Into::into)),
+                        .flat_map(|&n| tree.nodes[n].states().iter().skip(1).map(Into::into)),
                 )
                 .collect();
             diag.record_trajectory(pre);
@@ -219,18 +183,6 @@ mod tests {
         let (xs, us) = crate::planning::controls::rollout_constrained(x0, &actions, 0.1);
         assert_eq!(us, actions);
         assert_eq!(xs[1], world_step(x0, actions[0], 0.1));
-    }
-
-    #[test]
-    fn zero_action_point_coasts_straight_and_slows() {
-        let x = State::new(
-            crate::simulation::Pose::new(crate::simulation::Position::new(1.0, 2.0), 0.0),
-            5.0,
-        );
-        let z = zero_action_point(x, 2.0);
-        assert!(z.position().x > x.position().x && z.position().x < x.position().x + x.speed * 2.0);
-        assert!(z.speed < x.speed);
-        assert_eq!((z.position().y, z.pose.yaw), (x.position().y, x.pose.yaw));
     }
 
     #[test]

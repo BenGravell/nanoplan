@@ -1,6 +1,6 @@
 use super::{
-    BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreePlanner, TreetopPlanner,
+    BezierToppraPlanner, Cem, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner,
+    Mppi, Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -45,7 +45,7 @@ const SPECS: [PlannerSpec; 11] = [
     PlannerSpec {
         kind: PlannerKind::Lattice,
         name: "frenet lattice",
-        build: || Box::new(LatticePlanner),
+        build: || Box::new(GraphPlanner::new(Connections::Lattice)),
         has_diagnostics: true,
     },
     PlannerSpec {
@@ -81,7 +81,7 @@ const SPECS: [PlannerSpec; 11] = [
     PlannerSpec {
         kind: PlannerKind::Tree,
         name: "Tree",
-        build: || Box::new(TreePlanner::default()),
+        build: || Box::new(GraphPlanner::new(Connections::NearestZap)),
         has_diagnostics: true,
     },
     PlannerSpec {

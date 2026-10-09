@@ -15,7 +15,6 @@ pub(crate) mod planner_math;
 pub(crate) mod planners;
 pub(crate) mod policy;
 pub(crate) mod sampling;
-pub(crate) mod search_tree;
 mod trajectory_cost;
 mod warm_start;
 
@@ -25,8 +24,8 @@ pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use planners::{
-    BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreePlanner, TreetopPlanner,
+    BezierToppraPlanner, Cem, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner,
+    Mppi, Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
 };
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use warm_start::take_warm;

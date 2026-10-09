@@ -1,6 +1,7 @@
 //! Shared vehicle kinematics, resistance, and control limits.
 
 use crate::common::types::{Control, State};
+use crate::simulation::world_step;
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
     ROLLING_RESISTANCE_ACCEL,
@@ -43,6 +44,14 @@ impl TrajectoryKinematics {
     pub(crate) fn len(&self) -> usize {
         self.states.len()
     }
+}
+
+/// Where the vehicle ends up after coasting for `ticks` steps of `dt` seconds.
+pub(crate) fn zero_action_point(mut x: State, ticks: usize, dt: f64) -> State {
+    for _ in 0..ticks {
+        x = world_step(x, Control::default(), dt);
+    }
+    x
 }
 
 /// Speed after traveling a given distance under constant acceleration from an initial speed.
@@ -123,6 +132,24 @@ pub(crate) fn clamp_control(control: Control, speed: f64) -> Control {
 mod tests {
     use super::*;
     use crate::vehicle::MAX_TERMINAL_SPEED_MPS;
+
+    #[test]
+    fn zero_action_point_coasts_straight_and_slows() {
+        let x = State::new(
+            crate::simulation::Pose::new(crate::simulation::Position::new(1.0, 2.0), 0.0),
+            5.0,
+        );
+        for ticks in [0, 1, 3, 20] {
+            for dt in [0.03, 0.1, 0.2] {
+                let expected = (0..ticks).fold(x, |state, _| world_step(state, Control::default(), dt));
+                assert_eq!(zero_action_point(x, ticks, dt), expected);
+            }
+        }
+        let z = zero_action_point(x, 20, 0.1);
+        assert!(z.position().x > x.position().x && z.position().x < x.position().x + x.speed * 2.0);
+        assert!(z.speed < x.speed);
+        assert_eq!((z.position().y, z.pose.yaw), (x.position().y, x.pose.yaw));
+    }
 
     #[test]
     fn curvature_and_lateral_acceleration_round_trip() {

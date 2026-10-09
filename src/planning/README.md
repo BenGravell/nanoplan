@@ -13,11 +13,12 @@ planning/
 └── planners/      concrete planner implementations
     ├── leeroy_jenkins/ maximum acceleration, zero steering
     ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
-    ├── lattice/       Frenet lattice, high-res sampled grid + A* search
+    ├── motion_graph/  shared Tree/lattice graph, sampling, steering, and rollout
+    │   ├── nearest_zap.rs  single-parent nearest-ZAP connection strategy
+    │   └── lattice.rs      multiple-parent connections and layered minimum-cost search
     ├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
     ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
-    ├── tree/          Tree planner with Frenet sampling and cubic segments
     └── treetop/       finite-difference iLQR and the Tree+iLQR treetop planner
 ```
 
@@ -232,7 +233,7 @@ Both use the same sequence implementation, and their deterministic-planning test
 
 - [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
 - [Bezier + TOPP-RA](planners/bezier_toppra/README.md)
-- [Frenet lattice](planners/lattice/README.md)
+- [Tree and lattice motion graph](planners/motion_graph/README.md)
 - [PI²-DDP](planners/pi2ddp/README.md)
 - [Sampling MPC](planners/sampling_mpc/README.md)
 - [Treetop](planners/treetop/README.md)

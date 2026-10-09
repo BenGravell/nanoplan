@@ -1,6 +1,6 @@
 # Treetop (Tree / iLQR / Tree+iLQR)
 
-`treetop/` — `TreePlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
+`treetop/` — `GraphPlanner` (`../motion_graph/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
 A port of [**treetop**](https://github.com/BenGravell/treetop), a tree-initialized trajectory-optimizing planner: an ego
 motion sampling tree provides a strong, collision-aware initial trajectory guess, and iLQR (iterative Linear Quadratic
@@ -23,13 +23,13 @@ treetop's `std::mt19937` sampling and action jitter are replaced by the **shared
 entirely — its purpose is randomized restarts), so all three planners are pure functions of the ego state, pinned by
 `*_is_a_pure_function_of_state` tests.
 
-Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100` ticks (10 s, the common `PLANNING_HORIZON_S`),
-split into `SEGMENTS = 10` steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that advances every
-candidate through `simulation::world_step`.
+The shared motion graph, used by both halves: the horizon is `TICKS = 100` ticks (10 s, the common
+`PLANNING_HORIZON_S`), split into `SEGMENTS = 10` steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout
+that advances every candidate through `simulation::world_step`.
 
 ## Tree
 
-`tree/mod.rs` — `TreePlanner`
+`motion_graph/mod.rs` — `GraphPlanner::new(Connections::NearestZap)`
 
 A motion tree shaped by its downstream job — feeding a trajectory optimizer:
 

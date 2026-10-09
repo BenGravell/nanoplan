@@ -1,5 +1,5 @@
 use crate::common::types::position::Position;
-use crate::simulation::State;
+use crate::simulation::{Control, State};
 
 const MAX_POSITION_ERROR_M: f64 = 1.0;
 
@@ -10,6 +10,16 @@ fn matches(expected_next: State, ego: State) -> bool {
 /// Take a warm start only if the ego ended up where the previous plan predicted.
 pub(crate) fn take_warm<T>(prev: &mut Option<T>, expected_next: State, ego: State) -> Option<T> {
     prev.take().filter(|_| matches(expected_next, ego))
+}
+
+/// Shift a warm-start action sequence one tick forward (the simulator
+/// executed its first control), holding the last action.
+pub(crate) fn shift_actions(mut actions: Vec<Control>) -> Vec<Control> {
+    if !actions.is_empty() {
+        actions.remove(0);
+        actions.push(*actions.last().unwrap());
+    }
+    actions
 }
 
 #[cfg(test)]
