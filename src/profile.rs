@@ -8,7 +8,7 @@ use crate::world::{EgoStart, LiveWorld};
 
 const PLANNERS: [(&str, PlannerKind); 11] = [
     ("leeroy-jenkins", PlannerKind::LeeroyJenkins),
-    ("bezier-toppra", PlannerKind::BezierToppra),
+    ("centerline-follower", PlannerKind::CenterlineFollower),
     ("lattice", PlannerKind::Lattice),
     ("frenet-sampling", PlannerKind::FrenetSampling),
     ("pi2-ddp", PlannerKind::Pi2Ddp),
@@ -71,7 +71,7 @@ fn planner_kind(name: &str) -> Option<PlannerKind> {
         .iter()
         .find_map(|(id, kind)| (*id == normalized).then_some(*kind))
         .or(match normalized.as_str() {
-            "bezier" => Some(PlannerKind::BezierToppra),
+            "centerlinefollower" => Some(PlannerKind::CenterlineFollower),
             "frenet-lattice" => Some(PlannerKind::Lattice),
             "pi2ddp" => Some(PlannerKind::Pi2Ddp),
             "ps" => Some(PlannerKind::PredictiveSampling),

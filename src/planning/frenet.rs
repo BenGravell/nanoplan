@@ -45,45 +45,53 @@ pub(crate) struct Motion {
 impl Motion {
     /// Transform Frenet position and derivatives into Cartesian state and net controls.
     pub(crate) fn at(&self, path: &Path, t: f64) -> Option<(State, Control)> {
-        let [s, sv, sa] = self.longitudinal.at(t);
-        let [d, dv, da] = self.lateral.at(t);
-        if !(0.0..=path.length()).contains(&s) || sv < -STATION_SPEED_TOLERANCE_MPS {
-            return None;
-        }
-        let k = path.curvature_at(s);
-        let dk = path.sharpness_at(s);
-        let scale = 1.0 - k * d;
-        if scale <= MIN_FRENET_SCALE {
-            return None;
-        }
-        let vx = scale * sv;
-        let ax = scale * sa - dk * d * sv * sv - 2.0 * k * sv * dv;
-        let ay = da + k * scale * sv * sv;
-        let velocity = Position::new(vx, dv);
-        let acceleration = Position::new(ax, ay);
-        let speed = velocity.norm();
-        let (acceleration, curvature) = if speed > MOTION_SPEED_EPSILON_MPS {
-            (
-                dot(velocity.xy(), acceleration.xy()) / speed,
-                velocity.cross(acceleration) / speed.powi(3),
-            )
-        } else {
-            (ax, 0.0)
-        };
-        let heading = path.heading_at(s);
-        let left = Position::from_angle(heading + std::f64::consts::FRAC_PI_2);
-        let state = State::from((path.pose_at(s).0 + left * d, heading + velocity.angle(), speed));
-        let control = Control {
-            acceleration,
-            curvature,
-        };
-        (state.position().is_finite()
-            && state.pose.yaw.is_finite()
-            && speed.is_finite()
-            && acceleration.is_finite()
-            && curvature.is_finite())
-        .then_some((state, control))
+        cartesian_kinematics(path, self.longitudinal.at(t), self.lateral.at(t))
     }
+}
+
+/// Transform Frenet coordinates and derivatives with respect to any common parameter.
+/// For a spatial parameter, the returned control's curvature is geometric curvature.
+pub(crate) fn cartesian_kinematics(
+    path: &Path,
+    [s, sv, sa]: [f64; 3],
+    [d, dv, da]: [f64; 3],
+) -> Option<(State, Control)> {
+    if !(0.0..=path.length()).contains(&s) || sv < -STATION_SPEED_TOLERANCE_MPS {
+        return None;
+    }
+    let k = path.curvature_at(s);
+    let dk = path.sharpness_at(s);
+    let scale = 1.0 - k * d;
+    if scale <= MIN_FRENET_SCALE {
+        return None;
+    }
+    let vx = scale * sv;
+    let ax = scale * sa - dk * d * sv * sv - 2.0 * k * sv * dv;
+    let ay = da + k * scale * sv * sv;
+    let velocity = Position::new(vx, dv);
+    let acceleration = Position::new(ax, ay);
+    let speed = velocity.norm();
+    let (acceleration, curvature) = if speed > MOTION_SPEED_EPSILON_MPS {
+        (
+            dot(velocity.xy(), acceleration.xy()) / speed,
+            velocity.cross(acceleration) / speed.powi(3),
+        )
+    } else {
+        (ax, 0.0)
+    };
+    let heading = path.heading_at(s);
+    let left = Position::from_angle(heading + std::f64::consts::FRAC_PI_2);
+    let state = State::from((path.pose_at(s).0 + left * d, heading + velocity.angle(), speed));
+    let control = Control {
+        acceleration,
+        curvature,
+    };
+    (state.position().is_finite()
+        && state.pose.yaw.is_finite()
+        && speed.is_finite()
+        && acceleration.is_finite()
+        && curvature.is_finite())
+    .then_some((state, control))
 }
 
 fn sampling_scale(budget: ComputeBudget) -> f64 {

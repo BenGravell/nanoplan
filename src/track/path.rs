@@ -34,6 +34,7 @@ pub(crate) struct Path {
 }
 
 impl Path {
+    #[cfg(test)]
     pub(crate) fn new(pts: &[Position]) -> Self {
         Self::with_geometry(pts, None)
     }

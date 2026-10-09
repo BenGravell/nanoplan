@@ -12,7 +12,7 @@ mod road;
 mod track;
 
 pub(crate) use catalog::TRACK_CATALOG;
-pub(crate) use path::Path;
+pub(crate) use path::{Path, ReferenceGeometry};
 pub(crate) use presets::TRACK_PRESETS;
 pub(crate) use road::{Road, RoadView};
 pub(crate) use track::Track;

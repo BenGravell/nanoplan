@@ -161,9 +161,9 @@ fn growing_reach_refreshes_the_road_before_twenty_metres_of_progress() {
 }
 
 #[test]
-fn bezier_toppra_one_lap_logical_clocks_are_stable() {
+fn centerline_follower_one_lap_logical_clocks_are_stable() {
     let small_track = crate::track::TRACK_PRESETS.len() - 1;
-    let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::BezierToppra, 5, 0.1);
+    let mut world = LiveWorld::with_track(small_track, 1, PlannerKind::CenterlineFollower, 5, 0.1);
     let lap_length = world.track.lap_length().unwrap();
     let recorder = Latency::default();
     let mut latency = LatencyStats::default();
@@ -183,23 +183,23 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
     }
 
     assert_eq!(world.ego_collision_count, 0);
-    assert_eq!(ticks, 284);
+    assert_eq!(ticks, 346);
     // Includes live segment queries and candidate geometry; static track builds are covered by preparation tests.
     for (name, calls, total_clocks, max_clocks) in [
-        ("simulation.progress", 284, 284, 1),
-        ("simulation.actors", 284, 1_420, 5),
-        ("simulation.actor_culling", 284, 1_420, 5),
-        ("route", 284, 13_064, 46),
-        ("bezier_fit", 284, 258_156, 909),
-        ("extract", 284, 7_638_867, 60_414),
-        ("optimize", 284, 22_898_106, 182_706),
-        ("cost", 284, 14_962_268, 70_880),
-        ("planner.total", 284, 38_167_910, 254_641),
-        ("simulation.preview", 284, 8_520, 30),
-        ("simulation.ego", 284, 284, 1),
-        ("simulation.collisions", 284, 37_178, 198),
-        ("simulation.total", 284, 49_181, 240),
-        ("simulation.roads", 75, 75, 1),
+        ("simulation.progress", 346, 346, 1),
+        ("simulation.actors", 346, 1_730, 5),
+        ("simulation.actor_culling", 346, 1_730, 5),
+        ("route", 346, 15_916, 46),
+        ("bezier_fit", 346, 314_514, 909),
+        ("extract", 346, 7_308_790, 82_265),
+        ("optimize", 346, 25_410_488, 258_870),
+        ("cost", 346, 19_866_738, 70_997),
+        ("planner.total", 346, 45_680_100, 328_475),
+        ("simulation.preview", 346, 10_380, 30),
+        ("simulation.ego", 346, 346, 1),
+        ("simulation.collisions", 346, 45_638, 212),
+        ("simulation.total", 346, 60_249, 255),
+        ("simulation.roads", 79, 79, 1),
     ] {
         let seam = latency
             .seams
@@ -216,7 +216,7 @@ fn bezier_toppra_one_lap_logical_clocks_are_stable() {
 
 #[test]
 fn world_keeps_driving_without_a_route_or_goal() {
-    let mut world = LiveWorld::with_track(0, 1, PlannerKind::BezierToppra, 0, 0.1);
+    let mut world = LiveWorld::with_track(0, 1, PlannerKind::CenterlineFollower, 0, 0.1);
     for _ in 0..100 {
         world.tick_with_latency(None);
     }

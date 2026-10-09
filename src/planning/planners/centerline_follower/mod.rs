@@ -1,23 +1,25 @@
-//! Road-following cubic Bezier candidates, each timed with scalar TOPP-RA.
+//! Frenet Bezier paths back to the centerline, timed in Cartesian arc length with TOPP-RA.
 
-use crate::common::geometry::barrier::{collide_with_road_barriers, collides_with_road_barrier};
+use crate::common::geometry::barrier::collide_with_road_barriers;
+#[cfg(test)]
+use crate::common::geometry::barrier::collides_with_road_barrier;
+use crate::common::geometry::bezier::CubicBezier;
 use crate::common::geometry::wrap_angle;
 #[cfg(test)]
 use crate::common::geometry::{CAR_FOOTPRINT, footprints_overlap};
 use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
 use crate::common::kinematics::{commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel};
-use crate::common::math::smoothstep;
 use crate::common::types::FrenetPosition;
-use crate::constraints::Constraints;
 use crate::constraints::collision::actor_collision;
 use crate::metrics;
-use crate::planning::planner_math::state_sample;
+use crate::planning::feasibility::trajectory_is_feasible;
+use crate::planning::frenet::cartesian_kinematics;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 #[cfg(test)]
 use crate::prediction::predict;
 use crate::simulation::{Control, Pose, Position, State, curvature_limit, world_step};
-use crate::track::Path;
+use crate::track::{Path, ReferenceGeometry};
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
     ROLLING_RESISTANCE_ACCEL,
@@ -32,11 +34,9 @@ const MAX_REFINEMENTS: usize = 8;
 const ROAD_FOOTPRINT: Footprint = Footprint::new(EGO_FOOTPRINT.length + 0.1, EGO_FOOTPRINT.width + 0.2);
 
 #[derive(Default)]
-pub(crate) struct BezierToppraPlanner {
-    previous: Vec<(State, Control)>,
-}
+pub(crate) struct CenterlineFollower;
 
-impl Planner for BezierToppraPlanner {
+impl Planner for CenterlineFollower {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         if ctx.horizon == 0 {
             return Vec::new();
@@ -52,43 +52,19 @@ impl Planner for BezierToppraPlanner {
         };
         let ticks = ctx.horizon.max((PLANNING_HORIZON_S / ctx.road.dt).ceil() as usize);
         let mut best: Option<(f64, Vec<Control>)> = None;
-        for (stations, offsets) in path_targets(ctx, start.s, stations) {
+        for stations in path_targets(ctx, start.s, stations) {
             let curve = ctx.time("bezier_fit", || {
                 ctx.work(GRID_STEPS as u64);
-                BezierPath::new(ego, path, start, stations, offsets)
+                CartesianPath::new(ego, path, start, stations)
             });
+            let Some(curve) = curve else { continue };
             let controls = ctx.time("optimize", || parameterize(ego, ctx, &curve, ticks));
             let cost = ctx.time("cost", || candidate_cost(ego, ctx, &controls));
             if cost.is_finite() && best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
                 best = Some((cost, controls));
             }
         }
-        // Keep the continuation in contention even when new candidates are feasible.
-        // Align by predicted state, not call count: live requests can skip ticks.
-        // Revalidate from the actual ego against today's road and actor forecasts.
-        if let Some((index, _)) = self.previous.iter().enumerate().min_by(|(_, (a, _)), (_, (b, _))| {
-            let error = |x: &State| {
-                x.position().distance(ego.position())
-                    + (x.speed - ego.speed).abs() * ctx.road.dt
-                    + wrap_angle(x.pose.yaw - ego.pose.yaw).abs() * EGO_FOOTPRINT.length
-            };
-            error(a).total_cmp(&error(b))
-        }) {
-            let mut controls: Vec<_> = self.previous[index..].iter().map(|&(_, u)| u).collect();
-            controls.resize(ticks, *controls.last().unwrap());
-            let cost = ctx.time("cost", || candidate_cost(ego, ctx, &controls));
-            if cost.is_finite() && best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
-                best = Some((cost, controls));
-            }
-        }
-        self.previous.clear();
         best.map(|(_, mut controls)| {
-            let mut state = ego;
-            for &u in &controls {
-                self.previous.push((state, u));
-                state = world_step(state, u, ctx.road.dt);
-                ctx.work(1);
-            }
             controls.truncate(ctx.horizon);
             controls
         })
@@ -126,137 +102,93 @@ fn stations(speed: f64, s0: f64, end: f64, dt: f64) -> Option<[f64; 2]> {
     // plant's Euler integration without capping acceleration on the last tick.
     targets[1] = (targets[1] + speeds[1] * dt).min(remaining);
     targets[0] = targets[0].min(0.5 * targets[1]);
-    Some(targets.map(|distance| s0 + distance))
+    Some(targets.map(|distance| (s0 + distance).min(end)))
 }
 
-/// A nested maneuver grid: centerline recovery, coarse lateral targets, then
-/// half-width refinement and crossing paths. Every side is followed by its mirror.
-fn path_targets(ctx: &Context, s0: f64, stations: [f64; 2]) -> Vec<([f64; 2], [f64; 2])> {
-    let lateral_grid = [
-        [1.0, 1.0],
-        [1.0, 0.0],
-        [0.0, 1.0],
-        [0.5, 0.5],
-        [0.5, 0.0],
-        [0.0, 0.5],
-        [1.0, -1.0],
-    ];
-    let grid = lateral_grid.chunks(3).flat_map(|level| {
-        [0.5, 0.25, 1.0].into_iter().flat_map(move |reach| {
-            level.iter().flat_map(move |lateral| {
-                [-1.0, 1.0]
-                    .into_iter()
-                    .map(move |sign| (reach, lateral.map(|d| sign * d)))
-            })
-        })
-    });
-    [1.0, 0.5, 0.25]
-        .into_iter()
-        .map(|reach| (reach, [0.0; 2]))
-        .chain(grid)
-        .take(ctx.compute_budget.scale(NOMINAL_PATHS, 5))
-        .map(|(reach, lateral)| {
-            let targets = [crate::common::interp::lerp(s0, stations[0], reach), stations[1]];
-            let offsets = std::array::from_fn(|j| {
-                let (right, left) = ctx.road.lateral_bounds_at(targets[j]);
-                // Preserve the existing front-corner clearance at each target.
-                let margin = EGO_FOOTPRINT.width / 2.0 + 0.5;
-                if lateral[j] < 0.0 {
-                    -lateral[j] * (right + margin).min(0.0)
-                } else {
-                    lateral[j] * (left - margin).max(0.0)
-                }
-            });
-            (targets, offsets)
+/// Sample merge stations in a nested grid; every candidate ends on the centerline.
+fn path_targets(ctx: &Context, s0: f64, stations: [f64; 2]) -> Vec<[f64; 2]> {
+    (0..ctx.compute_budget.scale(NOMINAL_PATHS, 3))
+        .map(|i| {
+            let reach = if i == 0 {
+                1.0
+            } else {
+                let denominator = (i + 1).next_power_of_two();
+                (2 * (i - denominator / 2) + 1) as f64 / denominator as f64
+            };
+            [s0 + (stations[0] - s0) * reach, stations[1]]
         })
         .collect()
 }
 
-struct BezierPath {
-    segments: Vec<[Position; 4]>,
-    /// Approximate arc length at each short cubic's endpoints.
+/// A merge cubic in (s, d), extended by a straight Bezier on d = 0.
+fn frenet_segments(start: FrenetPosition, slope: f64, stations: [f64; 2]) -> [CubicBezier; 2] {
+    let handle = (stations[0] - start.s) / 3.0;
+    let extension = (stations[1] - stations[0]) / 3.0;
+    [
+        CubicBezier([
+            Position::new(start.s, start.d),
+            Position::new(start.s + handle, start.d + slope * handle),
+            Position::new(stations[0] - handle, 0.0),
+            Position::new(stations[0], 0.0),
+        ]),
+        CubicBezier([
+            Position::new(stations[0], 0.0),
+            Position::new(stations[0] + extension, 0.0),
+            Position::new(stations[1] - extension, 0.0),
+            Position::new(stations[1], 0.0),
+        ]),
+    ]
+}
+
+/// Cartesian samples and arc lengths, prepared before speed planning.
+struct CartesianPath {
     distance: Vec<f64>,
     reference: Path,
 }
 
-impl BezierPath {
-    fn new(
-        ego: State,
-        path: &Path,
-        FrenetPosition { s: s0, d: d0 }: FrenetPosition,
-        stations: [f64; 2],
-        offsets: [f64; 2],
-    ) -> Self {
-        let heading = wrap_angle(ego.pose().yaw - path.pose_at(s0).1);
-        // The two search stations control lateral motion, not road geometry.
-        // Fit short cubics along the route so a distant endpoint cannot cut
-        // across intervening bends and create an artificial braking obstacle.
-        let points: Vec<_> = (0..=GRID_STEPS)
-            .map(|i| {
-                if i == 0 {
-                    return ego.position();
-                }
-                let (layer, t) = segment_parameter(i as f64);
-                let (start, d, slope) = if layer == 0 {
-                    (s0, d0, heading.sin() / heading.cos().max(0.1))
-                } else {
-                    (stations[0], offsets[0], 0.0)
-                };
-                let span = stations[layer] - start;
-                let blend = smoothstep(t);
-                let offset =
-                    crate::common::interp::lerp(d, offsets[layer], blend) + span * slope * t * (1.0 - t).powi(2);
-                path.frenet_to_position(start + span * t, offset)
-            })
-            .collect();
-        let lengths: Vec<_> = points.windows(2).map(|p| p[0].distance(p[1])).collect();
-        let poses: Vec<_> = points
-            .iter()
-            .enumerate()
-            .map(|(i, &position)| {
-                let yaw = if i == 0 {
-                    ego.pose().yaw
-                } else if i == GRID_STEPS {
-                    path.pose_at(stations[1]).1
-                } else {
-                    let before = (position - points[i - 1]) * (1.0 / lengths[i - 1].max(1e-9));
-                    let after = (points[i + 1] - position) * (1.0 / lengths[i].max(1e-9));
-                    // Weight secants by the opposite interval: the two station
-                    // spans can have very different sample spacing at their join.
-                    let tangent = before * lengths[i] + after * lengths[i - 1];
-                    tangent.y.atan2(tangent.x)
-                };
-                Pose::new(position, yaw)
-            })
-            .collect();
-        let segments = (0..GRID_STEPS)
-            .map(|i| {
-                // Tangents share a direction; scale each handle by its own
-                // interval so unequal spacing cannot amplify join curvature.
-                fit_bezier(poses[i], poses[i + 1], lengths[i] / 3.0, lengths[i] / 3.0)
-            })
-            .collect();
-        // ponytail: fixed-grid chord lengths approximate arc length; use
-        // adaptive subdivision if tighter geometric accuracy is needed.
+impl CartesianPath {
+    fn new(ego: State, path: &Path, start: FrenetPosition, stations: [f64; 2]) -> Option<Self> {
+        let heading = wrap_angle(ego.pose.yaw - path.heading_at(start.s));
+        let scale = 1.0 - path.curvature_at(start.s) * start.d;
+        if heading.cos() <= 0.0 || scale <= 0.1 {
+            return None;
+        }
+        let segments = frenet_segments(start, scale * heading.tan(), stations);
+        let mut points = Vec::with_capacity(GRID_STEPS + 1);
+        let mut geometry = Vec::with_capacity(GRID_STEPS + 1);
         let mut distance = vec![0.0];
-        for pair in points.windows(2) {
-            distance.push(distance.last().unwrap() + pair[0].distance(pair[1]).max(1e-9));
+        for i in 0..=GRID_STEPS {
+            // Include the merge exactly and sample both cubics independently.
+            let parameter = i as f64 * 2.0 / GRID_STEPS as f64;
+            let segment = (parameter as usize).min(1);
+            let [p, d1, d2] = segments[segment].at(parameter - segment as f64);
+            let (state, control) = cartesian_kinematics(path, [p.x, d1.x, d2.x], [p.y, d1.y, d2.y])?;
+            let point = if i == 0 { ego.position() } else { state.position() };
+            if let Some(&previous) = points.last() {
+                // ponytail: fixed-grid chords approximate Cartesian arc length;
+                // use adaptive subdivision if tighter accuracy is needed.
+                let ds = point.distance(previous);
+                if ds <= f64::EPSILON || !ds.is_finite() {
+                    return None;
+                }
+                distance.push(distance.last().unwrap() + ds);
+            }
+            points.push(point);
+            geometry.push(ReferenceGeometry {
+                heading: state.pose.yaw,
+                curvature: control.curvature,
+            });
         }
-        Self {
-            segments,
+        Some(Self {
             distance,
-            reference: Path::new(&points),
-        }
+            reference: Path::with_geometry(&points, Some(&geometry)),
+        })
     }
 
     fn at(&self, distance: f64) -> (Pose, f64) {
-        let i = self.index(distance);
-        let t = ((distance - self.distance[i]) / self.ds(i)).clamp(0.0, 1.0);
-        let b = &self.segments[i];
-        let tangent = bezier_d1(b, t);
         (
-            Pose::new(bezier_point(b, t), tangent[1].atan2(tangent[0])),
-            bezier_curvature(b, t),
+            Pose::new(self.reference.pose_at(distance).0, self.reference.heading_at(distance)),
+            self.reference.curvature_at(distance),
         )
     }
 
@@ -272,22 +204,7 @@ impl BezierPath {
     }
 }
 
-fn segment_parameter(index: f64) -> (usize, f64) {
-    let parameter = index * 2.0 / GRID_STEPS as f64;
-    let segment = (parameter as usize).min(1);
-    (segment, parameter - segment as f64)
-}
-
-fn fit_bezier(start: Pose, end: Pose, start_handle: f64, end_handle: f64) -> [Position; 4] {
-    [
-        start.position,
-        start.position + Position::from_angle(start.yaw) * start_handle,
-        end.position - Position::from_angle(end.yaw) * end_handle,
-        end.position,
-    ]
-}
-
-fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> Vec<Control> {
+fn parameterize(ego: State, ctx: &Context, curve: &CartesianPath, ticks: usize) -> Vec<Control> {
     let mut limits: Vec<_> = curve
         .distance
         .iter()
@@ -312,11 +229,15 @@ fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> 
         ctx.work(2 * GRID_STEPS as u64);
         let times = arrival_times(&ds, &speed2);
         let mut changed = false;
+        // Actors have already advanced before the next ego command is applied.
+        // Keep the whole speed profile aligned with that first-step check.
         for (i, &time) in times.iter().enumerate().skip(1) {
             if time > ticks as f64 * ctx.road.dt {
                 break;
             }
-            if actor_collision(curve.at(curve.distance[i]).0, time, ctx) && limits[i - 1] != 0.0 {
+            if actor_collision(curve.at(curve.distance[i]).0, (time - ctx.road.dt).max(0.0), ctx)
+                && limits[i - 1] != 0.0
+            {
                 limits[i - 1..].fill(0.0);
                 changed = true;
             }
@@ -331,7 +252,7 @@ fn parameterize(ego: State, ctx: &Context, curve: &BezierPath, ticks: usize) -> 
             state = world_step(state, u, ctx.road.dt);
             ctx.work(1);
             let barrier = collide_with_road_barriers(previous, state, ROAD_FOOTPRINT, ctx.road) != state;
-            let actor = actor_collision(state.pose(), (tick + 1) as f64 * ctx.road.dt, ctx);
+            let actor = actor_collision(state.pose(), tick as f64 * ctx.road.dt, ctx);
             if barrier || actor {
                 let index = curve.index(distance).saturating_sub(1);
                 if let Some(bound) = (0..=index).rev().find(|&i| limits[i] != 0.0) {
@@ -394,7 +315,7 @@ fn arrival_times(ds: &[f64], speed2: &[f64]) -> Vec<f64> {
 fn extract_controls(
     ego: State,
     ctx: &Context,
-    curve: &BezierPath,
+    curve: &CartesianPath,
     speed2: &[f64],
     times: &[f64],
     ticks: usize,
@@ -430,37 +351,18 @@ fn extract_controls(
 
 fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
     let path = ctx.path();
-    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, ctx.project_ego(ego).s);
-    let mut state = ego;
-    let mut feasible = true;
     let mut states = Vec::with_capacity(controls.len() + 1);
     states.push(ego);
-    for (tick, &u) in controls.iter().enumerate() {
-        let previous = state;
-        state = world_step(state, u, ctx.road.dt);
-        let time = (tick + 1) as f64 * ctx.road.dt;
-        let (s, mut sample) = state_sample(path, &state, time, None);
-        sample = sample.with_control(u, previous.speed);
-        sample.road_bounds = Some(ctx.road.lateral_bounds_at(s));
-        if !u.acceleration.is_finite()
-            || !u.curvature.is_finite()
-            || state.speed < -1e-9
-            || collides_with_road_barrier(state, ctx.road)
-            || collide_with_road_barriers(previous, state, ROAD_FOOTPRINT, ctx.road) != state
-            || actor_collision(state.pose(), time, ctx)
-            || constraints.is_violated(&sample)
-        {
-            feasible = false;
-        }
+    for &u in controls {
+        states.push(world_step(*states.last().unwrap(), u, ctx.road.dt));
         ctx.work(1);
-        states.push(state);
     }
     if let Some(diag) = ctx.diagnostics {
         let points = states.iter().map(|state| state.position()).collect();
         let times = (0..states.len()).map(|i| i as f64 * ctx.road.dt).collect();
         diag.record_timed_trajectory(points, times);
     }
-    if !feasible {
+    if !trajectory_is_feasible(&states, controls, ctx) {
         return f64::INFINITY;
     }
     -metrics::evaluate(&states, ctx.road.dt, path, None)
@@ -488,39 +390,6 @@ fn brake(ego: State, ctx: &Context) -> Vec<Control> {
         .collect()
 }
 
-fn bezier_point(p: &[Position; 4], t: f64) -> Position {
-    let mt = 1.0 - t;
-    let c = [mt.powi(3), 3.0 * mt * mt * t, 3.0 * mt * t * t, t.powi(3)];
-    Position::new(
-        c.iter().zip(p).map(|(c, p)| c * p.x).sum(),
-        c.iter().zip(p).map(|(c, p)| c * p.y).sum(),
-    )
-}
-
-fn bezier_d1(p: &[Position; 4], t: f64) -> [f64; 2] {
-    let mt = 1.0 - t;
-    let c = [3.0 * mt * mt, 6.0 * mt * t, 3.0 * t * t];
-    [
-        c[0] * (p[1].x - p[0].x) + c[1] * (p[2].x - p[1].x) + c[2] * (p[3].x - p[2].x),
-        c[0] * (p[1].y - p[0].y) + c[1] * (p[2].y - p[1].y) + c[2] * (p[3].y - p[2].y),
-    ]
-}
-
-fn bezier_d2(p: &[Position; 4], t: f64) -> [f64; 2] {
-    let mt = 1.0 - t;
-    [
-        6.0 * mt * (p[2].x - 2.0 * p[1].x + p[0].x) + 6.0 * t * (p[3].x - 2.0 * p[2].x + p[1].x),
-        6.0 * mt * (p[2].y - 2.0 * p[1].y + p[0].y) + 6.0 * t * (p[3].y - 2.0 * p[2].y + p[1].y),
-    ]
-}
-
-fn bezier_curvature(p: &[Position; 4], t: f64) -> f64 {
-    let d1 = bezier_d1(p, t);
-    let d2 = bezier_d2(p, t);
-    let speed = d1[0].hypot(d1[1]).max(1e-6);
-    (d1[0] * d2[1] - d1[1] * d2[0]) / speed.powi(3)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,7 +398,7 @@ mod tests {
     fn check_small_track_full_laps(percent: f32) {
         use crate::planning::{Latency, PlannerKind};
         use crate::world::LiveWorld;
-        let mut world = LiveWorld::with_track(1, 1, PlannerKind::BezierToppra, 0, 0.1);
+        let mut world = LiveWorld::with_track(1, 1, PlannerKind::CenterlineFollower, 0, 0.1);
         world.preview_ticks = 100;
         world.compute_budget = ComputeBudget::from_percent(percent);
         let lap = world.track.lap_length().unwrap();
@@ -577,7 +446,7 @@ mod tests {
                 let world = LiveWorld::with_track_at(
                     1,
                     1,
-                    PlannerKind::BezierToppra,
+                    PlannerKind::CenterlineFollower,
                     0,
                     0.1,
                     EgoStart {
@@ -592,7 +461,7 @@ mod tests {
                 let start = ctx.project_ego(ego);
                 let s0 = start.s;
                 let targets = stations(speed, s0, path.length(), 0.1).unwrap();
-                let curve = BezierPath::new(ego, path, start, targets, [0.0; 2]);
+                let curve = CartesianPath::new(ego, path, start, targets).unwrap();
                 let samples: Vec<_> = (0..=400)
                     .map(|i| curve.at(curve.distance[GRID_STEPS] * i as f64 / 400.0))
                     .collect();
@@ -610,7 +479,7 @@ mod tests {
                     samples[320..].iter().all(|(_, k)| k.abs() < 0.1),
                     "progress {progress}, speed {speed}: terminal curvature spike"
                 );
-                let controls = BezierToppraPlanner::default().plan(ego, &ctx);
+                let controls = CenterlineFollower.plan(ego, &ctx);
                 let mut state = ego;
                 let mut distance = 0.0;
                 for u in controls {
@@ -628,30 +497,56 @@ mod tests {
     }
 
     #[test]
-    fn road_following_segments_interpolate_offsets_with_shared_tangent_directions() {
-        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let path = Path::new(road.centerline());
-        let ego = State::from((Position::new(0.0, 1.0), 0.1, 8.0));
-        let curve = BezierPath::new(ego, &path, path.project(ego.position()), [40.0, 80.0], [3.0, -2.0]);
-
-        assert_eq!(curve.segments[0][0], ego.position());
-        assert_eq!(
-            curve.segments[GRID_STEPS / 2 - 1][3],
-            path.frenet_to_position(40.0, 3.0)
-        );
-        assert_eq!(curve.segments[1][0], curve.segments[0][3]);
-        assert_eq!(curve.segments[GRID_STEPS - 1][3], path.frenet_to_position(80.0, -2.0));
-        for pair in curve.segments.windows(2) {
-            let a = bezier_d1(&pair[0], 1.0);
-            let b = bezier_d1(&pair[1], 0.0);
-            assert!(wrap_angle(a[1].atan2(a[0]) - b[1].atan2(b[0])).abs() < 1e-10);
+    fn frenet_beziers_merge_tangentially_then_follow_the_centerline() {
+        let start = FrenetPosition { s: 20.0, d: 1.0 };
+        let segments = frenet_segments(start, 0.1, [40.0, 80.0]);
+        assert_eq!(segments[0].at(0.0)[0], Position::new(start.s, start.d));
+        let initial_tangent = segments[0].at(0.0)[1];
+        assert!((initial_tangent.y / initial_tangent.x - 0.1).abs() < 1e-12);
+        assert_eq!(segments[0].at(1.0)[0], segments[1].at(0.0)[0]);
+        assert_eq!(segments[0].at(1.0)[1].y, 0.0);
+        for i in 0..=100 {
+            let [p, d1, d2] = segments[1].at(i as f64 / 100.0);
+            assert_eq!([p.y, d1.y, d2.y], [0.0; 3]);
+            assert!(d1.x > 0.0);
         }
-        assert_eq!(
-            curve.at(curve.distance[GRID_STEPS / 2]).0.position,
-            curve.segments[GRID_STEPS / 2][0]
-        );
+        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let path = road.path();
+        let ego = State::from((Position::new(0.0, 1.0), 0.1_f64.atan(), 8.0));
+        let curve = CartesianPath::new(ego, &path, start, [40.0, 80.0]).unwrap();
+        assert_eq!(curve.at(0.0).0.position, ego.position());
+        assert!(wrap_angle(curve.at(0.0).0.yaw - ego.pose.yaw).abs() < 1e-12);
+        assert_eq!(curve.at(curve.distance[50]).0.position, Position::new(20.0, 0.0));
+        assert_eq!(curve.at(curve.distance[100]).0.position, Position::new(60.0, 0.0));
         assert!(curve.distance.windows(2).all(|w| w[1] > w[0]));
-        assert!(curve.distance[GRID_STEPS] > 60.0);
+        assert!(curve.distance[100] > 60.0);
+    }
+
+    #[test]
+    fn cartesian_samples_include_road_curvature_and_arc_length() {
+        let radius = 40.0;
+        let points: Vec<_> = (0..=1000)
+            .map(|i| Position::from_angle(i as f64 * 0.0025) * radius)
+            .collect();
+        let path = Path::new(&points);
+        let start = FrenetPosition { s: 10.0, d: 2.0 };
+        let heading = path.heading_at(start.s);
+        let ego = State::from((
+            path.pose_at(start.s).0 + Position::from_angle(heading + std::f64::consts::FRAC_PI_2) * start.d,
+            heading,
+            5.0,
+        ));
+        let curve = CartesianPath::new(ego, &path, start, [40.0, 80.0]).unwrap();
+        // The inner offset shortens the Cartesian distance despite the lateral merge.
+        assert!(curve.distance[GRID_STEPS] < 70.0);
+        for i in GRID_STEPS / 2..=GRID_STEPS {
+            let (pose, curvature) = curve.at(curve.distance[i]);
+            assert!((curvature - 1.0 / radius).abs() < 1e-8);
+            assert!((pose.position.norm() - radius).abs() < 1e-4);
+        }
+        let backwards = State::from((ego.position(), heading + std::f64::consts::PI, 5.0));
+        assert!(CartesianPath::new(backwards, &path, start, [40.0, 80.0]).is_none());
+        assert!(CartesianPath::new(ego, &path, FrenetPosition { d: radius, ..start }, [40.0, 80.0]).is_none());
     }
 
     #[test]
@@ -676,7 +571,7 @@ mod tests {
         assert!(global.s > start.s + 500.0);
         assert!((start.s - 160.0).abs() < 1e-9);
 
-        let curve = BezierPath::new(ego, path, start, [start.s + 40.0, start.s + 80.0], [0.0; 2]);
+        let curve = CartesianPath::new(ego, path, start, [start.s + 40.0, start.s + 80.0]).unwrap();
         let points: Vec<_> = (0..=100)
             .map(|i| curve.at(curve.distance[GRID_STEPS] * i as f64 / 100.0).0.position)
             .collect();
@@ -707,10 +602,12 @@ mod tests {
         let short = stations(20.0, s0, s0 + 1.0, 0.1).unwrap();
         assert!(s0 < short[0] && short[0] < short[1] && short[1] <= s0 + 1.0);
         assert!(stations(20.0, s0, s0, 0.1).is_none());
+        let end = 484.7325513507306;
+        assert_eq!(stations(14.584, 66.85366782480057, end, 0.1).unwrap()[1], end);
     }
 
     #[test]
-    fn budget_scales_candidate_count_and_always_includes_centerline() {
+    fn budget_scales_centerline_merge_distances() {
         let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
         let mut previous = Vec::new();
         for percent in COMPUTE_BUDGET_BREAKPOINTS {
@@ -718,52 +615,23 @@ mod tests {
             let diagnostics = Diagnostics::default();
             let ctx = Context::new(&road, &[], 10, budget, None, Some(&diagnostics));
             let targets = path_targets(&ctx, 20.0, [80.0, 300.0]);
-            assert_eq!(targets.len(), budget.scale(NOMINAL_PATHS, 5));
+            assert_eq!(targets.len(), budget.scale(NOMINAL_PATHS, 3));
             assert!(targets.starts_with(&previous));
-            assert_eq!(
-                &targets[..3],
-                &[
-                    ([80.0, 300.0], [0.0; 2]),
-                    ([50.0, 300.0], [0.0; 2]),
-                    ([35.0, 300.0], [0.0; 2])
-                ]
-            );
-            // Grid prefixes retain bilateral coverage without duplicate rollouts.
+            assert_eq!(&targets[..3], &[[80.0, 300.0], [50.0, 300.0], [35.0, 300.0]]);
             for (i, target) in targets.iter().enumerate() {
                 assert!(!targets[..i].contains(target));
+                assert!(20.0 < target[0] && target[0] <= 80.0);
+                assert_eq!(target[1], 300.0);
             }
-            for pair in targets[3..].chunks_exact(2) {
-                assert_eq!(pair[0].0, pair[1].0);
-                assert_eq!(pair[0].1, pair[1].1.map(|d| -d));
-            }
-            for (stations, offsets) in &targets {
-                assert!(20.0 < stations[0] && stations[0] <= 80.0);
-                assert_eq!(stations[1], 300.0);
-                for j in 0..2 {
-                    let (right, left) = road.lateral_bounds_at(stations[j]);
-                    assert!(
-                        (right + EGO_FOOTPRINT.width / 2.0..=left - EGO_FOOTPRINT.width / 2.0).contains(&offsets[j])
-                    );
-                }
-            }
-            let controls = BezierToppraPlanner::default().plan(State::default(), &ctx);
+            let controls = CenterlineFollower.plan(State::default(), &ctx);
             let data = diagnostics.take();
             assert_eq!(controls.len(), ctx.horizon);
             assert_eq!(data.trajectories.len(), targets.len());
             assert!(data.trajectories.iter().all(|points| points.len() == 101));
-            assert!(
-                data.trajectories[..3]
-                    .iter()
-                    .flatten()
-                    .all(|point| point.y.abs() < 1e-9)
-            );
+            assert!(data.trajectories.iter().flatten().all(|point| point.y.abs() < 1e-9));
             previous = targets;
         }
         assert_eq!(previous.len(), 45);
-        // Three station distances, with coarse, half-width and crossing maneuvers.
-        for station in [35.0, 50.0, 80.0] {
-            assert_eq!(previous.iter().filter(|(s, _)| s[0] == station).count(), 15);
-        }
     }
 
     #[test]
@@ -784,7 +652,7 @@ mod tests {
                 ..Default::default()
             };
             let ctx = Context::new(&road, &[], 100, ComputeBudget::NOMINAL, None, None);
-            let controls = BezierToppraPlanner::default().plan(ego, &ctx);
+            let controls = CenterlineFollower.plan(ego, &ctx);
             for (tick, control) in controls.iter().enumerate() {
                 assert!(
                     control.acceleration > MAX_LON_ACCEL - 0.05,
@@ -805,7 +673,7 @@ mod tests {
         for _ in 0..200 {
             let start = ctx.project_ego(ego);
             let targets = stations(ego.speed, start.s, ctx.path().length(), road.dt).unwrap();
-            let curve = BezierPath::new(ego, ctx.path(), start, targets, [0.0; 2]);
+            let curve = CartesianPath::new(ego, ctx.path(), start, targets).unwrap();
             let controls = parameterize(ego, &ctx, &curve, 100);
             ego = world_step(ego, controls[0], road.dt);
         }
@@ -824,7 +692,7 @@ mod tests {
             0.0,
         );
         let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 1.6, 0.1);
-        let trace = test_run_on(&mut BezierToppraPlanner::default(), &road, ego, &[actor], 300);
+        let trace = test_run_on(&mut CenterlineFollower, &road, ego, &[actor], 300);
         let end = trace.last().unwrap();
         assert!(end.speed < 0.5, "speed {}", end.speed);
         assert!(
@@ -855,35 +723,32 @@ mod tests {
     }
 
     #[test]
-    fn selects_a_cheaper_feasible_detour_and_checks_beyond_requested_controls() {
+    fn selects_lowest_cost_feasible_merge_and_checks_the_full_horizon() {
         let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
         let actors = [State::from((Position::new(50.0, 0.0), 0.0, 0.0))];
-        let ego = State {
-            speed: 8.0,
-            ..Default::default()
-        };
+        let ego = State::from((Position::new(0.0, 2.0), 0.0, 8.0));
         let ctx = Context::new(&road, &actors, 100, ComputeBudget::NOMINAL, None, None);
-        let detour = BezierToppraPlanner::default().plan(ego, &ctx);
         let start = ctx.project_ego(ego);
-        let targets = stations(ego.speed, start.s, ctx.path().length(), road.dt).unwrap();
-        let curve = BezierPath::new(ego, ctx.path(), start, targets, [0.0; 2]);
-        let centerline_full = parameterize(ego, &ctx, &curve, 100);
-        let cost = candidate_cost(ego, &ctx, &detour);
-        assert!(cost.is_finite() && cost < candidate_cost(ego, &ctx, &centerline_full));
-        let end = detour.iter().fold(ego, |state, &u| world_step(state, u, road.dt));
-        assert!(
-            end.position().x > actors[0].position().x + CAR_FOOTPRINT.length,
-            "end {end:?}"
-        );
-        let short = BezierToppraPlanner::default().plan(ego, &test_ctx(&road, &actors));
-        assert_eq!(short, detour[..short.len()]);
+        let stations = stations(ego.speed, start.s, ctx.path().length(), road.dt).unwrap();
+        let minimum = path_targets(&ctx, start.s, stations)
+            .into_iter()
+            .filter_map(|targets| {
+                let curve = CartesianPath::new(ego, ctx.path(), start, targets)?;
+                Some(candidate_cost(ego, &ctx, &parameterize(ego, &ctx, &curve, 100)))
+            })
+            .fold(f64::INFINITY, f64::min);
+        assert!(minimum.is_finite());
+        let selected = CenterlineFollower.plan(ego, &ctx);
+        assert_eq!(candidate_cost(ego, &ctx, &selected), minimum);
+        let short = CenterlineFollower.plan(ego, &test_ctx(&road, &actors));
+        assert_eq!(short, selected[..short.len()]);
         assert!(candidate_cost(ego, &ctx, &vec![Control::default(); 100]).is_infinite());
     }
 
     #[test]
-    fn previous_plan_is_revalidated_after_skipped_ticks_and_new_obstacles() {
+    fn replans_from_current_state_after_skipped_ticks_and_new_obstacles() {
         let road = crate::track::Road::new(vec![[-20.0, 0.0], [2_000.0, 0.0]], 1.6, 0.1);
-        let mut planner = BezierToppraPlanner::default();
+        let mut planner = CenterlineFollower;
         let mut ego = State {
             speed: 8.0,
             ..Default::default()
@@ -899,7 +764,7 @@ mod tests {
         assert!(candidate_cost(ego, &blocked, &clear[3..]).is_infinite());
         diagnostics.take();
         let controls = planner.plan(ego, &blocked);
-        assert!(diagnostics.take().trajectories.len() <= NOMINAL_PATHS + 1);
+        assert!(diagnostics.take().trajectories.len() == NOMINAL_PATHS);
         assert!(candidate_cost(ego, &blocked, &controls).is_finite());
         let end = controls.iter().fold(ego, |x, &u| world_step(x, u, road.dt));
         assert!(end.speed < 0.5 && end.position().x < 50.0 - EGO_FOOTPRINT.length);
@@ -913,16 +778,12 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        for u in BezierToppraPlanner::default().plan(ego, &ctx) {
+        for u in CenterlineFollower.plan(ego, &ctx) {
             ego = world_step(ego, u, road.dt);
             assert!(ego.speed >= -1e-9);
         }
         assert!(ego.speed.abs() < 1e-9);
-        assert!(
-            BezierToppraPlanner::default()
-                .plan(ego, &Context { horizon: 0, ..ctx })
-                .is_empty()
-        );
+        assert!(CenterlineFollower.plan(ego, &Context { horizon: 0, ..ctx }).is_empty());
     }
 
     #[test]
@@ -951,7 +812,7 @@ mod tests {
         use crate::simulation::CommandLimiter;
 
         let road = test_road(&[[-20.0, 0.0], [2_000.0, 0.0]]);
-        let mut planner = BezierToppraPlanner::default();
+        let mut planner = CenterlineFollower;
         let mut limiter = CommandLimiter::new();
         let mut ego = State::default();
         let mut lead = State::new(
@@ -991,7 +852,7 @@ mod tests {
                 let ctx = Context::new(&road, &[], 100, crate::planning::ComputeBudget::NOMINAL, None, None);
                 let path = Path::new(road.centerline());
                 let mut state = ego;
-                for (tick, control) in BezierToppraPlanner::default().plan(ego, &ctx).into_iter().enumerate() {
+                for (tick, control) in CenterlineFollower.plan(ego, &ctx).into_iter().enumerate() {
                     state = world_step(state, control, road.dt);
                     let FrenetPosition { s, d } = path.project(state.position());
                     assert!(

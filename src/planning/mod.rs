@@ -24,8 +24,8 @@ pub(crate) use config::{PLANNING_DT_S, PLANNING_HORIZON_S, PLANNING_TICKS};
 pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use planners::{
-    BezierToppraPlanner, Cem, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner,
-    Mppi, Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
+    Cem, CenterlineFollower, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner, Mppi,
+    Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
 };
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use warm_start::take_warm;

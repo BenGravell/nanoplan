@@ -100,14 +100,14 @@ mod tests {
     }
 
     #[test]
-    fn bezier_diagnostics_start_at_rendered_ego_through_ticks_pause_and_waiting() {
+    fn centerline_follower_diagnostics_start_at_rendered_ego_through_ticks_pause_and_waiting() {
         use crate::planning::PlannerKind;
         use crate::viewer::live::rendering::{RenderSnapshot, rendered_ego, rendered_plan_age};
         use crate::world::{EgoStart, LiveWorld};
         let world = LiveWorld::with_track_at(
             1,
             1,
-            PlannerKind::BezierToppra,
+            PlannerKind::CenterlineFollower,
             0,
             0.1,
             EgoStart {

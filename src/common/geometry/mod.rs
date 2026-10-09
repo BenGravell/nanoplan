@@ -1,6 +1,7 @@
 //! Shared geometry helpers and physical/rendered footprints.
 
 pub(crate) mod barrier;
+pub(crate) mod bezier;
 pub(crate) mod curvature;
 pub(crate) mod distance;
 mod footprint;

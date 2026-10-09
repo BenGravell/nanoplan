@@ -12,7 +12,7 @@ planning/
 ├── sampling.rs    shared QMC low-discrepancy sampling — see "Shared QMC sampling" below
 └── planners/      concrete planner implementations
     ├── leeroy_jenkins/ maximum acceleration, zero steering
-    ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
+    ├── centerline_follower/ cubic Bezier back to the centerline + TOPP-RA speed
     ├── motion_graph/  shared Tree/lattice graph, sampling, steering, and rollout
     │   ├── nearest_zap.rs  single-parent nearest-ZAP connection strategy
     │   └── lattice.rs      multiple-parent connections and layered minimum-cost search
@@ -108,7 +108,7 @@ Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, Tree, Ilqr, Treetop }
+pub enum PlannerKind { LeeroyJenkins, CenterlineFollower, Lattice, Pi2Ddp, Tree, Ilqr, Treetop }
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
@@ -199,7 +199,7 @@ Elapsed trajectory prefixes are hidden; candidate geometry stays in its original
 The window follows simulation time through pause/resume and planner waits, rather than wall-clock time.
 
 Every search planner records something — `PlannerKind::has_diagnostics()` reports which — including one timed rollout
-per Bezier+TOPP-RA path candidate.
+per CenterlineFollower path candidate.
 Leeroy Jenkins records nothing.
 See each planner's README for exactly what it records.
 
@@ -232,7 +232,7 @@ Both use the same sequence implementation, and their deterministic-planning test
 ## Planner implementations
 
 - [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
-- [Bezier + TOPP-RA](planners/bezier_toppra/README.md)
+- [CenterlineFollower](planners/centerline_follower/README.md)
 - [Tree and lattice motion graph](planners/motion_graph/README.md)
 - [PI²-DDP](planners/pi2ddp/README.md)
 - [Sampling MPC](planners/sampling_mpc/README.md)

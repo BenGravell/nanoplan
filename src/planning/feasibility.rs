@@ -11,7 +11,7 @@ use crate::planning::planner_math::state_sample;
 use crate::simulation::{Control, Position, State, rollout};
 
 const ROAD_END_TOLERANCE_M: f64 = 1e-6;
-// Clearance for rolling-window seams, matching the Frenet and Bezier planners.
+// Clearance for rolling-window seams, matching the Frenet and CenterlineFollower planners.
 const ROAD_FOOTPRINT: Footprint = Footprint::new(EGO_FOOTPRINT.length + 0.1, EGO_FOOTPRINT.width + 0.2);
 
 /// Check requested commands and cached plant states, including swept footprint contact.

@@ -1,6 +1,6 @@
 use super::{
-    BezierToppraPlanner, Cem, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner,
-    Mppi, Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
+    Cem, CenterlineFollower, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner, Mppi,
+    Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -10,7 +10,7 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PlannerKind {
     LeeroyJenkins,
-    BezierToppra,
+    CenterlineFollower,
     Lattice,
     FrenetSampling,
     Pi2Ddp,
@@ -37,9 +37,9 @@ const SPECS: [PlannerSpec; 11] = [
         has_diagnostics: false,
     },
     PlannerSpec {
-        kind: PlannerKind::BezierToppra,
-        name: "bezier + TOPP-RA",
-        build: || Box::new(BezierToppraPlanner::default()),
+        kind: PlannerKind::CenterlineFollower,
+        name: "CenterlineFollower",
+        build: || Box::new(CenterlineFollower),
         has_diagnostics: true,
     },
     PlannerSpec {
@@ -101,7 +101,7 @@ const SPECS: [PlannerSpec; 11] = [
 impl PlannerKind {
     pub(crate) const ALL: [PlannerKind; 11] = [
         PlannerKind::LeeroyJenkins,
-        PlannerKind::BezierToppra,
+        PlannerKind::CenterlineFollower,
         PlannerKind::Lattice,
         PlannerKind::FrenetSampling,
         PlannerKind::Pi2Ddp,

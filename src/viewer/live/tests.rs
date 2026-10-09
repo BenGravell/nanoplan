@@ -406,7 +406,7 @@ fn new_track_starts_with_ego_aligned_to_its_tangent() {
         ..Default::default()
     };
 
-    live.regenerate_with_actor_count(2, PlannerKind::BezierToppra, 0, DEFAULT_ACTORS);
+    live.regenerate_with_actor_count(2, PlannerKind::CenterlineFollower, 0, DEFAULT_ACTORS);
 
     let (_, track_yaw) = live.world.track.pose(live.world.track_progress);
     assert!((live.world.ego().pose.yaw - track_yaw).abs() < 1e-12);
@@ -489,17 +489,17 @@ fn changing_actor_count_preserves_world_progress_and_camera() {
 fn track_selection_prepares_once_before_driving_and_invalidates_on_change() {
     use crate::planning::latency::geometry_build_clocks;
     let mut live = Live::default();
-    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 0));
-    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 0));
-    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 1));
-    assert!(live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 2));
+    assert!(!live.prepare_selection(PlannerKind::CenterlineFollower, 1, 5, 0));
+    assert!(!live.prepare_selection(PlannerKind::CenterlineFollower, 1, 5, 0));
+    assert!(!live.prepare_selection(PlannerKind::CenterlineFollower, 1, 5, 1));
+    assert!(live.prepare_selection(PlannerKind::CenterlineFollower, 1, 5, 2));
     let before = geometry_build_clocks();
     for _ in 0..3 {
-        assert!(live.prepare_selection(PlannerKind::BezierToppra, 1, 5, 2));
+        assert!(live.prepare_selection(PlannerKind::CenterlineFollower, 1, 5, 2));
     }
     assert_eq!(geometry_build_clocks(), before);
-    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 3));
-    assert!(!live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 4));
-    assert!(live.prepare_selection(PlannerKind::BezierToppra, 0, 5, 5));
+    assert!(!live.prepare_selection(PlannerKind::CenterlineFollower, 0, 5, 3));
+    assert!(!live.prepare_selection(PlannerKind::CenterlineFollower, 0, 5, 4));
+    assert!(live.prepare_selection(PlannerKind::CenterlineFollower, 0, 5, 5));
     assert!(geometry_build_clocks() > before);
 }
