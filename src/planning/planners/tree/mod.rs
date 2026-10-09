@@ -3,6 +3,9 @@
 //! [`crate::planning::frenet`], and supplies initial guesses to
 //! [`crate::planning::planners::treetop::TreetopPlanner`].
 
+use rstar::RTree;
+use rstar::primitives::GeomWithData;
+
 use crate::common::geometry::wrap_angle;
 use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
 use crate::common::polynomial::CubicPolynomial;
@@ -59,6 +62,45 @@ struct EdgeEval {
     collides: bool,
 }
 
+/// A completed parent layer's coasting endpoints.
+// Spatial index with four coordinates instead of just position. Periodic yaw
+/// copies preserve the wrapped-angle metric across the -π/π seam.
+struct ZapIndex(RTree<GeomWithData<[f64; 4], usize>>);
+
+impl ZapIndex {
+    fn new(parents: impl Iterator<Item = (usize, State)>, steer_duration: f64) -> Self {
+        Self(RTree::bulk_load(
+            parents
+                .flat_map(|(id, state)| {
+                    let point = Self::point(zero_action_point(state, steer_duration));
+                    [-std::f64::consts::TAU, 0.0, std::f64::consts::TAU]
+                        .map(|offset| GeomWithData::new([point[0], point[1], point[2] + offset, point[3]], id))
+                })
+                .collect(),
+        ))
+    }
+
+    fn point(state: State) -> [f64; 4] {
+        [
+            state.position().x,
+            state.position().y,
+            wrap_angle(state.pose.yaw),
+            state.speed,
+        ]
+    }
+
+    fn nearest_parent(&self, target: State) -> usize {
+        // Match the old scan's first-in-layer tie break, independent of
+        // the spatial index's traversal order. Arena ids increase on insert.
+        self.0
+            .nearest_neighbors(&Self::point(target))
+            .iter()
+            .map(|point| point.data)
+            .min()
+            .expect("layers are never empty")
+    }
+}
+
 /// The layered tree (treetop `tree.h`). `layers[0]` holds only the root;
 /// `layers[SEGMENTS]` holds the goal nodes.
 pub(crate) struct Tree {
@@ -103,7 +145,7 @@ impl Tree {
         });
         tree.layers[0].push(0);
 
-        let steer_dur = STEER_TICKS as f64 * ctx.road.dt;
+        let steer_duration = STEER_TICKS as f64 * ctx.road.dt;
 
         // Zero-action fallback chain through the intermediate layers
         // (treetop `growZap`) — ignores collisions so a full parent chain
@@ -111,8 +153,8 @@ impl Tree {
         let mut parent = 0usize;
         for layer in 1..SEGMENTS {
             let from = tree.nodes[parent].state;
-            let target = zero_action_point(from, steer_dur);
-            let (us, xs, ee) = g.steer_edge(from, target, steer_dur, layer);
+            let target = zero_action_point(from, steer_duration);
+            let (us, xs, ee) = g.steer_edge(from, target, steer_duration, layer);
             parent = tree.add_node(parent, us, xs, layer, ee);
         }
 
@@ -146,6 +188,9 @@ impl Tree {
         );
         let mut ix = 1usize;
         for layer in 1..SEGMENTS {
+            // The previous layer is complete: cache its zero-action points
+            // once and reuse the index for every sample in this layer.
+            let parents = tree.zap_index(layer, steer_duration);
             for _ in 0..per_layer {
                 let selector = Halton::coordinate(ix, 4);
                 let c: [f64; 4] = std::array::from_fn(|d| Halton::coordinate(ix, d));
@@ -173,7 +218,7 @@ impl Tree {
                     (target, Reason::Sample)
                 } else {
                     let Some((lon, lat)) = boundary else { continue };
-                    let duration = layer as f64 * steer_dur;
+                    let duration = layer as f64 * steer_duration;
                     let (d, dv) = laterals[(c[1] * laterals.len() as f64) as usize];
                     let lateral = CubicPolynomial::from_boundary(lat[0], lat[1], d, dv, duration);
                     let targets = longitudinal_targets(
@@ -203,7 +248,7 @@ impl Tree {
                 // Sampled state itself in collision → discard (treetop
                 // checks its obstacles here; the metric objective's hard reject
                 // is the equivalent).
-                let t_s = layer as f64 * steer_dur;
+                let t_s = layer as f64 * steer_duration;
                 let (_, sample) = planner_math::state_sample(path, &target, t_s, None);
                 if !ctx.time("cost", || constraints.point_cost(&sample)).is_finite() {
                     continue;
@@ -215,17 +260,17 @@ impl Tree {
                 let prev = &tree.layers[layer - 1];
                 let parent = match reason {
                     Reason::Goal => prev[ix % prev.len()],
-                    Reason::Sample => tree.nearest_zap_parent(layer, &target, steer_dur),
+                    Reason::Sample => parents.nearest_parent(target),
                 };
 
                 // Goal samples steer over the whole remaining horizon
                 // (executing only this segment of the longer maneuver).
                 let duration = match reason {
-                    Reason::Goal => (SEGMENTS - layer) as f64 * steer_dur,
-                    Reason::Sample => steer_dur,
+                    Reason::Goal => (SEGMENTS - layer) as f64 * steer_duration,
+                    Reason::Sample => steer_duration,
                 };
                 let from = tree.nodes[parent].state;
-                let (us, xs, ee) = g.steer_edge(from, target, duration.max(steer_dur), layer);
+                let (us, xs, ee) = g.steer_edge(from, target, duration.max(steer_duration), layer);
                 if ee.collides {
                     continue;
                 }
@@ -240,16 +285,16 @@ impl Tree {
         for i in 0..tree.layers[SEGMENTS - 1].len() {
             let parent = tree.layers[SEGMENTS - 1][i];
             let from = tree.nodes[parent].state;
-            let (us, xs, ee) = g.steer_edge(from, goal, steer_dur, SEGMENTS);
+            let (us, xs, ee) = g.steer_edge(from, goal, steer_duration, SEGMENTS);
             if ee.collides {
                 continue;
             }
             tree.add_node(parent, us, xs, SEGMENTS, ee);
         }
         if tree.layers[SEGMENTS].is_empty() {
-            let parent = tree.nearest_zap_parent(SEGMENTS, &goal, steer_dur);
+            let parent = tree.zap_index(SEGMENTS, steer_duration).nearest_parent(goal);
             let from = tree.nodes[parent].state;
-            let (us, xs, ee) = g.steer_edge(from, goal, steer_dur, SEGMENTS);
+            let (us, xs, ee) = g.steer_edge(from, goal, steer_duration, SEGMENTS);
             tree.add_node(parent, us, xs, SEGMENTS, ee);
         }
 
@@ -280,18 +325,11 @@ impl Tree {
         id
     }
 
-    /// The previous layer's node whose zero-action point is nearest the
-    /// target in squared `(x, y, yaw, v)` distance — treetop's per-layer
-    /// nanoflann kd-tree query, as a linear scan (see the module doc).
-    fn nearest_zap_parent(&self, layer: usize, target: &State, steer_dur: f64) -> usize {
-        *self.layers[layer - 1]
-            .iter()
-            .min_by(|&&a, &&b| {
-                let da = zap_dist2(zero_action_point(self.nodes[a].state, steer_dur), target);
-                let db = zap_dist2(zero_action_point(self.nodes[b].state, steer_dur), target);
-                da.total_cmp(&db)
-            })
-            .expect("layers are never empty")
+    fn zap_index(&self, layer: usize, steer_duration: f64) -> ZapIndex {
+        ZapIndex::new(
+            self.layers[layer - 1].iter().map(|&id| (id, self.nodes[id].state)),
+            steer_duration,
+        )
     }
 
     /// The best `k` full-length paths, preferring feasible paths, then progress cost.
@@ -345,13 +383,6 @@ impl Tree {
 enum Reason {
     Goal,
     Sample,
-}
-
-fn zap_dist2(zap: State, target: &State) -> f64 {
-    (zap.position().x - target.position().x).powi(2)
-        + (zap.position().y - target.position().y).powi(2)
-        + wrap_angle(zap.pose.yaw - target.pose.yaw).powi(2)
-        + (zap.speed - target.speed).powi(2)
 }
 
 /// The per-grow context bundle: steering + edge pricing.
@@ -488,6 +519,75 @@ impl Planner for TreePlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::{Pose, Position};
+
+    fn zap_dist2(zap: State, target: State) -> f64 {
+        (zap.position().x - target.position().x).powi(2)
+            + (zap.position().y - target.position().y).powi(2)
+            + wrap_angle(zap.pose.yaw - target.pose.yaw).powi(2)
+            + (zap.speed - target.speed).powi(2)
+    }
+
+    #[test]
+    fn zap_index_matches_linear_scan() {
+        use std::f64::consts::TAU;
+
+        let state = |i| {
+            State::new(
+                Pose::new(
+                    Position::new(80.0 * Halton::coordinate(i, 0), 10.0 * Halton::coordinate(i, 1)),
+                    (Halton::coordinate(i, 2) - 0.5) * 4.0 * TAU,
+                ),
+                20.0 * Halton::coordinate(i, 3),
+            )
+        };
+        // Sparse arena ids ensure the index returns node ids, not offsets
+        // into its point cloud. Vary duration to catch hard-coded coasting.
+        for count in [1, 16, 256] {
+            let parents: Vec<_> = (1..=count).map(|i| (3 * i, state(i))).collect();
+            for duration in [0.0, 0.4, 1.0, 2.0] {
+                let index = ZapIndex::new(parents.iter().copied(), duration);
+                for i in 257..513 {
+                    let target = state(i);
+                    let expected = parents
+                        .iter()
+                        .min_by(|(_, a), (_, b)| {
+                            zap_dist2(zero_action_point(*a, duration), target)
+                                .total_cmp(&zap_dist2(zero_action_point(*b, duration), target))
+                        })
+                        .unwrap()
+                        .0;
+                    assert_eq!(index.nearest_parent(target), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zap_index_wraps_yaw_and_breaks_ties_by_insertion_order() {
+        use std::f64::consts::PI;
+
+        let target = State::new(Pose::new(Position::new(0.0, 0.0), PI - 0.01), 0.0);
+        let across_seam = State::new(Pose::new(target.position(), -PI + 0.01), 0.0);
+        let farther = State::new(Pose::new(target.position(), PI - 0.1), 0.0);
+        let faster = State { speed: 1.0, ..target };
+        let parents = [(2, farther), (7, across_seam), (11, across_seam), (19, faster)];
+        let index = ZapIndex::new(parents.into_iter(), 1.0);
+        assert_eq!(index.nearest_parent(target), 7);
+
+        // The nearest current position need not have the nearest coasting
+        // endpoint. Match speed as well as position, even at zero duration.
+        let target = State {
+            speed: 8.0,
+            ..State::default()
+        };
+        let moving = State::new(Pose::new(Position::new(-8.0, 0.0), 0.0), 8.0);
+        let parents = [(4, State::default()), (9, moving)];
+        let index = ZapIndex::new(parents.into_iter(), 1.0);
+        assert_eq!(index.nearest_parent(zero_action_point(moving, 1.0)), 9);
+        let index = ZapIndex::new([(4, State::default()), (9, target)].into_iter(), 0.0);
+        assert_eq!(index.nearest_parent(target), 9);
+    }
 
     #[test]
     fn steer_reaches_a_straight_ahead_target() {

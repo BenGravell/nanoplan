@@ -49,8 +49,10 @@ A motion tree shaped by its downstream job — feeding a trajectory optimizer �
   horizon and keep just the first second of it.
 - **Zero-action-point parenting.** A sample attaches to the previous layer's node whose coasting endpoint is nearest in
   `(x, y, yaw, v)` — "who reaches me with the least effort" under simplifying kinematic assumptions.
-  treetop builds a nanoflann kd-tree per layer for this; a layer here holds a few dozen nodes, so a linear scan is simpler
-  *and* faster than building the index.
+  Like treetop's per-layer nanoflann kd-tree, a bulk-loaded index caches each completed parent layer's coasting endpoints
+  once for all its child samples.
+  Uses `rstar` dependency in four dimensions, with periodic yaw copies to preserve wrapped-angle distance across ±π and
+  insertion-order tie breaking for deterministic plans.
 - **Layered sampling, three ways** (treetop's goal 0.1 / warm 0.2 / cold 0.7 split, drawn against a Halton coordinate
   instead of an RNG): *goal* samples steer toward the goal, *warm* samples perturb around the previous solution's
   trajectory in Frenet coordinates, and *cold* samples reuse `planning::frenet` lateral targets and reachable
