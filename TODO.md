@@ -3,7 +3,7 @@
 -- Taxonomy of planners
 
 - Sampling based (MPPI)
-- Tree search (RRT)
+- Tree search
 - Local optimization (iLQR)
 
 ## Actor planning

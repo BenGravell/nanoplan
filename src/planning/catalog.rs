@@ -17,7 +17,7 @@ pub(crate) enum PlannerKind {
     PredictiveSampling,
     Cem,
     Mppi,
-    Rrt,
+    Tree,
     Ilqr,
     Treetop,
 }
@@ -79,7 +79,7 @@ const SPECS: [PlannerSpec; 11] = [
         has_diagnostics: true,
     },
     PlannerSpec {
-        kind: PlannerKind::Rrt,
+        kind: PlannerKind::Tree,
         name: "Tree",
         build: || Box::new(TreePlanner::default()),
         has_diagnostics: true,
@@ -92,7 +92,7 @@ const SPECS: [PlannerSpec; 11] = [
     },
     PlannerSpec {
         kind: PlannerKind::Treetop,
-        name: "treetop (RRT+iLQR)",
+        name: "treetop (Tree+iLQR)",
         build: || Box::new(TreetopPlanner::default()),
         has_diagnostics: true,
     },
@@ -108,7 +108,7 @@ impl PlannerKind {
         PlannerKind::PredictiveSampling,
         PlannerKind::Cem,
         PlannerKind::Mppi,
-        PlannerKind::Rrt,
+        PlannerKind::Tree,
         PlannerKind::Ilqr,
         PlannerKind::Treetop,
     ];

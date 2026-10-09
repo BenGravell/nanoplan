@@ -1,4 +1,4 @@
-# Treetop (RRT / iLQR / RRT+iLQR)
+# Treetop (Tree / iLQR / Tree+iLQR)
 
 `treetop/` — `TreePlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
@@ -124,7 +124,7 @@ per plan, and timing each call would cost more than the call — `derivs` and `r
 
 **Diagnostics**: the optimized trajectory as a polyline and its states as points.
 
-## treetop (RRT + iLQR)
+## treetop (Tree + iLQR)
 
 `treetop/mod.rs` — `TreetopPlanner`
 

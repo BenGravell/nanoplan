@@ -15,7 +15,7 @@ const PLANNERS: [(&str, PlannerKind); 11] = [
     ("predictive-sampling", PlannerKind::PredictiveSampling),
     ("cem", PlannerKind::Cem),
     ("mppi", PlannerKind::Mppi),
-    ("rrt", PlannerKind::Rrt),
+    ("tree", PlannerKind::Tree),
     ("ilqr", PlannerKind::Ilqr),
     ("treetop", PlannerKind::Treetop),
 ];

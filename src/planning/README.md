@@ -18,7 +18,7 @@ planning/
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
     ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
     ├── tree/          Tree planner with Frenet sampling and cubic segments
-    └── treetop/       finite-difference iLQR and the RRT+iLQR treetop planner
+    └── treetop/       finite-difference iLQR and the Tree+iLQR treetop planner
 ```
 
 ## The `Planner` trait
@@ -107,7 +107,7 @@ Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, Rrt, Ilqr, Treetop }
+pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, Tree, Ilqr, Treetop }
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
