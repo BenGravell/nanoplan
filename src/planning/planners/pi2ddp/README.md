@@ -25,8 +25,8 @@ the preview distance, rather than an arbitrary constant.
 The running cost prices the rolled-out state against the
 [shared metric objective](../../../metrics/README.md#the-shared-metric-objective) — `State` is just `(x, y, yaw,
 speed)`, while `u` is direct acceleration/curvature.
-Unlike the lattice and RRT\*, which reject a colliding or off-road candidate outright, PI²-DDP has no such hard
-accept/reject step in its continuous search, so violations use the finite depth-scaled escape penalty.
+Unlike the lattice and Frenet sampling planner, which reject a colliding or off-road candidate outright, PI²-DDP has no
+such hard accept/reject step in its continuous search, so violations use the finite depth-scaled escape penalty.
 
 The policy **warm-starts** across ticks: if the ego ended up close to where the previous plan predicted
 (`expected_next`, within 1 m), the policy shifts one step and continues refining; otherwise it re-initializes from

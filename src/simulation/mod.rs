@@ -7,8 +7,6 @@ pub(crate) use crate::common::kinematics::curvature_limit;
 pub(crate) use crate::common::types::{Control, Pose, Position, State};
 pub(crate) use crate::vehicle::MAX_TERMINAL_SPEED_MPS;
 pub(crate) use collision::{DynamicBody, collide_dynamic_bodies};
-#[cfg(test)]
-pub(crate) use integration::world_step_unclamped;
 pub(crate) use integration::{CommandLimiter, rollout, world_step};
 
 /// The ego vehicle plant: state and actuator memory.

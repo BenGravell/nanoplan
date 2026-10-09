@@ -6,13 +6,12 @@ use crate::planning::{Latency, LatencyStats, PlannerKind};
 use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use crate::world::{EgoStart, LiveWorld};
 
-const PLANNERS: [(&str, PlannerKind); 12] = [
+const PLANNERS: [(&str, PlannerKind); 11] = [
     ("leeroy-jenkins", PlannerKind::LeeroyJenkins),
     ("bezier-toppra", PlannerKind::BezierToppra),
     ("lattice", PlannerKind::Lattice),
     ("frenet-sampling", PlannerKind::FrenetSampling),
     ("pi2-ddp", PlannerKind::Pi2Ddp),
-    ("rrt-star", PlannerKind::RrtStar),
     ("predictive-sampling", PlannerKind::PredictiveSampling),
     ("cem", PlannerKind::Cem),
     ("mppi", PlannerKind::Mppi),
@@ -75,7 +74,6 @@ fn planner_kind(name: &str) -> Option<PlannerKind> {
             "bezier" => Some(PlannerKind::BezierToppra),
             "frenet-lattice" => Some(PlannerKind::Lattice),
             "pi2ddp" => Some(PlannerKind::Pi2Ddp),
-            "rrt*" => Some(PlannerKind::RrtStar),
             "ps" => Some(PlannerKind::PredictiveSampling),
             _ => None,
         })

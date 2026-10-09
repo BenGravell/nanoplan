@@ -9,30 +9,21 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::common::types::FrenetPosition;
-use crate::planning::{Context, PLANNING_HORIZON_S};
-use crate::simulation::{Position, State};
+use crate::planning::Context;
+use crate::simulation::State;
 use crate::track::Path;
 
 pub(crate) struct RoadFrame<'a> {
     pub(crate) path: &'a Path,
     pub(crate) s0: f64,
     pub(crate) d0: f64,
-    pub(crate) speed: f64,
-    pub(crate) horizon_m: f64,
 }
 
 impl<'a> RoadFrame<'a> {
     pub(crate) fn new(ego: State, ctx: &'a Context) -> Self {
         let path = ctx.path();
         let FrenetPosition { s: s0, d: d0 } = path.project(ego.position());
-        let speed = ego.speed.max(2.0);
-        RoadFrame {
-            path,
-            s0,
-            d0,
-            speed,
-            horizon_m: speed * PLANNING_HORIZON_S,
-        }
+        RoadFrame { path, s0, d0 }
     }
 }
 
@@ -63,15 +54,6 @@ impl PartialOrd for QueueEntry {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
-}
-
-pub(crate) fn dist(a: Position, b: Position) -> f64 {
-    a.distance(b)
-}
-
-/// Whichever of `a`, `b` has the larger magnitude, keeping its sign.
-pub(crate) fn signed_max(a: f64, b: f64) -> f64 {
-    if a.abs() >= b.abs() { a } else { b }
 }
 
 /// Walk parent pointers from a leaf back to `root`, returning root-exclusive

@@ -13,7 +13,7 @@
 //! - `cost`: evaluating the shared trajectory-cost function
 //!   ([`crate::constraints::Constraints::point_cost`]) at one sample.
 //!   Every planner that samples and compares candidate trajectories (the
-//!   lattice, PI²-DDP, RRT*) times its calls into
+//!   lattice, PI²-DDP, tree) times its calls into
 //!   `constraints::Constraints` under this name, so the viewer's latency
 //!   table can compare "time spent pricing candidates" across implementations.
 //!

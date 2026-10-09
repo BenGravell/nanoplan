@@ -31,8 +31,7 @@ candidate through `simulation::world_step`.
 
 `tree/mod.rs` — `TreePlanner`
 
-A motion tree shaped by its downstream job — feeding a trajectory optimizer — rather than by asymptotic optimality
-(contrast [RRT\*](../rrt_star/README.md), which rewires toward the shortest path):
+A motion tree shaped by its downstream job — feeding a trajectory optimizer:
 
 - **Time-layered, fixed-depth growth.** The tree has exactly `SEGMENTS` layers past the root, each one steering segment
   later in time, so *any* leaf in the final layer closes a full-horizon action sequence of exactly `TICKS` controls —
@@ -76,7 +75,7 @@ would hand to iLQR, un-optimized, so the registry can show what the optimization
 priced.
 
 **Diagnostics**: every tree node as a point and every edge's rollout polyline as a trajectory — the whole search
-considered, mirroring RRT\*.
+considered.
 
 ## iLQR (treetop, finite differences)
 
@@ -140,8 +139,7 @@ The coordinator glue, treetop's `planner.h` loop: **tree → candidates → iLQR
 1. Select the solution with the lowest shared progress cost.
 1. Store the winner's action sequence as next tick's warm start, and drive its first control.
 
-The division of labor is the point, and it's the same lesson RRT\*'s warm-start section tells from the other side: the
-tree contributes global, discontinuity-crossing search (which side of the obstacle, brake vs. swerve) that a local
+The tree contributes global, discontinuity-crossing search (which side of the obstacle, brake vs. swerve) that a local
 optimizer can't do, and iLQR contributes the smooth, limit-respecting polish (and consistent tick-to-tick refinement)
 that a bang-bang sampled tree path lacks.
 Treetop's action jitter — a third mechanism for hopping out of local minima — is omitted deliberately: it's

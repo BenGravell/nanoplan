@@ -44,7 +44,7 @@
 //!   from the shared Halton sequence ([`crate::planning::sampling`])
 //!   instead, and drops the action jitter (whose whole point is randomized
 //!   restarts), so all three planners are pure functions of the ego state
-//!   like RRT* and the judo planners — pinned by the
+//!   like the judo planners — pinned by the
 //!   `*_is_a_pure_function_of_state` tests.
 //!
 //! See `src/planning/planners/treetop/README.md` for the design write-up.

@@ -645,7 +645,7 @@ mod tests {
     /// The knot noise is QMC (a pure function of the sample index), the
     /// nominal is a deterministic Frenet cubic, and there is no `Rng`: two
     /// fresh planners replanning from the identical state must produce the
-    /// identical plan, like RRT* and unlike PI²-DDP.
+    /// identical plan, like the tree planner and unlike PI²-DDP.
     fn is_a_pure_function_of_state<O: Optimizer>() {
         let ego = State {
             speed: 8.0,

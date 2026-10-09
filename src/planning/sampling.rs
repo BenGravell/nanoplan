@@ -1,35 +1,9 @@
-//! Shared quasi-Monte-Carlo low-discrepancy sampling and the road-frame
-//! hybrid sampler, drawn from by *every* sampling planner in this codebase:
-//! RRT* samples (station, lateral) targets from it, and the judo-derived
-//! optimizers ([`super::sampling_mpc`]) draw their Frenet endpoint noise from
-//! it. Both once carried their own copy of the radical-inverse code; this
-//! module is the single owner, so "the whole codebase samples from one QMC
-//! interface" is checked by the compiler rather than kept in sync by hand.
+//! Shared quasi-Monte-Carlo low-discrepancy sampling.
 //!
-//! ## Parity as a compile-time interface
-//!
-//! The construction lives behind one trait, [`QuasiMonteCarlo`], implemented
-//! by [`VanDerCorput`] and [`Halton`]. The shared entry points
-//! ([`road_frame_samples`] for RRT*'s Frenet targets, [`qmc_normals`] for
-//! the optimizers' Gaussian knot noise) are generic over
-//! `Q: QuasiMonteCarlo`, so the QMC interface appears literally in both
-//! call sites. A planner that wants a different sequence must name its
-//! sequence type at the call, not copy another radical-inverse loop. The
-//! `rrt_targets_match_shared_sampler` test in RRT* pins the numeric parity
-//! on top of the structural one.
-//!
-//! ## Why QMC and not an RNG
-//!
-//! A low-discrepancy sequence covers the sample domain more evenly than
-//! pseudo-random draws at the small sample counts a real-time planner can
-//! afford (a few dozen per tick), without the clustering and gaps an RNG
-//! leaves — and, being a pure function of the sample index, it makes a
-//! `plan()` call a pure function of the ego state and road context (see RRT*'s
-//! `plan_is_a_pure_function_of_state` and `sampling_mpc`'s equivalent).
-//! [`qmc_normals`] extends the same idea to Gaussian noise, replacing the
-//! judo optimizers' pseudo-random `np.random.randn` with the inverse-CDF of
-//! a Halton coordinate, so the ported optimizers inherit that determinism
-//! instead of carrying an `Rng` like PI²-DDP.
+//! The tree and sampling-MPC planners use the same deterministic Halton
+//! coordinates. [`qmc_normals`] maps them through an inverse-normal CDF
+//! for Gaussian perturbations. [`QuasiMonteCarlo`] keeps the sequence type
+//! explicit at each call site.
 
 /// Prime bases of the Halton sequence, one per dimension. Sized to cover
 /// the highest-dimensional caller: the optimizers draw a `num_nodes * NU`
@@ -162,7 +136,7 @@ pub(crate) fn inv_normal_cdf(p: f64) -> f64 {
 /// `np.random.randn(count, num_nodes, nu)`; the optimizer reshapes each
 /// length-`dim` vector into its `(num_nodes, NU)` knot grid. Generic over
 /// `Q` so the shared QMC interface (see the module doc) is named at this
-/// call site too, not just RRT*'s.
+/// call site.
 ///
 /// **Mean-centered per dimension.** A pseudo-random `randn` is zero-mean
 /// *in expectation*, but a low-discrepancy set of only a few dozen points
@@ -186,46 +160,6 @@ pub(crate) fn qmc_normals<Q: QuasiMonteCarlo>(base: usize, count: usize, dim: us
         }
     }
     z
-}
-
-/// The hybrid road-frame sample sequence RRT* grows its tree from: a fixed
-/// road-geometry grid in ascending-station order (station-major, laterals
-/// inner), then a Halton QMC pass filling the same `(station, lateral)` box
-/// with well-distributed rather than clustered points. Yields `(station,
-/// lateral)` pairs; the caller maps them into world coordinates through its
-/// own [`Path`](crate::track::Path). The road model (the Frenet box,
-/// sized from the ego's preview distance) and the QMC fill live together
-/// here so the whole hybrid — not just the radical inverse underneath it —
-/// is shared, generic over the same `Q: QuasiMonteCarlo` interface.
-///
-/// The grid's coordinates match RRT*'s historical inline loop exactly
-/// (station layer `gi` at `s0 + s_max·(gi+1)/grid_stations`, lateral `gj`
-/// spanning `[-lateral_bound, lateral_bound]`), and the QMC pass uses
-/// coordinates 0 and 1 (bases 2 and 3), so lifting the loop into this
-/// shared function changed no sample — pinned by
-/// `rrt_targets_match_shared_sampler`.
-pub(crate) fn road_frame_samples<Q: QuasiMonteCarlo>(
-    s0: f64,
-    s_max: f64,
-    lateral_bound: f64,
-    grid_stations: usize,
-    grid_laterals: usize,
-    qmc_budget: usize,
-) -> Vec<(f64, f64)> {
-    let mut out = Vec::with_capacity(grid_stations * grid_laterals + qmc_budget);
-    for gi in 0..grid_stations {
-        let s = s0 + s_max * (gi + 1) as f64 / grid_stations as f64;
-        for gj in 0..grid_laterals {
-            let d = -lateral_bound + 2.0 * lateral_bound * gj as f64 / (grid_laterals - 1) as f64;
-            out.push((s, d));
-        }
-    }
-    for i in 1..=qmc_budget {
-        let s = s0 + Q::coordinate(i, 0) * s_max;
-        let d = -lateral_bound + Q::coordinate(i, 1) * 2.0 * lateral_bound;
-        out.push((s, d));
-    }
-    out
 }
 
 #[cfg(test)]
@@ -288,17 +222,5 @@ mod tests {
             let mean: f64 = a.iter().map(|v| v[d]).sum::<f64>() / a.len() as f64;
             assert!(mean.abs() < 0.3, "dim {d} mean {mean}");
         }
-    }
-
-    #[test]
-    fn road_frame_samples_lay_out_grid_then_qmc() {
-        let out = road_frame_samples::<Halton>(0.0, 100.0, 4.0, 10, 9, 5);
-        assert_eq!(out.len(), 10 * 9 + 5);
-        // first grid point: station layer 0, lateral 0 (leftmost)
-        assert_eq!(out[0], (10.0, -4.0));
-        // the QMC tail starts after the grid
-        let (s, d) = out[10 * 9];
-        assert_eq!(s, 0.0 + van_der_corput(1, 2) * 100.0);
-        assert_eq!(d, -4.0 + van_der_corput(1, 3) * 8.0);
     }
 }

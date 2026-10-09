@@ -9,14 +9,13 @@ planning/
 ├── engine.rs      asynchronous planner execution for native threads and Web Workers
 ├── latency.rs     Latency/LatencyStats/SeamStats — see "Latency diagnostics" below
 ├── frenet.rs      shared Frenet cubics, Cartesian transforms, and reachable target sampling
-├── sampling.rs    shared QMC low-discrepancy + road-frame sampler — see "Shared QMC sampling" below
+├── sampling.rs    shared QMC low-discrepancy sampling — see "Shared QMC sampling" below
 └── planners/      concrete planner implementations
     ├── leeroy_jenkins/ maximum acceleration, zero steering
     ├── bezier_toppra/ cubic Bezier back to the centerline + TOPP-RA speed
     ├── lattice/       Frenet lattice, high-res sampled grid + A* search
     ├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-    ├── rrt_star/      RRT*, cubic differential-flatness steering
     ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
     ├── tree/          Tree planner with Frenet sampling and cubic segments
     └── treetop/       finite-difference iLQR and the RRT+iLQR treetop planner
@@ -108,7 +107,7 @@ Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, RrtStar }
+pub enum PlannerKind { LeeroyJenkins, BezierToppra, Lattice, Pi2Ddp, Rrt, Ilqr, Treetop }
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
@@ -222,31 +221,12 @@ See [`metrics/README.md`](../metrics/README.md#the-shared-metric-objective).
 
 ## Shared QMC sampling
 
-`sampling.rs` is the single owner of the quasi-Monte-Carlo low-discrepancy sampling every sampling planner draws from —
-the deterministic alternative to a pseudo-random `Rng` that RRT\* already relied on, now shared with the judo-derived
-planners.
-Two things live here:
-
-- **The QMC sequence, behind one trait.** `van_der_corput` (radical inverse in a prime base) is the building block; the
-  `QuasiMonteCarlo` trait, with its single implementor `Halton`, is the *interface* every planner names.
-  There is exactly one implementor, so "the whole codebase samples from one QMC construction" is a fact the compiler
-  checks — a planner wanting a different sequence would have to name a different type, a compile error at the call site,
-  not a silent drift between two hand-maintained radical-inverse loops.
-- **The hybrid road-frame sampler.** `road_frame_samples::<Q>` lays down a fixed road-geometry grid over the `(station,
-  lateral)` Frenet box (in ascending-station order) and then a Halton QMC pass filling its gaps — the hybrid RRT\* grows
-  its tree from, now generic over the same `Q: QuasiMonteCarlo` so the road model and the QMC fill are shared, not copied.
-
-**Parity is enforced at the interface, not by convention.** RRT\* calls `road_frame_samples::<Halton>` for its Frenet
-targets; the judo optimizers call `qmc_normals::<Halton>` (Halton coordinates pushed through an inverse-normal-CDF,
-`inv_normal_cdf`) for their Gaussian Frenet endpoint noise.
-Both go through the same `QuasiMonteCarlo` trait, so the parity is *structural* (a type-level share, checked at compile
-time).
-On top of that, RRT\*'s `rrt_targets_match_shared_sampler` test pins the *numeric* parity — that lifting its old inline
-loop into the shared function changed no sample.
-Because the sequence is a pure function of the sample index, every planner that samples through this module is a pure
-function of the ego state and road context (`plan_is_a_pure_function_of_state`), the property that lets a closed-loop
-rollout inherit any single plan's safety margin — PI²-DDP, which keeps a real `Rng` for its rollouts, is now the lone
-exception.
+`sampling.rs` owns the deterministic quasi-Monte-Carlo sequences used by the tree and sampling-MPC planners.
+`van_der_corput` supplies the radical inverse; `Halton` combines distinct prime bases across dimensions through the
+`QuasiMonteCarlo` trait.
+The tree reads these coordinates directly, while the sampling-MPC optimizers call `qmc_normals::<Halton>` to map them
+through an inverse-normal CDF into mean-centered Gaussian perturbations.
+Both use the same sequence implementation, and their deterministic-planning tests check reproducibility.
 
 ## Planner implementations
 
@@ -254,6 +234,5 @@ exception.
 - [Bezier + TOPP-RA](planners/bezier_toppra/README.md)
 - [Frenet lattice](planners/lattice/README.md)
 - [PI²-DDP](planners/pi2ddp/README.md)
-- [RRT\*](planners/rrt_star/README.md)
 - [Sampling MPC](planners/sampling_mpc/README.md)
 - [Treetop](planners/treetop/README.md)

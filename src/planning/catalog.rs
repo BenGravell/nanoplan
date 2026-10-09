@@ -1,6 +1,6 @@
 use super::{
     BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, Planner, PredictiveSampling, RrtStarPlanner, SamplingPlanner, TreePlanner, TreetopPlanner,
+    Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreePlanner, TreetopPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -14,7 +14,6 @@ pub(crate) enum PlannerKind {
     Lattice,
     FrenetSampling,
     Pi2Ddp,
-    RrtStar,
     PredictiveSampling,
     Cem,
     Mppi,
@@ -30,7 +29,7 @@ struct PlannerSpec {
     has_diagnostics: bool,
 }
 
-const SPECS: [PlannerSpec; 12] = [
+const SPECS: [PlannerSpec; 11] = [
     PlannerSpec {
         kind: PlannerKind::LeeroyJenkins,
         name: "Leeroy Jenkins",
@@ -59,12 +58,6 @@ const SPECS: [PlannerSpec; 12] = [
         kind: PlannerKind::Pi2Ddp,
         name: "PI2-DDP",
         build: || Box::new(Pi2DdpPlanner::default()),
-        has_diagnostics: true,
-    },
-    PlannerSpec {
-        kind: PlannerKind::RrtStar,
-        name: "RRT*",
-        build: || Box::new(RrtStarPlanner::default()),
         has_diagnostics: true,
     },
     PlannerSpec {
@@ -106,13 +99,12 @@ const SPECS: [PlannerSpec; 12] = [
 ];
 
 impl PlannerKind {
-    pub(crate) const ALL: [PlannerKind; 12] = [
+    pub(crate) const ALL: [PlannerKind; 11] = [
         PlannerKind::LeeroyJenkins,
         PlannerKind::BezierToppra,
         PlannerKind::Lattice,
         PlannerKind::FrenetSampling,
         PlannerKind::Pi2Ddp,
-        PlannerKind::RrtStar,
         PlannerKind::PredictiveSampling,
         PlannerKind::Cem,
         PlannerKind::Mppi,

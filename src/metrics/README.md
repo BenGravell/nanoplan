@@ -44,14 +44,14 @@ The scalar interface stays the single source of truth for what "good" means; no 
 definition of the cost can drift away from it.
 Where a planner needs curvature as an input, it gets it one of two ways, both compatible with that constraint:
 
-- **A closed-form fact about an already-*fixed* candidate curve.** RRT\*'s `CubicSteer::curvature` evaluates the curvature
-  of a specific flat-output polynomial it already committed to — a geometric property of one candidate, not a gradient
-  used to choose the next one.
+- **A closed-form fact about an already-*fixed* candidate curve.** `planning::frenet::Motion` evaluates the curvature of a
+  specific flat-output polynomial it already committed to — a geometric property of one candidate, not a gradient used to
+  choose the next one.
 - **A value recovered from a sampled trajectory.** The space-time lattice derives curvature from heading change over
   distance along its timed connector before rolling the resulting control through the plant.
 
 **What stays planner-specific.** Sampling layouts, warm starts, feasibility margins, and search topology remain
 planner-specific, but they do not add another outcome score.
 Numeric optimizers replace `point_cost`'s `f64::INFINITY` with the finite, depth-scaled
-`constraints::HARD_VIOLATION_PENALTY`; the lattice and RRT\* propagate the actual infinity and reject the candidate
-outright.
+`constraints::HARD_VIOLATION_PENALTY`; the lattice and Frenet sampling planner propagate the actual infinity and reject
+the candidate outright.

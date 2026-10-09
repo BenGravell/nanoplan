@@ -16,7 +16,6 @@ pub(crate) mod planners;
 pub(crate) mod policy;
 pub(crate) mod sampling;
 pub(crate) mod search_tree;
-pub(crate) mod steering;
 mod trajectory_cost;
 mod warm_start;
 
@@ -27,7 +26,7 @@ pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use planners::{
     BezierToppraPlanner, Cem, FrenetSamplingPlanner, IlqrPlanner, LatticePlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, PredictiveSampling, RrtStarPlanner, SamplingPlanner, TreePlanner, TreetopPlanner,
+    Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreePlanner, TreetopPlanner,
 };
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use warm_start::take_warm;
