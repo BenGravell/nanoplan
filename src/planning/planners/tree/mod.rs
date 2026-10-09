@@ -13,7 +13,7 @@ use crate::constraints::Constraints;
 use crate::planning::controls::{repeat_last_controls, rollout_constrained};
 use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
 use crate::planning::planner_math;
-use crate::planning::planners::treetop::{SEGMENTS, STEER_TICKS, TICKS, goal_state, shift_actions, zero_action_point};
+use crate::planning::planners::treetop::{SEGMENTS, STEER_TICKS, TICKS, shift_actions, zero_action_point};
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
 use crate::planning::search_tree::parent_chain;
 use crate::planning::take_warm;
@@ -21,10 +21,9 @@ use crate::planning::{Context, Planner};
 use crate::simulation::{Control, State, world_step};
 use crate::track::Path;
 
-// treetop's category probabilities (`sampling.h`): goal 0.1, warm 0.2,
-// cold the rest. Drawn against a Halton coordinate instead of an RNG, so
-// the schedule is a fixed interleaving rather than a random one.
-const GOAL_PROBA: f64 = 0.1;
+// Warm samples use 20% of the draws when a previous solution is available;
+// the rest explore the layer's reachable state space. Halton keeps the
+// schedule deterministic.
 const WARM_PROBA: f64 = 0.2;
 
 /// Warm samples' perturbation half-widths around the previous solution's
@@ -102,26 +101,17 @@ impl ZapIndex {
 }
 
 /// The layered tree (treetop `tree.h`). `layers[0]` holds only the root;
-/// `layers[SEGMENTS]` holds the goal nodes.
+/// `layers[SEGMENTS]` holds the terminal nodes.
 pub(crate) struct Tree {
     pub(crate) nodes: Vec<Node>,
     pub(crate) layers: [Vec<usize>; SEGMENTS + 1],
 }
 
 impl Tree {
-    /// Grow a tree from `start` toward `goal`: root, zero-action fallback
-    /// chain, hot chain from the warm-start actions (if any), `samples`
-    /// goal/warm/cold samples spread over the intermediate layers, then
-    /// goal nodes steered from every penultimate-layer parent — treetop's
-    /// `Tree::grow`, in its exact phase order.
-    pub(crate) fn grow(
-        start: State,
-        goal: State,
-        warm: Option<&[Control]>,
-        samples: usize,
-        path: &Path,
-        ctx: &Context,
-    ) -> Tree {
+    /// Grow a full-horizon tree: a zero-action fallback chain, a hot chain
+    /// from warm-start actions (if any), then warm/cold samples distributed
+    /// across every layer, including the terminal layer.
+    pub(crate) fn grow(start: State, warm: Option<&[Control]>, samples: usize, path: &Path, ctx: &Context) -> Tree {
         let mut tree = Tree {
             nodes: Vec::new(),
             layers: std::array::from_fn(|_| Vec::new()),
@@ -147,11 +137,11 @@ impl Tree {
 
         let steer_duration = STEER_TICKS as f64 * ctx.road.dt;
 
-        // Zero-action fallback chain through the intermediate layers
+        // Zero-action fallback chain through every layer
         // (treetop `growZap`) — ignores collisions so a full parent chain
         // to the root always exists.
         let mut parent = 0usize;
-        for layer in 1..SEGMENTS {
+        for layer in 1..=SEGMENTS {
             let from = tree.nodes[parent].state;
             let target = zero_action_point(from, steer_duration);
             let (us, xs, ee) = g.steer_edge(from, target, steer_duration, layer);
@@ -179,7 +169,7 @@ impl Tree {
         // Layered sampling (treetop `growLayers`/`growSampleNode`), Halton
         // in place of the RNG. One global sample index keeps every draw —
         // category selector and state coordinates alike — deterministic.
-        let per_layer = samples / (SEGMENTS - 1).max(1);
+        let per_layer = samples / SEGMENTS;
         let boundary = frenet_boundary(path, start, g.initial_station);
         let laterals = lateral_targets(
             path.project(start.position()).d,
@@ -187,19 +177,23 @@ impl Tree {
             ctx.compute_budget,
         );
         let mut ix = 1usize;
-        for layer in 1..SEGMENTS {
+        for layer in 1..=SEGMENTS {
+            // A feasible edge cannot repair a collision earlier in its path.
+            // Keep unsafe fallback nodes out of ordinary parent selection.
+            if tree.layers[layer - 1].iter().all(|&id| tree.nodes[id].collides) {
+                break;
+            }
             // The previous layer is complete: cache its zero-action points
             // once and reuse the index for every sample in this layer.
             let parents = tree.zap_index(layer, steer_duration);
-            for _ in 0..per_layer {
+            for _ in 0..per_layer + usize::from(layer <= samples % SEGMENTS) {
                 let selector = Halton::coordinate(ix, 4);
                 let c: [f64; 4] = std::array::from_fn(|d| Halton::coordinate(ix, d));
                 ix += 1;
 
-                let (target, reason) = if selector < GOAL_PROBA {
-                    (goal, Reason::Goal)
-                } else if selector < GOAL_PROBA + WARM_PROBA && warm_traj.is_some() {
-                    let (wxs, _) = warm_traj.as_ref().unwrap();
+                let target = if selector < WARM_PROBA
+                    && let Some((wxs, _)) = &warm_traj
+                {
                     let w = wxs[layer * STEER_TICKS];
                     let Some((mut lon, mut lat)) = frenet_boundary(path, w, path.project(w.position()).s) else {
                         continue;
@@ -215,7 +209,7 @@ impl Tree {
                     let Some((target, _)) = motion.at(path, 0.0) else {
                         continue;
                     };
-                    (target, Reason::Sample)
+                    target
                 } else {
                     let Some((lon, lat)) = boundary else { continue };
                     let duration = layer as f64 * steer_duration;
@@ -242,7 +236,7 @@ impl Tree {
                     let Some((target, _)) = motion.at(path, duration) else {
                         continue;
                     };
-                    (target, Reason::Sample)
+                    target
                 };
 
                 // Sampled state itself in collision → discard (treetop
@@ -254,48 +248,14 @@ impl Tree {
                     continue;
                 }
 
-                // Parent: goal samples take a rotating parent (treetop's
-                // uniform-random one, made deterministic); the rest attach
-                // to the nearest zero-action point.
-                let prev = &tree.layers[layer - 1];
-                let parent = match reason {
-                    Reason::Goal => prev[ix % prev.len()],
-                    Reason::Sample => parents.nearest_parent(target),
-                };
-
-                // Goal samples steer over the whole remaining horizon
-                // (executing only this segment of the longer maneuver).
-                let duration = match reason {
-                    Reason::Goal => (SEGMENTS - layer) as f64 * steer_duration,
-                    Reason::Sample => steer_duration,
-                };
+                let parent = parents.nearest_parent(target);
                 let from = tree.nodes[parent].state;
-                let (us, xs, ee) = g.steer_edge(from, target, duration.max(steer_duration), layer);
+                let (us, xs, ee) = g.steer_edge(from, target, steer_duration, layer);
                 if ee.collides {
                     continue;
                 }
                 tree.add_node(parent, us, xs, layer, ee);
             }
-        }
-
-        // Goal nodes (treetop `growGoalNodes`): steer to the goal from
-        // every penultimate-layer parent; if every attempt collides, fall
-        // back to the nearest-zap parent and accept the collision so the
-        // goal layer is never empty.
-        for i in 0..tree.layers[SEGMENTS - 1].len() {
-            let parent = tree.layers[SEGMENTS - 1][i];
-            let from = tree.nodes[parent].state;
-            let (us, xs, ee) = g.steer_edge(from, goal, steer_duration, SEGMENTS);
-            if ee.collides {
-                continue;
-            }
-            tree.add_node(parent, us, xs, SEGMENTS, ee);
-        }
-        if tree.layers[SEGMENTS].is_empty() {
-            let parent = tree.zap_index(SEGMENTS, steer_duration).nearest_parent(goal);
-            let from = tree.nodes[parent].state;
-            let (us, xs, ee) = g.steer_edge(from, goal, steer_duration, SEGMENTS);
-            tree.add_node(parent, us, xs, SEGMENTS, ee);
         }
 
         tree
@@ -327,25 +287,29 @@ impl Tree {
 
     fn zap_index(&self, layer: usize, steer_duration: f64) -> ZapIndex {
         ZapIndex::new(
-            self.layers[layer - 1].iter().map(|&id| (id, self.nodes[id].state)),
+            self.layers[layer - 1]
+                .iter()
+                .copied()
+                .filter(|&id| !self.nodes[id].collides)
+                .map(|id| (id, self.nodes[id].state)),
             steer_duration,
         )
     }
 
     /// The best `k` full-length paths, preferring feasible paths, then progress cost.
     pub(crate) fn path_candidates(&self, k: usize) -> Vec<Vec<usize>> {
-        let mut goal_nodes = self.layers[SEGMENTS].clone();
-        goal_nodes.sort_by(|&a, &b| {
+        let mut terminal_nodes = self.layers[SEGMENTS].clone();
+        terminal_nodes.sort_by(|&a, &b| {
             let (na, nb) = (&self.nodes[a], &self.nodes[b]);
             na.collides
                 .cmp(&nb.collides)
                 .then(na.cost_to_come.total_cmp(&nb.cost_to_come))
         });
-        goal_nodes.truncate(k);
-        goal_nodes.iter().map(|&n| self.extract_path(n)).collect()
+        terminal_nodes.truncate(k);
+        terminal_nodes.iter().map(|&n| self.extract_path(n)).collect()
     }
 
-    /// Walk parent pointers from a goal node back to the root (treetop
+    /// Walk parent pointers from a terminal node back to the root (treetop
     /// `extractPath`).
     fn extract_path(&self, node: usize) -> Vec<usize> {
         let path = parent_chain(node, 0, |n| self.nodes[n].parent);
@@ -378,11 +342,6 @@ impl Tree {
             }
         }
     }
-}
-
-enum Reason {
-    Goal,
-    Sample,
 }
 
 /// The per-grow context bundle: steering + edge pricing.
@@ -451,9 +410,9 @@ impl Grower<'_, '_> {
 
 /// Fit cubic station/lateral segments, transform their derivatives into
 /// Cartesian commands, and realize the first segment under actuation limits.
-fn steer_actions(path: &Path, start: &State, goal: &State, duration: f64, dt: f64) -> Option<Vec<Control>> {
+fn steer_actions(path: &Path, start: &State, target: &State, duration: f64, dt: f64) -> Option<Vec<Control>> {
     let (lon, lat) = frenet_boundary(path, *start, path.project(start.position()).s)?;
-    let (end_lon, end_lat) = frenet_boundary(path, *goal, path.project(goal.position()).s)?;
+    let (end_lon, end_lat) = frenet_boundary(path, *target, path.project(target.position()).s)?;
     let motion = Motion {
         longitudinal: CubicPolynomial::from_boundary(lon[0], lon[1], end_lon[0], end_lon[1], duration),
         lateral: CubicPolynomial::from_boundary(lat[0], lat[1], end_lat[0], end_lat[1], duration),
@@ -490,16 +449,13 @@ const SAMPLES: usize = 150;
 impl Planner for TreePlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || ctx.path());
-        let goal = goal_state(path, ego, ctx);
         let warm = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego).map(shift_actions)
         });
 
         // Offline calibration: 150 tree samples is about 100 ms.
         let samples = ctx.compute_budget.scale(SAMPLES, 20);
-        let tree = ctx.time("optimize", || {
-            Tree::grow(ego, goal, warm.as_deref(), samples, path, ctx)
-        });
+        let tree = ctx.time("optimize", || Tree::grow(ego, warm.as_deref(), samples, path, ctx));
 
         if let Some(diag) = ctx.diagnostics {
             tree.record_diagnostics(diag);
@@ -696,13 +652,57 @@ mod tests {
             speed: 8.0,
             ..Default::default()
         };
-        let goal = goal_state(&path, ego, &ctx);
-        let tree = Tree::grow(ego, goal, None, 90, &path, &ctx);
-        let cands = tree.path_candidates(2);
-        assert!(!cands.is_empty());
-        for cand in &cands {
-            assert_eq!(cand.len(), SEGMENTS);
-            assert_eq!(tree.actions_of(cand).len(), TICKS);
+        for samples in [0, 1, 90] {
+            let tree = Tree::grow(ego, None, samples, &path, &ctx);
+            let cands = tree.path_candidates(2);
+            assert!(!cands.is_empty());
+            for cand in &cands {
+                assert_eq!(cand.len(), SEGMENTS);
+                assert_eq!(tree.actions_of(cand).len(), TICKS);
+            }
+            // Only the fallback chain may contain an unsafe ancestor.
+            assert!(tree.nodes.iter().skip(SEGMENTS + 1).all(|node| !node.collides));
+            if samples == 0 {
+                assert!(tree.layers.iter().all(|layer| layer.len() == 1));
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_layer_samples_diverse_states_with_and_without_warm_start() {
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let ego = State {
+            speed: 8.0,
+            ..State::default()
+        };
+        let actions = vec![Control::default(); TICKS];
+        for warm in [None, Some(actions.as_slice())] {
+            let tree = Tree::grow(ego, warm, 157, ctx.path(), &ctx);
+            let terminals = &tree.layers[SEGMENTS];
+            // More endpoints than the fallback and optional hot chain supply.
+            assert!(terminals.len() > 2);
+            let first = tree.nodes[terminals[0]].state;
+            assert!(
+                terminals
+                    .iter()
+                    .any(|&id| (tree.nodes[id].state.position().y - first.position().y).abs() > 0.5)
+            );
+            assert!(
+                terminals
+                    .iter()
+                    .any(|&id| (tree.nodes[id].state.speed - first.speed).abs() > 1.0)
+            );
+            for layer in 1..=SEGMENTS {
+                for &id in &tree.layers[layer] {
+                    let node = &tree.nodes[id];
+                    assert!(tree.layers[layer - 1].contains(&node.parent.unwrap()));
+                    assert_eq!(node.controls.len(), STEER_TICKS);
+                }
+            }
+            for path in tree.path_candidates(terminals.len()) {
+                assert_eq!(tree.actions_of(&path).len(), TICKS);
+            }
         }
     }
 

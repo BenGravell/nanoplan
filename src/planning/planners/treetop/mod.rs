@@ -1,7 +1,7 @@
 //! Planners ported from **treetop**
 //! (<https://github.com/BenGravell/treetop>), a tree-initialized
 //! trajectory-optimizing planner: an ego motion sampling tree provides a
-//! strong initial guess at a good path to the goal, and iLQR (iterative
+//! strong initial trajectory guess, and iLQR (iterative
 //! Linear Quadratic Regulator) optimizes that guess into a smooth
 //! trajectory, whose solution warm-starts the tree next cycle. Following
 //! the request that motivated this port, the two halves are *also* exposed
@@ -21,7 +21,7 @@
 //!   tree.
 //!
 //! This file also owns what treetop keeps in `core/` — the pieces *both*
-//! halves stand on: the trajectory-length constants and the goal state
+//! halves stand on: the trajectory-length constants and coasting rollout
 //! (shared rollout lives in [`crate::planning::controls`]). nanoplan's
 //! kinematic model keeps only pose/speed in state and uses direct
 //! acceleration/curvature commands, so the treetop port reads those commands
@@ -29,9 +29,9 @@
 //!
 //! ## Fitting treetop into the nanoplan framework
 //!
-//! - **The goal guides sampling.** A maximum-acceleration rollout places a
-//!   reachable preview on the centerline. Candidate selection uses the shared
-//!   progress cost, without a terminal-speed or goal-distance preference.
+//! - **Every tree layer samples reachable states.** The terminal layer uses
+//!   the same warm/cold sampling as intermediate layers. Candidate selection
+//!   uses the shared progress cost without a fixed goal state.
 //! - **Obstacles are moving actors priced by the shared metric objective.**
 //!   treetop collision-checks against static circles. Here every rolled-out
 //!   state is checked and priced through
@@ -57,7 +57,6 @@ pub(crate) use ilqr::IlqrPlanner;
 use crate::planning::controls::repeat_last_controls;
 use crate::planning::{Context, PLANNING_DT_S, PLANNING_TICKS, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
-use crate::track::Path;
 
 /// Planning-horizon length in ticks — treetop's `TRAJ_LENGTH_OPT`, here
 /// 10 s at the simulator's 0.1 s tick rate, the same look-ahead every other
@@ -87,29 +86,6 @@ pub(crate) fn zero_action_point(x: State, t: f64) -> State {
         x = world_step(x, Control::default(), dt);
     }
     x
-}
-
-/// Guide tree sampling with the centerline pose at maximum-acceleration reach.
-/// This preview bounds the search; the progress cost chooses the trajectory.
-pub(crate) fn goal_state(path: &Path, ego: State, ctx: &Context) -> State {
-    let s0 = path.project(ego.position()).s;
-    let mut preview = State {
-        speed: ego.speed,
-        ..Default::default()
-    };
-    for _ in 0..TICKS {
-        preview = world_step(
-            preview,
-            Control {
-                acceleration: crate::vehicle::MAX_LON_ACCEL,
-                curvature: 0.0,
-            },
-            ctx.road.dt,
-        );
-    }
-    let s_goal = (s0 + preview.position().x).min(path.length());
-    let (goal, gyaw) = path.pose_at(s_goal);
-    (goal, gyaw, preview.speed).into()
 }
 
 /// How many samples the tree spends per `plan()` call, spread across the
@@ -172,7 +148,6 @@ pub(crate) fn shift_actions(mut actions: Vec<Control>) -> Vec<Control> {
 impl Planner for TreetopPlanner {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || ctx.path());
-        let goal = goal_state(path, ego, ctx);
         let warm = ctx.time("warm_start", || {
             take_warm(&mut self.prev, self.expected_next, ego).map(shift_actions)
         });
@@ -183,7 +158,7 @@ impl Planner for TreetopPlanner {
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = tree::Tree::grow(ego, goal, warm.as_deref(), tree_samples, path, ctx);
+                let tree = tree::Tree::grow(ego, warm.as_deref(), tree_samples, path, ctx);
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });
@@ -230,29 +205,6 @@ impl Planner for TreetopPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn goal_state_uses_reachable_progress_on_the_centerline() {
-        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
-        let ctx = crate::planning::test_ctx(&road, &[]);
-        let path = Path::new(road.centerline());
-        let ego = State {
-            speed: 10.0,
-            ..Default::default()
-        };
-        let g = goal_state(&path, ego, &ctx);
-        assert!(
-            g.position().x > 100.0 && g.position().x <= 400.0,
-            "goal x {}",
-            g.position().x
-        );
-        assert_eq!(g.position().y, 0.0);
-        assert_eq!(g.pose.yaw, 0.0);
-        assert_eq!(
-            g.speed,
-            crate::simulation::speed_after_max_accel(ego.speed, TICKS, road.dt)
-        );
-    }
 
     #[test]
     fn rollout_constrained_uses_the_shared_step() {

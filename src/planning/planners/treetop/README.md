@@ -3,26 +3,25 @@
 `treetop/` — `TreePlanner` (`../tree/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
 A port of [**treetop**](https://github.com/BenGravell/treetop), a tree-initialized trajectory-optimizing planner: an ego
-motion sampling tree provides a strong, collision-aware initial guess at a good path to the goal, and iLQR (iterative
-Linear Quadratic Regulator) optimizes that guess into a smooth trajectory whose solution warm-starts the tree next
-cycle.
+motion sampling tree provides a strong, collision-aware initial trajectory guess, and iLQR (iterative Linear Quadratic
+Regulator) optimizes that guess into a smooth trajectory whose solution warm-starts the tree next cycle.
 Like the judo port, one upstream codebase yields several registry entries from one directory — here deliberately three,
 so the tree and the optimizer are each measurable *alone* before the coordination glue combines them:
 
 ```
 treetop/
-├── mod.rs   shared OCP core (treetop core/: limits, constrained rollout, goal) + TreetopPlanner glue (treetop planner.h)
+├── mod.rs   shared horizon and coasting rollout + TreetopPlanner glue (treetop planner.h)
 └── ilqr.rs  the iLQR solver (treetop ilqr/), finite-difference derivatives — IlqrPlanner
 ```
 
 nanoplan's kinematic model uses treetop's same pose/speed kinematics, but with a four-dimensional state `(x, y, yaw,
 speed)` and direct acceleration/curvature commands.
-Three adaptations recur throughout (see the module doc): treetop's fixed user-placed goal pose becomes a **rolling lane
-target** (`goal_state`: the centerline pose at maximum-acceleration reach over the planning horizon); treetop's static
-circular obstacles become **moving actors priced through the shared metric objective** at the absolute time each state
-is reached; and treetop's `std::mt19937` sampling and action jitter are replaced by the **shared Halton QMC sequence**
-(jitter dropped entirely — its purpose is randomized restarts), so all three planners are pure functions of the ego
-state, pinned by `*_is_a_pure_function_of_state` tests.
+Three adaptations recur throughout (see the module doc): treetop's fixed user-placed goal pose becomes **sampled
+terminal states**, using the same reachable-state sampling as every other layer; treetop's static circular obstacles
+become **moving actors priced through the shared metric objective** at the absolute time each state is reached; and
+treetop's `std::mt19937` sampling and action jitter are replaced by the **shared Halton QMC sequence** (jitter dropped
+entirely — its purpose is randomized restarts), so all three planners are pure functions of the ego state, pinned by
+`*_is_a_pure_function_of_state` tests.
 
 Shared `mod.rs` core, used by both halves: the horizon is `TICKS = 100` ticks (10 s, the common `PLANNING_HORIZON_S`),
 split into `SEGMENTS = 10` steering segments of `STEER_TICKS = 10` ticks, plus the shared rollout that advances every
@@ -45,18 +44,21 @@ A motion tree shaped by its downstream job — feeding a trajectory optimizer �
   It reuses `planning::frenet::Motion` to transform derivatives into Cartesian acceleration and curvature, then realizes
   bounded commands through the shared rollout.
   Invalid Frenet charts reject ordinary edges.
-  The steer executes only its first segment; goal-directed samples steer along a cubic spanning the whole remaining
-  horizon and keep just the first second of it.
+  Each edge steers for one segment toward a sample in the next layer.
 - **Zero-action-point parenting.** A sample attaches to the previous layer's node whose coasting endpoint is nearest in
   `(x, y, yaw, v)` — "who reaches me with the least effort" under simplifying kinematic assumptions.
+  Only parents with feasible paths are considered; a new edge cannot repair an earlier collision in a fallback chain.
   Like treetop's per-layer nanoflann kd-tree, a bulk-loaded index caches each completed parent layer's coasting endpoints
   once for all its child samples.
   Uses `rstar` dependency in four dimensions, with periodic yaw copies to preserve wrapped-angle distance across ±π and
   insertion-order tie breaking for deterministic plans.
-- **Layered sampling, three ways** (treetop's goal 0.1 / warm 0.2 / cold 0.7 split, drawn against a Halton coordinate
-  instead of an RNG): *goal* samples steer toward the goal, *warm* samples perturb around the previous solution's
-  trajectory in Frenet coordinates, and *cold* samples reuse `planning::frenet` lateral targets and reachable
-  station/speed envelopes for each layer.
+- **Layered sampling.** Warm samples use 20% of the draws when a previous solution is available, perturbing its trajectory
+  in Frenet coordinates.
+  The remaining cold samples reuse `planning::frenet` lateral targets and reachable station/speed envelopes for each
+  layer.
+  Halton coordinates select both categories and states deterministically.
+  The sample budget is spread across every layer, including the terminal layer; every sample uses nearest-coasting-parent
+  selection, with no fixed goal or special final connection pass.
 - **A zero-action fallback chain** guarantees every layer is non-empty (so a full-length path always exists), deliberately
   ignoring collisions — treetop's `growZap`.
   Such nodes carry a `collides` flag and price violating stages at `HARD_VIOLATION_PENALTY`, so they lose to any genuine
@@ -64,7 +66,7 @@ A motion tree shaped by its downstream job — feeding a trajectory optimizer �
 - **Edge cost = the metric objective.** Every rolled-out stage is priced by `point_cost`; hard violations reject ordinary
   samples, while fallback chains use the finite escape penalty.
   Path candidates rank feasible paths first, then by progress cost-to-come; alternates use the same ordering.
-  The reachable centerline goal guides sampling only, without a terminal-speed reward.
+  Terminal states are sampled alternatives, with no terminal-speed reward or goal-distance preference.
 
 The standalone planner takes the best path candidate as the plan, with its own warm start (previous plan shifted one
 tick, replayed as treetop's "hot" chain and sampled around as "warm") — the plan is exactly what the treetop planner
