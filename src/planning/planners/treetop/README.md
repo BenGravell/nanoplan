@@ -1,6 +1,6 @@
 # Treetop (Tree / iLQR / Tree+iLQR)
 
-`treetop/` — `GraphPlanner` (`../motion_graph/mod.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
+`treetop/` — `GraphPlanner` (`../motion_search/graph.rs`), `IlqrPlanner` (`ilqr.rs`), `TreetopPlanner` (`mod.rs`)
 
 A port of [**treetop**](https://github.com/BenGravell/treetop), a tree-initialized trajectory-optimizing planner: an ego
 motion sampling tree provides a strong, collision-aware initial trajectory guess, and iLQR (iterative Linear Quadratic
@@ -29,7 +29,7 @@ that advances every candidate through `simulation::world_step`.
 
 ## Tree
 
-`motion_graph/mod.rs` — `GraphPlanner::new(Connections::NearestZap)`
+`motion_search/graph.rs` — `GraphPlanner::new(Connections::NearestZap)`
 
 A motion tree shaped by its downstream job — feeding a trajectory optimizer:
 
@@ -38,7 +38,7 @@ A motion tree shaped by its downstream job — feeding a trajectory optimizer:
   precisely the input the iLQR pass wants.
   Moving obstacles come free: a layer's states have a known absolute time, so collision checks price actors where they
   *will be*.
-- **Frenet cubic steering.** `steer_actions` fits cubic station and lateral coordinates to position and velocity
+- **Frenet cubic steering.** `steer_trajectory` fits cubic station and lateral coordinates to position and velocity
   boundaries.
   It reuses `planning::frenet::Motion` to transform derivatives into Cartesian acceleration and curvature, then realizes
   bounded commands through the shared rollout.
@@ -67,12 +67,10 @@ A motion tree shaped by its downstream job — feeding a trajectory optimizer:
   Path candidates rank feasible paths first, then by progress cost-to-come; alternates use the same ordering.
   Terminal states are sampled alternatives, with no terminal-speed reward or goal-distance preference.
 
-The standalone planner takes the best path candidate as the plan, with its own warm start (previous plan shifted one
-tick, replayed as treetop's "hot" chain and sampled around as "warm") — the plan is exactly what the treetop planner
-would hand to iLQR, un-optimized, so the registry can show what the optimization pass buys.
-
-**Seams**: `route`, `warm_start`, `optimize` (the whole grow), `extract`; `cost` nests inside wherever an edge is
-priced.
+The standalone tree uses the shared [`MotionPlanner`](../motion_search/README.md) lifecycle.
+It revalidates complete paths, including braking tails after partial paths, before caching and execution.
+Treetop can additionally use unsafe coasting paths as optimization seeds.
+Both reuse the same graph builder and shifted-control warm starts.
 
 **Diagnostics**: every tree node as a point and every edge's rollout polyline as a trajectory — the whole search
 considered.

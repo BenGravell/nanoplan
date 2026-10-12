@@ -13,15 +13,16 @@ planning/
 └── planners/      concrete planner implementations
     ├── leeroy_jenkins/ maximum acceleration, zero steering
     ├── centerline_follower/ cubic Bezier back to the centerline + TOPP-RA speed
-    ├── motion_graph/  shared Tree/lattice graph, sampling, steering, and rollout
-    │   ├── nearest_zap.rs  single-parent nearest-ZAP connection strategy
-    │   └── lattice.rs      multiple-parent connections and layered minimum-cost search
+    ├── motion_search/ shared planner lifecycle, cubic steering, validation, and fallback
+    │   ├── graph.rs       layered Halton construction for Tree/lattice and treetop seeds
+    │   ├── nearest_zap.rs single-parent connection strategy
+    │   ├── lattice.rs     multiple-parent connections and layered minimum-cost search
+    │   ├── refinement.rs  whole-trajectory sampling and refinement loop
+    │   ├── frenet.rs      broad endpoint grid, single cubic
+    │   ├── ps.rs          Gaussian sampling, single best candidate
+    │   ├── cem.rs         elite mean and adaptive variance
+    │   └── mppi.rs        reward-weighted mean
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-    ├── sampling/      shared cubic rollout, scoring, validation, and warm starts
-    │   ├── frenet.rs  broad endpoint grid, single cubic
-    │   ├── ps.rs      Gaussian sampling, single best candidate
-    │   ├── cem.rs     elite mean and adaptive variance
-    │   └── mppi.rs    reward-weighted mean
     └── treetop/       finite-difference iLQR and the Tree+iLQR treetop planner
 ```
 
@@ -236,7 +237,6 @@ Both use the same sequence implementation, and their deterministic-planning test
 
 - [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
 - [CenterlineFollower](planners/centerline_follower/README.md)
-- [Frenet sampling](planners/sampling/README.md)
-- [Tree and lattice motion graph](planners/motion_graph/README.md)
+- [Motion search: Frenet, PS, CEM, MPPI, Tree, and lattice](planners/motion_search/README.md)
 - [Treetop](planners/treetop/README.md)
 - [PI²-DDP](planners/pi2ddp/README.md)

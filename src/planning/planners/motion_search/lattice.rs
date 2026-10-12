@@ -1,6 +1,6 @@
 //! Multiple-parent connections and layered minimum-cost search.
 
-use super::{Edge, Node, ZapIndex};
+use super::graph::{Edge, Node, ZapIndex};
 use crate::simulation::State;
 
 pub(super) const MAX_PARENTS: usize = 6;
@@ -44,7 +44,7 @@ pub(super) fn best_incoming(nodes: &[Node], incoming: &[Edge]) -> usize {
 mod tests {
     use crate::common::geometry::barrier::collides_with_road_barrier;
     use crate::planning::Planner;
-    use crate::planning::planners::motion_graph::{Connections, GraphPlanner};
+    use crate::planning::planners::motion_search::{Connections, GraphPlanner};
     use crate::planning::{test_ctx, test_road, test_run, test_run_on};
     use crate::simulation::State;
     use crate::track::Path;

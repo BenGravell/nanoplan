@@ -7,9 +7,9 @@
 //! the request that motivated this port, the two halves are *also* exposed
 //! as standalone planners, so the registry gains three entries from this
 //! directory (the same one-port-many-planners shape as
-//! [`super::sampling`]):
+//! [`super::motion_search`]):
 //!
-//! - [`GraphPlanner`](super::motion_graph::GraphPlanner) (`../motion_graph/mod.rs`) — the motion sampling tree alone
+//! - [`GraphPlanner`](super::motion_search::GraphPlanner) (`../motion_search/graph.rs`) — the motion sampling tree alone
 //!   (treetop's `tree/`), taking the tree's best path candidate as the
 //!   plan with no optimization pass.
 //! - [`IlqrPlanner`] (`ilqr.rs`) — the iLQR solver alone (treetop's
@@ -50,7 +50,7 @@
 
 pub(crate) mod ilqr;
 
-use crate::planning::planners::motion_graph::{Connections, Graph};
+use crate::planning::planners::motion_search::graph::{Connections, Graph, SEGMENTS};
 pub(crate) use ilqr::IlqrPlanner;
 
 use crate::planning::controls::repeat_last_controls;
@@ -122,7 +122,15 @@ impl Planner for TreetopPlanner {
         let (tree, candidates, best) = ctx.time("optimize", || {
             // ---- Tree expansion + path extraction (treetop `tree_exp`).
             let (tree, candidates) = ctx.time("tree", || {
-                let tree = Graph::grow(ego, warm.as_deref(), tree_samples, path, ctx, Connections::NearestZap);
+                let tree = Graph::grow(
+                    ego,
+                    warm.as_deref(),
+                    tree_samples,
+                    path,
+                    ctx,
+                    Connections::NearestZap,
+                    SEGMENTS,
+                );
                 let candidates = tree.path_candidates(CANDIDATES);
                 (tree, candidates)
             });

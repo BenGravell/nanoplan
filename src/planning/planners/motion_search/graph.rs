@@ -3,24 +3,24 @@
 //! [`crate::planning::frenet`], and supplies initial guesses to
 //! [`crate::planning::planners::treetop::TreetopPlanner`].
 
-mod lattice;
-mod nearest_zap;
+use super::{
+    Candidate, ControlLimits, SearchStrategy, cubic_control, fit_segment, initial_boundary, lattice, nearest_zap,
+    road_control, rollout_controls, select_candidates,
+};
 
 use rstar::RTree;
 use rstar::primitives::GeomWithData;
 
 use crate::common::geometry::{EGO_FOOTPRINT, wrap_angle};
-use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop, zero_action_point};
+use crate::common::kinematics::zero_action_point;
 use crate::common::polynomial::CubicPolynomial;
 use crate::constraints::Constraints;
-use crate::planning::controls::{repeat_last_controls, rollout_constrained, stop_controls};
+use crate::planning::controls::rollout_constrained;
 use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
 use crate::planning::planner_math;
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
-use crate::planning::take_warm;
-use crate::planning::warm_start::shift_actions;
-use crate::planning::{Context, PLANNING_TICKS as TICKS, Planner};
-use crate::simulation::{Control, State, world_step};
+use crate::planning::{Context, PLANNING_TICKS as TICKS};
+use crate::simulation::{Control, State};
 use crate::track::Path;
 
 pub(crate) const STEER_TICKS: usize = 10;
@@ -66,11 +66,11 @@ impl Connections {
 }
 
 /// One incoming edge, retaining its actual rollout rather than snapping to a sample.
-struct Edge {
-    parent: usize,
+pub(super) struct Edge {
+    pub(super) parent: usize,
     controls: Vec<Control>,
     states: Vec<State>,
-    eval: EdgeEval,
+    pub(super) eval: EdgeEval,
 }
 
 /// A sampled target's incoming edges and the best path reaching it.
@@ -80,8 +80,8 @@ pub(crate) struct Node {
     pub(crate) state: State,
     incoming: Vec<Edge>,
     best: usize,
-    cost_to_come: f64,
-    collides: bool,
+    pub(super) cost_to_come: f64,
+    pub(super) collides: bool,
 }
 
 impl Node {
@@ -98,18 +98,18 @@ impl Node {
 /// averaged over the segment. A hard violation is priced at the
 /// shared depth-scaled penalty and flagged rather than propagated as an
 /// infinity, because the fallback chains must be able to carry a cost.
-struct EdgeEval {
-    cost: f64,
-    collides: bool,
+pub(super) struct EdgeEval {
+    pub(super) cost: f64,
+    pub(super) collides: bool,
 }
 
 /// A completed parent layer's coasting endpoints.
 /// Spatial index with four coordinates instead of just position. Periodic yaw
 /// copies preserve the wrapped-angle metric across the -π/π seam.
-struct ZapIndex(RTree<GeomWithData<[f64; 4], usize>>);
+pub(super) struct ZapIndex(pub(super) RTree<GeomWithData<[f64; 4], usize>>);
 
 impl ZapIndex {
-    fn new(parents: impl Iterator<Item = (usize, State)>, ticks: usize, dt: f64) -> Self {
+    pub(super) fn new(parents: impl Iterator<Item = (usize, State)>, ticks: usize, dt: f64) -> Self {
         Self(RTree::bulk_load(
             parents
                 .flat_map(|(id, state)| {
@@ -121,7 +121,7 @@ impl ZapIndex {
         ))
     }
 
-    fn point(state: State) -> [f64; 4] {
+    pub(super) fn point(state: State) -> [f64; 4] {
         [
             state.position().x,
             state.position().y,
@@ -132,10 +132,12 @@ impl ZapIndex {
 }
 
 /// The layered motion graph. `layers[0]` holds only the root;
-/// `layers[SEGMENTS]` holds the terminal nodes.
+/// The last layer holds the terminal nodes.
 pub(crate) struct Graph {
     pub(crate) nodes: Vec<Node>,
-    pub(crate) layers: [Vec<usize>; SEGMENTS + 1],
+    pub(crate) layers: Vec<Vec<usize>>,
+    layer_ticks: Vec<usize>,
+    dt: f64,
 }
 
 impl Graph {
@@ -149,16 +151,22 @@ impl Graph {
         path: &Path,
         ctx: &Context,
         connections: Connections,
+        layer_count: usize,
     ) -> Graph {
+        assert!((1..=TICKS).contains(&layer_count));
+        let layer_ticks: Vec<_> = (0..=layer_count).map(|layer| layer * TICKS / layer_count).collect();
         let mut tree = Graph {
             nodes: Vec::new(),
-            layers: std::array::from_fn(|_| Vec::new()),
+            layers: vec![Vec::new(); layer_count + 1],
+            layer_ticks: layer_ticks.clone(),
+            dt: ctx.road.dt,
         };
         let g = Grower {
             path,
             ctx,
             initial_speed: start.speed,
             initial_station: ctx.project_ego(start).s,
+            layer_ticks: &layer_ticks,
         };
         let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, start.speed, g.initial_station);
 
@@ -176,9 +184,9 @@ impl Graph {
         // (treetop `growZap`) — ignores collisions so a full parent chain
         // to the root always exists.
         let mut parent = 0usize;
-        for layer in 1..=SEGMENTS {
+        for layer in 1..=layer_count {
             let from = tree.nodes[parent].state;
-            let target = zero_action_point(from, STEER_TICKS, ctx.road.dt);
+            let target = zero_action_point(from, layer_ticks[layer] - layer_ticks[layer - 1], ctx.road.dt);
             let (us, xs, ee) = g.steer_edge(from, target, layer);
             parent = tree.add_node(parent, us, xs, layer, ee);
         }
@@ -186,13 +194,18 @@ impl Graph {
         // Hot chain (treetop `growHot`): re-roll the warm-start actions
         // from the *current* start and split the result into one node per
         // segment, stopping at the first colliding segment.
-        let warm_traj = warm.map(|actions| rollout_constrained(start, actions, ctx.road.dt));
+        let warm_traj = warm.map(|actions| {
+            let mut actions = actions.to_vec();
+            actions.resize(TICKS, Control::default());
+            rollout_constrained(start, &actions, ctx.road.dt)
+        });
         if let Some((wxs, wus)) = &warm_traj {
             let mut parent = 0usize;
-            for layer in 1..=SEGMENTS {
-                let lo = (layer - 1) * STEER_TICKS;
-                let us = wus[lo..lo + STEER_TICKS].to_vec();
-                let xs = wxs[lo..=lo + STEER_TICKS].to_vec();
+            for layer in 1..=layer_count {
+                let lo = layer_ticks[layer - 1];
+                let hi = layer_ticks[layer];
+                let us = wus[lo..hi].to_vec();
+                let xs = wxs[lo..=hi].to_vec();
                 let ee = g.edge_eval(&xs, &us, layer);
                 if ee.collides {
                     break;
@@ -204,7 +217,7 @@ impl Graph {
         // Layered sampling (treetop `growLayers`/`growSampleNode`), Halton
         // in place of the RNG. One global sample index keeps every draw —
         // category selector and state coordinates alike — deterministic.
-        let per_layer = samples / SEGMENTS;
+        let per_layer = samples / layer_count;
         let boundary = frenet_boundary(path, start, g.initial_station);
         let laterals = lateral_targets(
             path.project(start.position()).d,
@@ -212,7 +225,7 @@ impl Graph {
             ctx.compute_budget,
         );
         let mut ix = 1usize;
-        for layer in 1..=SEGMENTS {
+        for layer in 1..=layer_count {
             // A feasible edge cannot repair a collision earlier in its path.
             // Keep unsafe fallback nodes out of ordinary parent selection.
             if tree.layers[layer - 1].iter().all(|&id| tree.nodes[id].collides) {
@@ -221,8 +234,8 @@ impl Graph {
             // The previous layer is complete: cache its zero-action points
             // once and reuse the index for every sample in this layer.
             let parents = tree.zap_index(layer, ctx.road.dt);
-            let layer_time = (layer * STEER_TICKS) as f64 * ctx.road.dt;
-            for _ in 0..per_layer + usize::from(layer <= samples % SEGMENTS) {
+            let layer_time = layer_ticks[layer] as f64 * ctx.road.dt;
+            for _ in 0..per_layer + usize::from(layer <= samples % layer_count) {
                 let selector = Halton::coordinate(ix, 4);
                 let c: [f64; 4] = std::array::from_fn(|d| Halton::coordinate(ix, d));
                 ix += 1;
@@ -230,7 +243,7 @@ impl Graph {
                 let target = if selector < WARM_PROBA
                     && let Some((wxs, _)) = &warm_traj
                 {
-                    let w = wxs[layer * STEER_TICKS];
+                    let w = wxs[layer_ticks[layer]];
                     let Some((mut lon, mut lat)) = frenet_boundary(path, w, path.project(w.position()).s) else {
                         continue;
                     };
@@ -348,14 +361,14 @@ impl Graph {
                 .copied()
                 .filter(|&id| !self.nodes[id].collides)
                 .map(|id| (id, self.nodes[id].state)),
-            STEER_TICKS,
+            self.layer_ticks[layer] - self.layer_ticks[layer - 1],
             dt,
         )
     }
 
     /// The best `k` full-length paths, preferring feasible paths, then progress cost.
     pub(crate) fn path_candidates(&self, k: usize) -> Vec<Vec<usize>> {
-        let mut terminal_nodes = self.layers[SEGMENTS].clone();
+        let mut terminal_nodes = self.layers.last().unwrap().clone();
         terminal_nodes.sort_by(|&a, &b| {
             let (na, nb) = (&self.nodes[a], &self.nodes[b]);
             na.collides
@@ -398,7 +411,7 @@ impl Graph {
                     diag.record_timed_trajectory(
                         edge.states.iter().map(Into::into).collect(),
                         (0..edge.states.len())
-                            .map(|tick| ((layer - 1) * STEER_TICKS + tick) as f64 * crate::planning::PLANNING_DT_S)
+                            .map(|tick| (self.layer_ticks[layer - 1] + tick) as f64 * self.dt)
                             .collect(),
                     );
                 }
@@ -413,16 +426,21 @@ struct Grower<'a, 'b> {
     ctx: &'a Context<'b>,
     initial_speed: f64,
     initial_station: f64,
+    layer_ticks: &'a [usize],
 }
 
 impl Grower<'_, '_> {
-    /// Steer from `from` toward `target` for [`STEER_TICKS`] ticks under
+    /// Steer from `from` toward `target` for this layer's duration under
     /// the actuation limits, priced as the edge landing in `layer`.
     fn steer_edge(&self, from: State, target: State, layer: usize) -> (Vec<Control>, Vec<State>, EdgeEval) {
-        let actions = steer_actions(self.path, &from, &target, self.ctx.road.dt);
-        let invalid = actions.is_none();
-        let actions = actions.unwrap_or_else(|| vec![Control::default(); STEER_TICKS]);
-        let (xs, us) = rollout_constrained(from, &actions, self.ctx.road.dt);
+        let ticks = self.layer_ticks[layer] - self.layer_ticks[layer - 1];
+        let trajectory = self.ctx.time("kinodynamic", || {
+            steer_trajectory(self.path, &from, &target, ticks, self.ctx.road.dt)
+        });
+        let invalid = trajectory.is_none();
+        let (xs, us) = trajectory
+            .map(|trajectory| (trajectory.states, trajectory.controls))
+            .unwrap_or_else(|| rollout_constrained(from, &vec![Control::default(); ticks], self.ctx.road.dt));
         let mut ee = self.edge_eval(&xs, &us, layer);
         ee.collides |= invalid;
         (us, xs, ee)
@@ -433,7 +451,7 @@ impl Grower<'_, '_> {
     fn edge_eval(&self, xs: &[State], us: &[Control], layer: usize) -> EdgeEval {
         self.ctx.work(1);
         let dt = self.ctx.road.dt;
-        let t0 = (layer - 1) as f64 * STEER_TICKS as f64 * dt;
+        let t0 = self.layer_ticks[layer - 1] as f64 * dt;
         let mut total = 0.0;
         let mut collides = false;
 
@@ -474,101 +492,124 @@ impl Grower<'_, '_> {
 
 /// Fit cubic station/lateral segments, transform their derivatives into
 /// Cartesian commands, and realize the first segment under actuation limits.
+fn steer_trajectory(
+    path: &Path,
+    start: &State,
+    target: &State,
+    ticks: usize,
+    dt: f64,
+) -> Option<crate::common::types::Trajectory> {
+    let initial = initial_boundary(path, *start, path.project(start.position()).s)?;
+    let end = initial_boundary(path, *target, path.project(target.position()).s)?;
+    let motion = fit_segment(initial, end, ticks as f64 * dt);
+    crate::simulation::rollout(*start, dt, ticks, |tick, actual| {
+        cubic_control(
+            motion.at(path, (tick as f64 + 0.5) * dt)?,
+            actual,
+            dt,
+            ControlLimits::Clamp,
+        )
+    })
+}
+
+#[cfg(test)]
 fn steer_actions(path: &Path, start: &State, target: &State, dt: f64) -> Option<Vec<Control>> {
-    let duration = STEER_TICKS as f64 * dt;
-    let (lon, lat) = frenet_boundary(path, *start, path.project(start.position()).s)?;
-    let (end_lon, end_lat) = frenet_boundary(path, *target, path.project(target.position()).s)?;
-    let motion = Motion {
-        longitudinal: CubicPolynomial::from_boundary(lon[0], lon[1], end_lon[0], end_lon[1], duration),
-        lateral: CubicPolynomial::from_boundary(lat[0], lat[1], end_lat[0], end_lat[1], duration),
-    };
-    let mut state = *start;
-    (0..STEER_TICKS)
-        .map(|tick| {
-            let (_, mut control) = motion.at(path, (tick as f64 + 0.5) * dt)?;
-            control.acceleration = commanded_accel_for_net(control.acceleration, state.speed)
-                .max(commanded_accel_to_stop(state.speed, dt));
-            control = clamp_control(control, state.speed);
-            state = world_step(state, control, dt);
-            Some(control)
-        })
-        .collect()
+    steer_trajectory(path, start, target, STEER_TICKS, dt).map(|trajectory| trajectory.controls)
 }
 
-/// The shared tree/lattice planner: grow, take the best path candidate, drive
-/// it — no optimization pass. Warm-starts from its own previous plan the
-/// same way the treetop planner feeds its optimized solution back in, so
-/// consecutive replans refine one detour instead of rediscovering a
-/// different one each tick.
-pub(crate) struct GraphPlanner {
-    connections: Connections,
-    prev: Option<Vec<Control>>,
-    expected_next: State,
-}
-
-/// Both modes sample the same targets. Lattice spends up to six edge
-/// evaluations per target; tree spends one.
+/// Both modes draw the same targets; lattice evaluates up to six parents per target.
 const SAMPLES: usize = 150;
 
-impl GraphPlanner {
-    pub(crate) fn new(connections: Connections) -> Self {
-        Self {
-            connections,
-            prev: None,
-            expected_next: State::default(),
-        }
-    }
-}
+impl SearchStrategy for Connections {
+    const NAME: &'static str = "motion graph";
 
-impl Planner for GraphPlanner {
-    fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
-        let path = ctx.time("route", || ctx.path());
-        let warm = ctx.time("warm_start", || {
-            take_warm(&mut self.prev, self.expected_next, ego).map(shift_actions)
+    fn search(&mut self, ego: State, warm: Option<&Candidate>, ctx: &Context) -> Option<Candidate> {
+        let warm = warm.map(|previous| crate::planning::warm_start::shift_actions(previous.controls.clone()));
+        let graph = ctx.time("optimize", || {
+            Graph::grow(
+                ego,
+                warm.as_deref(),
+                ctx.compute_budget.scale(SAMPLES, 10),
+                ctx.path(),
+                ctx,
+                *self,
+                SEGMENTS,
+            )
         });
-
-        // Retain the tree sampling allowance in both connection modes.
-        let samples = ctx.compute_budget.scale(SAMPLES, 10);
-        let tree = ctx.time("optimize", || {
-            Graph::grow(ego, warm.as_deref(), samples, path, ctx, self.connections)
-        });
-
         if let Some(diag) = ctx.diagnostics {
-            tree.record_diagnostics(diag);
+            graph.record_diagnostics(diag);
         }
-
-        let controls = ctx.time("extract", || {
-            let best = &tree.path_candidates(1)[0];
-            if tree.nodes[*best.last().unwrap()].collides {
-                // Keep the full fallback chain for treetop. For driving, use
-                // a feasible prefix and brake beyond the verified portion.
-                for layer in tree.layers.iter().skip(1).rev() {
-                    if let Some(&node) = layer
-                        .iter()
-                        .filter(|&&id| !tree.nodes[id].collides)
-                        .min_by(|&&a, &&b| tree.nodes[a].cost_to_come.total_cmp(&tree.nodes[b].cost_to_come))
-                    {
-                        let chain = tree.extract_path(node);
-                        let mut controls = tree.actions_of(&chain);
-                        controls.extend(stop_controls(tree.nodes[node].state, ctx, TICKS - controls.len()));
-                        return controls;
-                    }
+        // Full paths first, then progressively shorter safe prefixes completed with braking.
+        // Final execution uses the same full-horizon validation as every other strategy.
+        for layer in graph.layers.iter().skip(1).rev() {
+            let mut nodes: Vec<_> = layer.iter().copied().filter(|&id| !graph.nodes[id].collides).collect();
+            nodes.sort_by(|&a, &b| graph.nodes[a].cost_to_come.total_cmp(&graph.nodes[b].cost_to_come));
+            for id in nodes {
+                let actions = graph.actions_of(&graph.extract_path(id));
+                let Some(mut candidate) = rollout_controls(ego, ctx, |tick, state| {
+                    Some(
+                        actions
+                            .get(tick)
+                            .copied()
+                            .unwrap_or_else(|| road_control(state, ctx, crate::vehicle::MIN_LON_ACCEL)),
+                    )
+                }) else {
+                    continue;
+                };
+                candidate.reward = -graph.nodes[id].cost_to_come;
+                if let Some(candidate) = select_candidates(vec![candidate], 1, ctx).pop() {
+                    return Some(candidate);
                 }
-                stop_controls(ego, ctx, TICKS)
-            } else {
-                tree.actions_of(best)
             }
-        });
-        let out = repeat_last_controls(&controls, ctx.horizon);
-        self.expected_next = world_step(ego, out[0], ctx.road.dt);
-        self.prev = Some(controls);
-        out
+        }
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning::{Planner, planners::motion_search::GraphPlanner};
+
+    #[test]
+    fn variable_layers_cover_the_horizon_with_continuous_paths() {
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        let ctx = crate::planning::test_ctx(&road, &[]);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        // Short warm starts can occur when the timestep or requested horizon changes.
+        let warm = vec![Control::default(); TICKS / 2];
+        for connections in [Connections::NearestZap, Connections::Lattice] {
+            for layers in [1, 2, 7, 10] {
+                for warm in [None, Some(warm.as_slice())] {
+                    let graph = Graph::grow(ego, warm, 28, ctx.path(), &ctx, connections, layers);
+                    assert_eq!(graph.layers.len(), layers + 1);
+                    for layer in 1..=layers {
+                        for &id in &graph.layers[layer] {
+                            for edge in &graph.nodes[id].incoming {
+                                assert!(graph.layers[layer - 1].contains(&edge.parent));
+                                assert_eq!(
+                                    edge.controls.len(),
+                                    layer * TICKS / layers - (layer - 1) * TICKS / layers
+                                );
+                            }
+                        }
+                    }
+                    for chain in graph.path_candidates(3) {
+                        assert_eq!(chain.len(), layers);
+                        let actions = graph.actions_of(&chain);
+                        assert_eq!(actions.len(), TICKS);
+                        let (states, _) = rollout_constrained(ego, &actions, ctx.road.dt);
+                        for (i, &id) in chain.iter().enumerate() {
+                            assert_eq!(states[(i + 1) * TICKS / layers], graph.nodes[id].state);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn connection_modes_keep_single_or_multiple_parents_and_continuous_paths() {
@@ -581,7 +622,7 @@ mod tests {
         let warm = vec![Control::default(); TICKS];
         for connections in [Connections::NearestZap, Connections::Lattice] {
             for warm in [None, Some(warm.as_slice())] {
-                let graph = Graph::grow(ego, warm, SAMPLES, ctx.path(), &ctx, connections);
+                let graph = Graph::grow(ego, warm, SAMPLES, ctx.path(), &ctx, connections, SEGMENTS);
                 let max_parents = graph.nodes.iter().map(|n| n.incoming.len()).max().unwrap();
                 match connections {
                     Connections::NearestZap => assert_eq!(max_parents, 1),
@@ -710,7 +751,7 @@ mod tests {
             ..Default::default()
         };
         for samples in [0, 1, 90] {
-            let tree = Graph::grow(ego, None, samples, &path, &ctx, Connections::NearestZap);
+            let tree = Graph::grow(ego, None, samples, &path, &ctx, Connections::NearestZap, SEGMENTS);
             let cands = tree.path_candidates(2);
             assert!(!cands.is_empty());
             for cand in &cands {
@@ -735,7 +776,7 @@ mod tests {
         };
         let actions = vec![Control::default(); TICKS];
         for warm in [None, Some(actions.as_slice())] {
-            let tree = Graph::grow(ego, warm, 157, ctx.path(), &ctx, Connections::NearestZap);
+            let tree = Graph::grow(ego, warm, 157, ctx.path(), &ctx, Connections::NearestZap, SEGMENTS);
             let terminals = &tree.layers[SEGMENTS];
             // More endpoints than the fallback and optional hot chain supply.
             assert!(terminals.len() > 2);

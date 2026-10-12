@@ -1,4 +1,45 @@
+use super::refinement::initial_knots;
 use super::*;
+
+#[test]
+fn all_search_strategies_share_horizon_validation_and_emergency_fallback() {
+    fn check<S: SearchStrategy>(strategy: S) {
+        let mut planner = MotionPlanner::new(strategy);
+        let mut road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        let mut ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        for (dt, horizon) in [(0.1, 0), (0.2, 1), (0.1, 125)] {
+            road.dt = dt;
+            let mut ctx = crate::planning::test_ctx(&road, &[]);
+            ctx.horizon = horizon;
+            let controls = planner.plan(ego, &ctx);
+            assert_eq!(controls.len(), horizon);
+            if horizon > 0 {
+                let winner = planner.previous.as_ref().expect("empty road must yield a safe plan");
+                assert_eq!(winner.controls.len(), planning_ticks(&ctx));
+                assert!(trajectory_is_feasible(&winner.states, &winner.controls, &ctx));
+                ego = world_step(ego, controls[0], dt);
+            }
+        }
+        let actors = [ego];
+        let ctx = crate::planning::test_ctx(&road, &actors);
+        let emergency = planner.plan(ego, &ctx);
+        assert_eq!(emergency.len(), ctx.horizon);
+        assert!(emergency[0].acceleration < 0.0);
+        assert!(
+            planner.previous.is_none(),
+            "unavoidable collision must not be cached as safe"
+        );
+    }
+    check(frenet::Frenet);
+    check(PredictiveSampling);
+    check(Cem::default());
+    check(Mppi::default());
+    check(Connections::NearestZap);
+    check(Connections::Lattice);
+}
 
 fn run_planner<O: Optimizer>(ego: State, actors: &[State], ticks: usize) -> Vec<State> {
     use crate::common::geometry::barrier::collide_with_road_barriers;
@@ -121,9 +162,7 @@ fn warm_start_survives_a_new_road_origin_and_rejects_divergence() {
     let controls = planner.plan(ego, &ctx);
     let next = world_step(ego, controls[0], road.dt);
     assert_eq!(next, planner.expected_next);
-    let shifted_targets = planner.nominal.clone().unwrap();
     let mut other = SamplingPlanner::<PredictiveSampling> {
-        nominal: Some(shifted_targets),
         expected_next: next,
         previous: planner.previous.clone(),
         ..Default::default()
@@ -387,7 +426,6 @@ fn unvalidated_emergency_braking_is_never_cached_as_safe() {
     assert_eq!(controls.len(), ctx.horizon);
     assert!(controls[0].acceleration < 0.0);
     assert!(planner.previous.is_none());
-    assert!(planner.nominal.is_none());
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Single-parent tree connections using the nearest zero-action endpoint.
 
-use super::{Edge, ZapIndex};
+use super::graph::{Edge, ZapIndex};
 use crate::simulation::State;
 
 fn nearest_parent(index: &ZapIndex, target: State) -> usize {

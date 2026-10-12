@@ -1,6 +1,5 @@
 //! Shared control generation and vehicle rollouts for planners.
 
-use crate::common::differencing::forward_difference;
 use crate::common::types::FrenetPosition;
 use crate::planning::Context;
 use crate::planning::policy::centerline_curvature;
@@ -10,21 +9,6 @@ use crate::vehicle::MIN_LON_ACCEL;
 
 pub(crate) fn repeat_last_controls(controls: &[Control], horizon: usize) -> Vec<Control> {
     (0..horizon).map(|t| controls[t.min(controls.len() - 1)]).collect()
-}
-
-pub(crate) fn stop_controls(ego: State, ctx: &Context, horizon: usize) -> Vec<Control> {
-    let mut x = ego;
-    (0..horizon)
-        .map(|_| {
-            let accel = MIN_LON_ACCEL.max(forward_difference(x.speed, 0.0, ctx.road.dt));
-            let u = Control {
-                acceleration: accel,
-                curvature: 0.0,
-            };
-            x = world_step(x, u, ctx.road.dt);
-            u
-        })
-        .collect()
 }
 
 /// Roll `actions` out open-loop from `x0` through the kinematic model,
