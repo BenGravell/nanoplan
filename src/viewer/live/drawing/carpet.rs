@@ -8,7 +8,7 @@ use colorgrad::Gradient;
 use crate::common::geometry::EGO_FOOTPRINT;
 use crate::common::geometry::wrap_angle;
 use crate::common::interp::lerp_state;
-use crate::common::kinematics::TrajectoryKinematics;
+use crate::common::types::TrajectoryKinematics;
 use crate::simulation::{MAX_TERMINAL_SPEED_MPS, Position, State};
 use crate::track::Road;
 use crate::vehicle::{MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
@@ -174,10 +174,16 @@ fn visualization_values(
     let raw = match visualization {
         CarpetVisualization::Speed => trajectory.states.iter().map(|state| state.speed).collect(),
         CarpetVisualization::Time => trajectory.time.clone(),
-        CarpetVisualization::LongitudinalAcceleration => {
-            trajectory.controls.iter().map(|control| control.acceleration).collect()
-        }
-        CarpetVisualization::LateralAcceleration => trajectory.lateral_acceleration.clone(),
+        CarpetVisualization::LongitudinalAcceleration => trajectory
+            .accelerations
+            .iter()
+            .map(|acceleration| acceleration.lon)
+            .collect(),
+        CarpetVisualization::LateralAcceleration => trajectory
+            .accelerations
+            .iter()
+            .map(|acceleration| acceleration.lat)
+            .collect(),
         CarpetVisualization::Curvature => trajectory.controls.iter().map(|control| control.curvature).collect(),
         CarpetVisualization::Station => {
             let path = road.path();

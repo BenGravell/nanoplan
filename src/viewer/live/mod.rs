@@ -190,7 +190,7 @@ impl Live {
         self.world.tick_recording_latency(&self.recorder);
         self.previous = previous;
         self.friction_box
-            .record(self.previous.ego, self.world.ego(), self.world.dt());
+            .record(self.world.actuation(), self.world.ego().speed, self.world.dt());
         let progress = self
             .world
             .track

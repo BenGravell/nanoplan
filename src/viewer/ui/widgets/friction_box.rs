@@ -2,9 +2,9 @@
 
 use std::collections::VecDeque;
 
-use crate::common::differencing::forward_difference;
-use crate::common::kinematics::lateral_acceleration;
-use crate::simulation::{State, curvature_limit};
+use crate::common::kinematics::{control_to_accelerations, lateral_acceleration};
+use crate::common::types::Accelerations;
+use crate::simulation::{Control, curvature_limit};
 use crate::vehicle::{GRAVITY_MS2, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
 use colorgrad::Gradient;
@@ -13,8 +13,7 @@ use super::super::super::colors::{DIM_TEXT, FAINT, GREY_152, GUPPY, SURFACE, TEX
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
-    lon: f32,
-    lat: f32,
+    accelerations: Accelerations,
     time: f64,
 }
 
@@ -38,12 +37,10 @@ impl FrictionBox {
         self.samples.clear();
     }
 
-    pub(crate) fn record(&mut self, previous: State, current: State, dt: f64) {
+    pub(crate) fn record(&mut self, control: Control, speed: f64, dt: f64) {
         self.time += dt;
-        let [lon, lat] = ego_acceleration(previous, current, dt);
         self.samples.push_back(Sample {
-            lon: lon as f32,
-            lat: lat as f32,
+            accelerations: control_to_accelerations(control, speed),
             time: self.time,
         });
         while self
@@ -161,30 +158,15 @@ fn attainable_lateral_fraction(speed: f64) -> f32 {
     (lateral_acceleration(speed, curvature_limit(speed)) / MAX_ABS_LAT_ACCEL).clamp(0.0, 1.0) as f32
 }
 
-fn ego_acceleration(previous: State, current: State, dt: f64) -> [f64; 2] {
-    let forward = crate::simulation::Position::from_angle(previous.pose.yaw);
-    let current_forward = crate::simulation::Position::from_angle(current.pose.yaw);
-    let v0 = [previous.speed * forward.x, previous.speed * forward.y];
-    let v1 = [current.speed * current_forward.x, current.speed * current_forward.y];
-    let dv = [
-        forward_difference(v0[0], v1[0], dt),
-        forward_difference(v0[1], v1[1], dt),
-    ];
-    [
-        forward.x * dv[0] + forward.y * dv[1],
-        -forward.y * dv[0] + forward.x * dv[1],
-    ]
-}
-
 fn normalized(sample: Sample) -> [f32; 2] {
-    let lon_limit = if sample.lon >= 0.0 {
-        MAX_LON_ACCEL as f32
+    let lon_limit = if sample.accelerations.lon >= 0.0 {
+        MAX_LON_ACCEL
     } else {
-        -MIN_LON_ACCEL as f32
+        -MIN_LON_ACCEL
     };
     [
-        (sample.lon / lon_limit).clamp(-1.0, 1.0),
-        (sample.lat / MAX_ABS_LAT_ACCEL as f32).clamp(-1.0, 1.0),
+        (sample.accelerations.lon / lon_limit).clamp(-1.0, 1.0) as f32,
+        (sample.accelerations.lat / MAX_ABS_LAT_ACCEL).clamp(-1.0, 1.0) as f32,
     ]
 }
 
@@ -208,30 +190,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn acceleration_is_resolved_in_the_previous_ego_frame() {
-        let previous = State::new(
-            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 0.0), std::f64::consts::FRAC_PI_2),
-            10.0,
-        );
-        let current = State::new(
-            crate::simulation::Pose::new(
-                crate::simulation::Position::new(0.0, 0.0),
-                std::f64::consts::FRAC_PI_2 + 0.1,
-            ),
-            10.2,
-        );
+    fn acceleration_comes_from_control_and_current_speed() {
+        let mut friction = FrictionBox::new(0.2);
+        let control = Control {
+            acceleration: 2.0,
+            curvature: -0.02,
+        };
+        friction.record(control, 10.0, 0.1);
+        assert_eq!(friction.current().accelerations.lon, 2.0);
+        assert_eq!(friction.current().accelerations.lat, -2.0);
 
-        let [lon, lat] = ego_acceleration(previous, current, 0.1);
-
-        assert!((lon - 1.490_424).abs() < 1e-5);
-        assert!((lat - 10.183_008).abs() < 1e-5);
+        friction.record(Control::default(), 10.0, 0.1);
+        assert_eq!(friction.current().accelerations.lon, 0.0);
+        assert_eq!(friction.current().accelerations.lat, 0.0);
     }
 
     #[test]
     fn history_drops_samples_outside_its_horizon() {
         let mut friction = FrictionBox::new(0.2);
         for _ in 0..4 {
-            friction.record(State::default(), State::default(), 0.1);
+            friction.record(Control::default(), 0.0, 0.1);
         }
 
         assert_eq!(friction.samples.len(), 3);
@@ -241,14 +219,20 @@ mod tests {
     fn braking_and_acceleration_use_their_own_limits() {
         assert_eq!(
             normalized(Sample {
-                lon: MIN_LON_ACCEL as f32,
+                accelerations: Accelerations {
+                    lon: MIN_LON_ACCEL,
+                    lat: 0.0
+                },
                 ..Default::default()
             })[0],
             -1.0
         );
         assert_eq!(
             normalized(Sample {
-                lon: MAX_LON_ACCEL as f32,
+                accelerations: Accelerations {
+                    lon: MAX_LON_ACCEL,
+                    lat: 0.0
+                },
                 ..Default::default()
             })[0],
             1.0

@@ -4,8 +4,8 @@ mod road;
 mod traffic;
 
 use crate::common::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
-use crate::common::kinematics::TrajectoryKinematics;
 use crate::common::rng::Rng;
+use crate::common::types::TrajectoryKinematics;
 use crate::planning::engine::{PlanRequest, PlanResult, PlannerEngine};
 use crate::planning::{ComputeBudget, DiagnosticsData, Latency, PLANNING_HORIZON_S, PlannerKind};
 use crate::simulation::{Control, DynamicBody, Position, Simulator, State, collide_dynamic_bodies};

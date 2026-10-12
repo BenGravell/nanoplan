@@ -132,7 +132,7 @@ pub(crate) fn needs_road_window_update(road: &Road, distance_from_anchor: f64, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::kinematics::TrajectoryKinematics;
+    use crate::common::types::TrajectoryKinematics;
     use crate::planning::{ComputeBudget, Context, latency::geometry_build_clocks};
     use crate::simulation::{Control, State};
 
