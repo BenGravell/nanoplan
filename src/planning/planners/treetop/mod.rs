@@ -7,7 +7,7 @@
 //! the request that motivated this port, the two halves are *also* exposed
 //! as standalone planners, so the registry gains three entries from this
 //! directory (the same one-port-many-planners shape as
-//! [`super::sampling_mpc`]):
+//! [`super::sampling`]):
 //!
 //! - [`GraphPlanner`](super::motion_graph::GraphPlanner) (`../motion_graph/mod.rs`) — the motion sampling tree alone
 //!   (treetop's `tree/`), taking the tree's best path candidate as the

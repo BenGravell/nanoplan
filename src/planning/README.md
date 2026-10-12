@@ -16,9 +16,12 @@ planning/
     ├── motion_graph/  shared Tree/lattice graph, sampling, steering, and rollout
     │   ├── nearest_zap.rs  single-parent nearest-ZAP connection strategy
     │   └── lattice.rs      multiple-parent connections and layered minimum-cost search
-    ├── frenet_sampling/      Frenet cubics, kinodynamic filtering, cost-ordered collision checks
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-    ├── sampling_mpc/  judo-derived sampling MPC: predictive sampling, CEM, MPPI
+    ├── sampling/      shared cubic rollout, scoring, validation, and warm starts
+    │   ├── frenet.rs  broad endpoint grid, single cubic
+    │   ├── ps.rs      Gaussian sampling, single best candidate
+    │   ├── cem.rs     elite mean and adaptive variance
+    │   └── mppi.rs    reward-weighted mean
     └── treetop/       finite-difference iLQR and the Tree+iLQR treetop planner
 ```
 
@@ -233,7 +236,7 @@ Both use the same sequence implementation, and their deterministic-planning test
 
 - [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
 - [CenterlineFollower](planners/centerline_follower/README.md)
+- [Frenet sampling](planners/sampling/README.md)
 - [Tree and lattice motion graph](planners/motion_graph/README.md)
-- [PI²-DDP](planners/pi2ddp/README.md)
-- [Sampling MPC](planners/sampling_mpc/README.md)
 - [Treetop](planners/treetop/README.md)
+- [PI²-DDP](planners/pi2ddp/README.md)

@@ -3,12 +3,11 @@
 use crate::common::geometry::barrier::collides_with_road_barrier;
 use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
 use crate::common::measure::dot;
-use crate::common::types::Trajectory;
 use crate::constraints::collision::actor_collision;
 use crate::constraints::{Constraint, Constraints, Kinodynamic, Sample};
 use crate::planning::Context;
 use crate::planning::planner_math::state_sample;
-use crate::simulation::{Control, Position, State, rollout};
+use crate::simulation::{Control, Position, State};
 
 const ROAD_END_TOLERANCE_M: f64 = 1e-6;
 // Clearance for rolling-window seams, matching the Frenet and CenterlineFollower planners.
@@ -58,33 +57,15 @@ pub(crate) fn trajectory_is_feasible(states: &[State], controls: &[Control], ctx
     true
 }
 
-/// Roll out and validate supplied commands, recording diagnostics only on success.
-pub(crate) fn feasible_candidate_trajectory(ego: State, controls: &[Control], ctx: &Context) -> Option<Trajectory> {
-    let candidate = rollout(ego, ctx.road.dt, controls.len(), |tick, _| {
-        ctx.work(1);
-        Some(controls[tick])
-    })?;
-    if !road_and_collision_feasible(&candidate, ctx) {
-        return None;
-    }
-    if let Some(diag) = ctx.diagnostics {
-        diag.record_trajectory(candidate.states.iter().map(|state| state.position()).collect());
-    }
-    Some(candidate)
-}
-
-/// Expensive last pass, using cached Cartesian states in increasing cost order.
-pub(crate) fn road_and_collision_feasible(candidate: &Trajectory, ctx: &Context) -> bool {
-    trajectory_is_feasible(&candidate.states, &candidate.controls, ctx)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::geometry::RoadPolygon;
+    use crate::metrics;
     use crate::planning::{test_ctx, test_road};
-    use crate::simulation::world_step;
+    use crate::simulation::{rollout, world_step};
     use crate::track::Road;
+    use crate::vehicle::MAX_LON_ACCEL;
 
     #[test]
     fn rejects_footprint_contacts_that_point_scoring_misses() {
@@ -136,5 +117,37 @@ mod tests {
             &[control],
             &ctx
         ));
+    }
+
+    #[test]
+    fn feasibility_rejects_collisions_independently_of_progress_score() {
+        let road = test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let ego = State {
+            speed: 8.0,
+            ..Default::default()
+        };
+        let ctx = test_ctx(&road, &[]);
+        let coast = rollout(ego, road.dt, 3, |_, _| Some(Control::default())).unwrap();
+        let accelerated = rollout(ego, road.dt, 3, |_, _| {
+            Some(Control {
+                acceleration: MAX_LON_ACCEL,
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let score = |states: &[State]| metrics::evaluate(states, road.dt, ctx.path(), Some([20.0, 23.0]));
+        // The analytic baseline ignores the drag present in the rollout.
+        assert!(score(&accelerated.states) < 1.0);
+        assert!(score(&accelerated.states) > score(&coast.states));
+        let actors = [ego];
+        let blocked = test_ctx(&road, &actors);
+        for candidate in [coast, accelerated] {
+            assert!(trajectory_is_feasible(&candidate.states, &candidate.controls, &ctx));
+            assert!(!trajectory_is_feasible(
+                &candidate.states,
+                &candidate.controls,
+                &blocked
+            ));
+        }
     }
 }

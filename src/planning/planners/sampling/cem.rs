@@ -1,7 +1,7 @@
 //! Cross-entropy method (judo `cem.py`): adaptive per-node Gaussian, refit
 //! to the elite (best-scoring) rollouts each iteration.
 
-use super::{Knot, NU, Optimizer, OptimizerConfig, SIGMA_SCALE, noised_knots, ramp};
+use super::{Knot, NU, Optimizer, SIGMA_SCALE};
 
 /// The cross-entropy method. Unlike predictive sampling and MPPI, which
 /// perturb with a fixed sigma, CEM maintains a per-node sampling std and
@@ -9,7 +9,6 @@ use super::{Knot, NU, Optimizer, OptimizerConfig, SIGMA_SCALE, noised_knots, ram
 /// the elite mean and the std the elite std (clipped), so the distribution
 /// contracts around whatever region keeps scoring well.
 pub(crate) struct Cem {
-    cfg: OptimizerConfig,
     /// Per-node dimensionless sampling std, `[station, station speed, lateral offset, lateral speed]` each,
     /// scaled by [`SIGMA_SCALE`] at sampling time. Adapted in
     /// `update_nominal_knots`; there is one entry per knot.
@@ -24,13 +23,10 @@ pub(crate) struct Cem {
 
 impl Default for Cem {
     fn default() -> Self {
-        let cfg = OptimizerConfig::default();
         let sigma_min = 0.1;
         let sigma_max = 2.0;
-        let mid = (sigma_min + sigma_max) / 2.0;
         Cem {
-            sigma: vec![[mid; NU]; cfg.num_nodes],
-            cfg,
+            sigma: Vec::new(),
             sigma_min,
             sigma_max,
             num_elites: 6,
@@ -41,40 +37,27 @@ impl Default for Cem {
 impl Optimizer for Cem {
     const NAME: &'static str = "CEM (judo)";
 
-    fn config(&self) -> OptimizerConfig {
-        self.cfg
+    fn num_elites(&self) -> usize {
+        self.num_elites
     }
 
-    fn sample_knots(&mut self, nominal: &[Knot], sample_base: usize, num_rollouts: usize) -> Vec<Vec<Knot>> {
-        // guard against a warm-started nominal whose node count no longer
-        // matches this optimizer's adapted-sigma vector
-        if self.sigma.len() != nominal.len() {
-            let mid = (self.sigma_min + self.sigma_max) / 2.0;
-            self.sigma = vec![[mid; NU]; nominal.len()];
-        }
-        let cfg = self.cfg;
-        let sigma = self.sigma.clone();
-        noised_knots(nominal, num_rollouts, sample_base, |n| {
-            let r = ramp(&cfg, n);
-            sigma[n].map(|s| s * r)
-        })
+    fn sigma(&self, node: usize) -> Knot {
+        self.sigma
+            .get(node)
+            .copied()
+            .unwrap_or([(self.sigma_min + self.sigma_max) / 2.0; NU])
     }
 
-    fn update_nominal_knots(&mut self, sampled: &[Vec<Knot>], rewards: &[f64]) -> Vec<Knot> {
+    fn update_nominal_knots(&mut self, sampled: &[Vec<Knot>], _rewards: &[f64]) -> Vec<Knot> {
         let num_nodes = sampled[0].len();
-        // elite indices: the `num_elites` highest rewards (judo:
-        // flip(argsort(rewards))[:num_elites])
-        let mut order: Vec<usize> = (0..rewards.len()).collect();
-        order.sort_by(|&a, &b| rewards[b].total_cmp(&rewards[a]));
-        let elites = &order[..self.num_elites.min(order.len())];
-
+        self.sigma.resize(num_nodes, [0.0; NU]);
         // nominal ← elite mean; sigma ← clip(elite std)
         let mut nominal = vec![[0.0; NU]; num_nodes];
         for n in 0..num_nodes {
             for c in 0..NU {
-                let mean: f64 = elites.iter().map(|&e| sampled[e][n][c]).sum::<f64>() / elites.len() as f64;
+                let mean: f64 = sampled.iter().map(|knots| knots[n][c]).sum::<f64>() / sampled.len() as f64;
                 let var: f64 =
-                    elites.iter().map(|&e| (sampled[e][n][c] - mean).powi(2)).sum::<f64>() / elites.len() as f64;
+                    sampled.iter().map(|knots| (knots[n][c] - mean).powi(2)).sum::<f64>() / sampled.len() as f64;
                 nominal[n][c] = mean;
                 // the elite std is in physical endpoint units; store it back
                 // in the dimensionless units SIGMA_SCALE re-inflates at
