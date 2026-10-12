@@ -20,13 +20,16 @@ fn scrollbars_use_the_shared_solid_style() {
 }
 
 #[test]
-fn orange_ui_states_always_use_white_foregrounds() {
+fn active_widgets_use_dark_text_for_labels_on_light_panels() {
     let ctx = egui::Context::default();
     configure(&ctx);
     let style = ctx.style_of(egui::Theme::Light);
 
     assert_eq!(style.visuals.widgets.active.bg_fill, crate::viewer::colors::ORANGE);
-    assert_eq!(style.visuals.widgets.active.fg_stroke.color, egui::Color32::WHITE);
+    assert_eq!(
+        style.visuals.widgets.active.fg_stroke.color,
+        crate::viewer::colors::TEXT
+    );
     assert_eq!(style.visuals.selection.bg_fill, crate::viewer::colors::ORANGE);
     assert_eq!(style.visuals.selection.stroke.color, egui::Color32::WHITE);
     assert_eq!(style.visuals.override_text_color, None);
