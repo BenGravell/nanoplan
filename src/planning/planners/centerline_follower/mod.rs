@@ -365,7 +365,7 @@ fn candidate_cost(ego: State, ctx: &Context, controls: &[Control]) -> f64 {
     if !trajectory_is_feasible(&states, controls, ctx) {
         return f64::INFINITY;
     }
-    -metrics::evaluate(&states, ctx.road.dt, path, None)
+    -metrics::evaluate(&states, path, None)
 }
 
 fn brake(ego: State, ctx: &Context) -> Vec<Control> {
@@ -715,7 +715,7 @@ mod tests {
         for &control in &controls {
             states.push(world_step(*states.last().unwrap(), control, road.dt));
         }
-        let score = metrics::evaluate(&states, road.dt, &road.path(), None);
+        let score = metrics::evaluate(&states, &road.path(), None);
         assert_eq!(candidate_cost(ego, &ctx, &controls), -score);
 
         let off_road = State::from((Position::new(0.0, road.half_width + 1.0), 0.0, 8.0));

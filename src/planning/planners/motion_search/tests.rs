@@ -572,9 +572,8 @@ fn terminal_progress_wins_over_early_progress() {
         candidate
             .states
             .iter()
-            .enumerate()
             .skip(1)
-            .map(|(tick, state)| metrics::progress_score(state.position().x, ego.speed, tick as f64 * road.dt))
+            .map(|state| state.position().x)
             .sum::<f64>()
     };
     assert!(accumulated(&early) > accumulated(&late));

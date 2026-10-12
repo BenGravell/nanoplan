@@ -159,11 +159,10 @@ impl Graph {
         let g = Grower {
             path,
             ctx,
-            initial_speed: start.speed,
             initial_station: ctx.project_ego(start).s,
             layer_ticks: &layer_ticks,
         };
-        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, start.speed, g.initial_station);
+        let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, g.initial_station);
 
         // Root node.
         tree.nodes.push(Node {
@@ -406,7 +405,6 @@ impl Graph {
 struct Grower<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
-    initial_speed: f64,
     initial_station: f64,
     layer_ticks: &'a [usize],
 }
@@ -441,7 +439,6 @@ impl Grower<'_, '_> {
             self.ctx.road.half_width,
             self.ctx.actors,
             self.path,
-            self.initial_speed,
             self.initial_station,
         );
         for i in 0..us.len() {

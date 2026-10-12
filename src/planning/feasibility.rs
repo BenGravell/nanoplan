@@ -30,7 +30,7 @@ pub(crate) fn trajectory_is_feasible(states: &[State], controls: &[Control], ctx
     let path = ctx.path();
     let ego = states[0];
     let mut station = ctx.project_ego(ego).s;
-    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, ego.speed, station);
+    let constraints = Constraints::new(ctx.road.half_width, ctx.actors, path, station);
     let (end, end_yaw) = path.pose_at(path.length());
     let forward = Position::from_angle(end_yaw);
     for (tick, pair) in states.windows(2).enumerate() {
@@ -75,7 +75,7 @@ mod tests {
         let next = world_step(ego, control, road.dt);
         let ctx = test_ctx(&road, &[]);
         let (_, sample) = state_sample(ctx.path(), &next, road.dt, None);
-        let constraints = Constraints::new(road.half_width, &[], ctx.path(), ego.speed, ctx.project_ego(ego).s);
+        let constraints = Constraints::new(road.half_width, &[], ctx.path(), ctx.project_ego(ego).s);
         assert!(!constraints.is_violated(&sample.with_control(control, ego.speed)));
         assert!(!trajectory_is_feasible(&[ego, next], &[control], &ctx));
 
@@ -87,7 +87,7 @@ mod tests {
         let actors = [State::from((Position::new(4.0, 0.0), 0.0, 0.0))];
         let ctx = test_ctx(&road, &actors);
         let (_, sample) = state_sample(ctx.path(), &next, road.dt, None);
-        let constraints = Constraints::new(road.half_width, &actors, ctx.path(), ego.speed, ctx.project_ego(ego).s);
+        let constraints = Constraints::new(road.half_width, &actors, ctx.path(), ctx.project_ego(ego).s);
         assert!(!constraints.is_violated(&sample.with_control(control, ego.speed)));
         assert!(!trajectory_is_feasible(&[ego, next], &[control], &ctx));
     }
@@ -135,9 +135,7 @@ mod tests {
             })
         })
         .unwrap();
-        let score = |states: &[State]| metrics::evaluate(states, road.dt, ctx.path(), Some([20.0, 23.0]));
-        // The analytic baseline ignores the drag present in the rollout.
-        assert!(score(&accelerated.states) < 1.0);
+        let score = |states: &[State]| metrics::evaluate(states, ctx.path(), Some([20.0, 23.0]));
         assert!(score(&accelerated.states) > score(&coast.states));
         let actors = [ego];
         let blocked = test_ctx(&road, &actors);

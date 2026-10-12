@@ -165,7 +165,6 @@ fn score_candidates(mut candidates: Vec<Candidate>, ctx: &Context) -> Vec<Candid
         candidate.reward = ctx.time("cost", || {
             metrics::evaluate(
                 &candidate.states,
-                ctx.road.dt,
                 ctx.path(),
                 Some([ctx.project_ego(candidate.states[0]).s, candidate.station]),
             )

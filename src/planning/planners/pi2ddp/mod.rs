@@ -83,6 +83,11 @@ fn sample2(rng: &mut Rng, sigma: &M2) -> V2 {
     [l11 * z1, l21 * z1 + l22 * z2]
 }
 
+// Percentage improvement must work for negative progress costs as well as penalties.
+fn significant_improvement(previous: f64, cost: f64) -> bool {
+    previous.is_finite() && previous - cost > 0.1 * previous.abs()
+}
+
 /// Warm-started per-step policy carried between receding-horizon replans.
 struct Policy {
     u: Vec<V2>,           // nominal controls
@@ -165,7 +170,7 @@ impl Planner for Pi2DdpPlanner {
         let sigma_init: M2 = [[SIGMA_ACCEL * SIGMA_ACCEL, 0.0], [0.0, sigma_kappa * sigma_kappa]];
         // Composite-metric cost of being at `x` at tick `j`. A hard violation
         // (collision, or off the drivable area) becomes a large but
-        // finite `constraints::HARD_VIOLATION_PENALTY · (1 + depth)` via
+        // finite horizon-scaled penalty with a depth-dependent escape slope via
         // `Constraints::soft_point_cost` rather than `f64::INFINITY` — the
         // min/max-normalized rollout weighting below (eq. 12) can't divide by
         // an infinite range, and the depth-scaled escape slope gives the
@@ -385,7 +390,7 @@ impl Planner for Pi2DdpPlanner {
                 (pol.u, pol.gains, pol.sigma_u) = snapshot;
                 pol.lambda_exp = (0.9 * pol.lambda_exp).max(1e-3);
             } else {
-                if cost < 0.9 * pol.prev_cost {
+                if significant_improvement(pol.prev_cost, cost) {
                     pol.lambda_exp = (1.1 * pol.lambda_exp).min(1.0);
                 }
                 pol.u = u_exec;
@@ -413,6 +418,19 @@ impl Planner for Pi2DdpPlanner {
 mod tests {
     use super::*;
     use crate::planning::test_run;
+
+    #[test]
+    fn exploration_requires_a_real_improvement_for_either_cost_sign() {
+        for scale in [1.0, 1000.0] {
+            for previous in [-100.0, 100.0] {
+                assert!(!significant_improvement(scale * previous, scale * previous));
+                assert!(!significant_improvement(scale * previous, scale * (previous - 5.0)));
+                assert!(significant_improvement(scale * previous, scale * (previous - 20.0)));
+            }
+        }
+        assert!(!significant_improvement(f64::INFINITY, -100.0));
+        assert!(significant_improvement(0.0, -1.0));
+    }
 
     fn run(ego: State, actors: &[State], ticks: usize) -> Vec<State> {
         test_run(&mut Pi2DdpPlanner::default(), ego, actors, ticks)

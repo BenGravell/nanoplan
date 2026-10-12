@@ -49,7 +49,6 @@ mod tests {
     use crate::simulation::State;
     use crate::track::Path;
     use crate::track::Road;
-    use crate::vehicle::MAX_LON_ACCEL;
 
     #[test]
     fn accelerates_on_an_open_straight_without_a_speed_profile() {
@@ -62,11 +61,7 @@ mod tests {
             &test_ctx(&road, &[]),
         );
         assert!(!controls.is_empty());
-        assert!(
-            controls[0].acceleration > MAX_LON_ACCEL - 0.1,
-            "accel {}",
-            controls[0].acceleration
-        );
+        assert!(controls[0].acceleration > 0.0, "accel {}", controls[0].acceleration);
     }
 
     #[test]

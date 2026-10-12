@@ -8,7 +8,7 @@ use crate::viewer::live::Live;
 pub(super) fn show(ui: &mut egui::Ui, live: &Live) {
     let score = preview_score(live);
     section_heading(ui, "PLANNER METRICS");
-    metric(ui, "PROGRESS", format!("{:.1}%", score * 100.0));
+    metric(ui, "PROGRESS", format!("{score:.1} m"));
 }
 
 pub(super) fn metric(ui: &mut egui::Ui, label: &str, value: String) {
@@ -24,7 +24,7 @@ pub(super) fn section_heading(ui: &mut egui::Ui, heading: &str) {
 
 pub(crate) fn preview_score(live: &Live) -> f64 {
     let trajectory = &live.world.trajectory;
-    evaluate(&trajectory.states, trajectory.dt, &live.world.road.path(), None)
+    evaluate(&trajectory.states, &live.world.road.path(), None)
 }
 
 #[cfg(test)]

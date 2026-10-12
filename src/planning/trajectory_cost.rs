@@ -6,8 +6,8 @@ use crate::track::Path;
 pub(crate) struct TrajectoryCost<'a, 'b> {
     path: &'a Path,
     ctx: &'a Context<'b>,
-    initial_speed: f64,
     initial_station: f64,
+    cost_samples: usize,
 }
 
 impl<'a, 'b> TrajectoryCost<'a, 'b> {
@@ -15,8 +15,10 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         TrajectoryCost {
             path,
             ctx,
-            initial_speed: ego.speed,
             initial_station: ctx.project_ego(ego).s,
+            // Standalone optimizers use PLANNING_TICKS even for a shorter output prefix.
+            // Include the terminal cost; refiners may request a longer horizon.
+            cost_samples: ctx.horizon.max(crate::planning::PLANNING_TICKS) + 1,
         }
     }
 
@@ -26,18 +28,12 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
     }
 
     pub(super) fn stage_sample(&self, sample: Sample, actors: &[State], actors_are_predicted: bool) -> f64 {
-        let constraints = Constraints::new(
-            self.ctx.road.half_width,
-            actors,
-            self.path,
-            self.initial_speed,
-            self.initial_station,
-        );
+        let constraints = Constraints::new(self.ctx.road.half_width, actors, self.path, self.initial_station);
         self.ctx.time("cost", || {
             if actors_are_predicted {
-                constraints.soft_point_cost_with_predicted_actors(&sample)
+                constraints.soft_point_cost_with_predicted_actors(&sample, self.cost_samples)
             } else {
-                constraints.soft_point_cost(&sample)
+                constraints.soft_point_cost(&sample, self.cost_samples)
             }
         })
     }

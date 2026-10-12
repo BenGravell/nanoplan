@@ -56,3 +56,24 @@ impl Optimizer for Mppi {
         nominal
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weights_are_independent_of_reward_units_and_offset() {
+        let sampled = vec![vec![[0.0; NU]], vec![[1.0; NU]], vec![[2.0; NU]]];
+        let rewards = [-0.4, 0.0, 0.8];
+        let mut mppi = Mppi::default();
+        let expected = mppi.update_nominal_knots(&sampled, &rewards);
+        let meters = rewards.map(|reward| 1000.0 * reward + 500.0);
+        let actual = mppi.update_nominal_knots(&sampled, &meters);
+        for (a, b) in actual.iter().flatten().zip(expected.iter().flatten()) {
+            assert!((a - b).abs() < 1e-12);
+        }
+        let tied = mppi.update_nominal_knots(&sampled, &[500.0; 3]);
+        assert!((tied[0][0] - 1.0).abs() < 1e-12);
+        assert!((tied[0][1] - 1.0).abs() < 1e-12);
+    }
+}

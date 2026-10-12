@@ -13,7 +13,7 @@ use crate::metrics::progress_score;
 use crate::simulation::{Control, Position, State};
 use crate::track::{Path, Road};
 
-/// Finite stand-in for a hard violation, for numeric optimizers that cannot
+/// Minimum finite penalty for a hard violation, for numeric optimizers that cannot
 /// propagate infinity through statistics or finite differences.
 pub(crate) const HARD_VIOLATION_PENALTY: f64 = 1e4;
 
@@ -62,24 +62,16 @@ pub(crate) trait Constraint {
 pub(crate) struct Constraints<'a> {
     drivable: DrivableArea,
     collision: CollisionFree<'a>,
-    initial_speed: f64,
     initial_station: f64,
 }
 
 impl<'a> Constraints<'a> {
-    pub(crate) fn new(
-        road_half_width: f64,
-        actors: &'a [State],
-        track: &'a Path,
-        initial_speed: f64,
-        initial_station: f64,
-    ) -> Self {
+    pub(crate) fn new(road_half_width: f64, actors: &'a [State], track: &'a Path, initial_station: f64) -> Self {
         Constraints {
             drivable: DrivableArea {
                 half_width: road_half_width,
             },
             collision: CollisionFree { actors, track },
-            initial_speed,
             initial_station,
         }
     }
@@ -113,43 +105,44 @@ impl<'a> Constraints<'a> {
         {
             return f64::INFINITY;
         }
-        if sample.t == 0.0 {
-            return 0.0;
-        }
-        -progress_score(sample.station - self.initial_station, self.initial_speed, sample.t)
+        -progress_score(sample.station - self.initial_station)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.
     pub(crate) fn violation_penalty(&self, sample: &Sample) -> f64 {
-        self.violation_penalty_with_actor_time(sample, sample.t)
+        self.violation_penalty_with_actor_time(sample, sample.t, 1)
     }
 
-    fn violation_penalty_with_actor_time(&self, sample: &Sample, actor_time: f64) -> f64 {
+    fn violation_penalty_with_actor_time(&self, sample: &Sample, actor_time: f64, cost_samples: usize) -> f64 {
         let depth = Kinodynamic.violation_depth(sample)
             + self.drivable.violation_depth(sample)
             + self.collision.violation_depth_at(sample, actor_time);
-        HARD_VIOLATION_PENALTY * (1.0 + depth)
+        // Projected stations lie in [0, path length]. One violation must outweigh
+        // the entire signed progress range accumulated over the cost horizon.
+        let progress_range = 2.0 * cost_samples as f64 * self.collision.track.length();
+        (HARD_VIOLATION_PENALTY + progress_range) * (1.0 + depth)
     }
 
     /// [`Constraints::point_cost`] with hard violations made finite by
     /// [`Constraints::violation_penalty`], for optimizers whose reward
-    /// statistics or finite differences cannot absorb an infinity.
-    pub(crate) fn soft_point_cost(&self, sample: &Sample) -> f64 {
+    /// statistics or finite differences cannot absorb an infinity. `cost_samples`
+    /// bounds the number of stage and terminal costs summed by the optimizer.
+    pub(crate) fn soft_point_cost(&self, sample: &Sample, cost_samples: usize) -> f64 {
         let c = self.point_cost(sample);
         if c.is_finite() {
             c
         } else {
-            self.violation_penalty(sample)
+            self.violation_penalty_with_actor_time(sample, sample.t, cost_samples)
         }
     }
 
     /// Soft point cost when `actors` were already predicted to `sample.t`.
-    pub(crate) fn soft_point_cost_with_predicted_actors(&self, sample: &Sample) -> f64 {
+    pub(crate) fn soft_point_cost_with_predicted_actors(&self, sample: &Sample, cost_samples: usize) -> f64 {
         let c = self.point_cost_with_actor_time(sample, 0.0);
         if c.is_finite() {
             c
         } else {
-            self.violation_penalty_with_actor_time(sample, 0.0)
+            self.violation_penalty_with_actor_time(sample, 0.0, cost_samples)
         }
     }
 }
@@ -166,13 +159,13 @@ mod tests {
 
     fn point_cost(sample: &Sample, actors: &[State]) -> f64 {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        Constraints::new(HALF_WIDTH_M, actors, &track, INITIAL_SPEED, 0.0).point_cost(sample)
+        Constraints::new(HALF_WIDTH_M, actors, &track, 0.0).point_cost(sample)
     }
 
     #[test]
     fn kinodynamic_limits_reject_and_penalize_infeasible_commands() {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 0.0);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, 0.0);
         for speed in [0.0, 5.0, 30.0, -30.0] {
             for acceleration in [MIN_LON_ACCEL, MAX_LON_ACCEL] {
                 for curvature in [-curvature_limit(speed), curvature_limit(speed)] {
@@ -216,21 +209,21 @@ mod tests {
                 let sample = Sample::default().with_control(control, speed);
                 assert!(constraints.is_violated(&sample));
                 assert!(constraints.point_cost(&sample).is_infinite());
-                let penalty = constraints.soft_point_cost(&sample);
+                let penalty = constraints.soft_point_cost(&sample, 1);
                 assert!(penalty.is_finite() && penalty > HARD_VIOLATION_PENALTY);
-                assert_eq!(constraints.soft_point_cost_with_predicted_actors(&sample), penalty);
+                assert_eq!(constraints.soft_point_cost_with_predicted_actors(&sample, 1), penalty);
             }
         }
         let near = Sample::default().with_control(Control::from([MAX_LON_ACCEL + 0.1, 0.0]), 10.0);
         let far = Sample::default().with_control(Control::from([MAX_LON_ACCEL + 1.0, 0.0]), 10.0);
-        assert!(constraints.soft_point_cost(&far) > constraints.soft_point_cost(&near));
+        assert!(constraints.soft_point_cost(&far, 1) > constraints.soft_point_cost(&near, 1));
     }
 
     #[test]
     fn transition_checks_footprint_and_sample_constraints() {
         let road = Road::new(vec![[-20.0, 0.0], [100.0, 0.0]], HALF_WIDTH_M, DT);
         let path = road.path();
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &path, INITIAL_SPEED, 0.0);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &path, 0.0);
         let previous = State::from((Position::new(0.0, 0.0), 0.0, INITIAL_SPEED));
         let state = State::from((Position::new(1.0, 0.0), 0.0, INITIAL_SPEED));
         let sample = Sample {
@@ -262,7 +255,7 @@ mod tests {
         ));
 
         let actors = [state];
-        let constraints = Constraints::new(HALF_WIDTH_M, &actors, &path, INITIAL_SPEED, 0.0);
+        let constraints = Constraints::new(HALF_WIDTH_M, &actors, &path, 0.0);
         let sample = Sample {
             position: state.position(),
             ..Default::default()
@@ -284,16 +277,16 @@ mod tests {
             ..Default::default()
         };
         let cost = point_cost(&sample, &[]);
-        assert_eq!(cost, -progress_score(10.0, INITIAL_SPEED, 1.0));
+        assert_eq!(cost, -10.0);
         sample.station = 12.0;
         assert!(point_cost(&sample, &[]) < cost);
         sample.station = 6.75;
-        assert_eq!(point_cost(&sample, &[]), 1.0);
+        assert_eq!(point_cost(&sample, &[]), -6.75);
         sample.station = 16.5;
-        assert_eq!(point_cost(&sample, &[]), -2.0);
+        assert_eq!(point_cost(&sample, &[]), -16.5);
 
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 30.0);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, 30.0);
         sample.station = 40.0;
         assert_eq!(constraints.point_cost(&sample), cost);
     }
@@ -318,9 +311,35 @@ mod tests {
     }
 
     #[test]
+    fn one_violation_outweighs_accumulated_meter_rewards() {
+        let track = Path::new(&[Position::new(0.0, 0.0), Position::new(1000.0, 0.0)]);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, 0.0);
+        for cost_samples in [100, 1000] {
+            let mut cost = 0.0;
+            for tick in 1..=cost_samples {
+                let station = 500.0 * tick as f64 / cost_samples as f64;
+                let sample = Sample {
+                    position: Position::new(station, 0.0),
+                    station,
+                    lateral: if tick == cost_samples { HALF_WIDTH_M + 0.01 } else { 0.0 },
+                    ..Default::default()
+                };
+                let stage = constraints.soft_point_cost(&sample, cost_samples);
+                assert_eq!(
+                    stage,
+                    constraints.soft_point_cost_with_predicted_actors(&sample, cost_samples)
+                );
+                cost += stage;
+            }
+            // Staying still is feasible and scores zero; a fast violating rollout must lose.
+            assert!(cost > 0.0, "violating rollout won with cost {cost}");
+        }
+    }
+
+    #[test]
     fn soft_violation_cost_has_an_escape_slope() {
         let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
-        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, INITIAL_SPEED, 0.0);
+        let constraints = Constraints::new(HALF_WIDTH_M, &[], &track, 0.0);
         let near = Sample {
             lateral: HALF_WIDTH_M + 0.5,
             ..Default::default()
@@ -329,6 +348,6 @@ mod tests {
             lateral: HALF_WIDTH_M + 3.0,
             ..Default::default()
         };
-        assert!(constraints.soft_point_cost(&far) > constraints.soft_point_cost(&near));
+        assert!(constraints.soft_point_cost(&far, 1) > constraints.soft_point_cost(&near, 1));
     }
 }

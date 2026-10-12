@@ -3,27 +3,22 @@
 ## The shared metric objective
 
 Planners maximize forward progress subject to collision, road, and vehicle-dynamics constraints.
-`Constraints::point_cost(sample)` returns `-metrics::progress_score(...)` for feasible samples and `f64::INFINITY` for
-collision or road-bound violations.
+`Constraints::point_cost(sample)` returns `-metrics::progress_score(sample.station - initial_station)` for feasible
+samples and `f64::INFINITY` for collision or road-bound violations.
 There are no comfort weights or safety scores.
-The viewer displays the final normalized progress score.
-`evaluate` takes a state slice, timestep, reference path, and optional endpoint station hints; it projects only the
-first and last states.
+The viewer displays the final progress in meters.
+Both trajectory scoring and planner costs use the shared `metrics::progress_score` objective.
+`evaluate` takes a state slice, reference path, and optional endpoint station hints; it projects only the first and last
+states.
 Hints preserve the intended branch on overlapping road segments.
 Scoring does not construct `TrajectoryKinematics` or any per-state projection arrays.
 `TrajectoryKinematics` stores states, controls, time, and lateral acceleration without road projections.
 The viewer computes the full station sequence only when Station carpet coloring is selected.
 
-- **Progress** is the actual Frenet station delta above zero-acceleration coasting: `(delta_s - v_ego * t) / (0.5 *
-  MAX_LON_ACCEL * t²)`.
-  Subtracting the coasting distance from both reference distances cancels the initial-speed term in the denominator.
-  `progress_score` requires `t > 0`, making the denominator positive; the numerator is signed.
-  Constant acceleration without resistance scores `acceleration / MAX_LON_ACCEL`.
-  Actual rollout progress retains road geometry and vehicle dynamics; the reference needs no friction simulation.
-  Braking or falling behind coasting scores negative, and exceeding maximum-acceleration reference progress scores above
-  1.
-  The trajectory score is computed directly at the final sample; a single-sample trajectory scores 1 and an empty one
-  scores 0.
+- **Progress** is the signed Frenet station delta in meters: `delta_s = s_final - s_initial`.
+  There is no coasting subtraction or maximum-acceleration normalization, so greater distance traveled earns a higher
+  score.
+  The trajectory score uses the final sample; single-sample and empty trajectories score 0.
 - **Collision and road constraints** reject samples inside the shared car-width actor clearance or outside the local
   drivable bounds.
   Planners with rectangular footprints additionally check actor and barrier contact.
@@ -51,6 +46,7 @@ Where a planner needs curvature as an input, it gets it one of two ways, both co
 
 **What stays planner-specific.** Sampling layouts, warm starts, feasibility margins, and search topology remain
 planner-specific, but they do not add another outcome score.
-Numeric optimizers replace `point_cost`'s `f64::INFINITY` with the finite, depth-scaled
-`constraints::HARD_VIOLATION_PENALTY`; the lattice and Frenet sampling planner propagate the actual infinity and reject
-the candidate outright.
+Numeric optimizers replace `point_cost`'s `f64::INFINITY` with the finite, depth-scaled penalty.
+Its base exceeds the full signed station-cost range over the scored horizon, with `constraints::HARD_VIOLATION_PENALTY`
+as an additional margin; the lattice and Frenet sampling planner propagate the actual infinity and reject the candidate
+outright.

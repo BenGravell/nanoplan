@@ -44,7 +44,7 @@
 //!   absorb an infinity. A *flat* plateau is equally useless to a
 //!   finite-difference gradient (zero slope everywhere inside the
 //!   violation), so this planner prices a violation as
-//!   `HARD_VIOLATION_PENALTY · (1 + depth)` where `depth` is how far
+//!   a horizon-scaled penalty times `(1 + depth)`, where `depth` is how far
 //!   inside the violation the sample sits — same cliff at the boundary,
 //!   but with a gradient pointing back out of it.
 //!
@@ -77,6 +77,7 @@ use crate::track::Path;
 
 // ---- Solver settings (treetop `solver_settings.h`) ------------------------
 
+// Absolute tolerance in summed station meters; no unit-score range is assumed.
 const COST_CHANGE_TOL: f64 = 1e-4;
 const COST_CHANGE_RATIO_MIN: f64 = 0.01;
 const REG_INIT: f64 = 1.0;
@@ -624,21 +625,23 @@ mod tests {
 
     #[test]
     fn solve_improves_on_a_poor_initial_guess() {
-        let road = crate::planning::test_road(&[[-20.0, 0.0], [400.0, 0.0]]);
+        let road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
         let ctx = crate::planning::test_ctx(&road, &[]);
         let path = Path::new(road.centerline());
-        let ego = State::new(
-            crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
-            6.0,
-        );
-        let ocp = Ocp::new(&path, ego, &ctx);
-        // a lazy guess: coast straight, ignoring the lane offset and speed
-        let init = vec![Control::default(); TICKS];
-        let (xs0, us0) = rollout_constrained(ego, &init, ctx.road.dt);
-        let cost0 = ocp.traj_cost(&xs0, &us0);
-        let sol = solve(&ocp, &init, 20);
-        assert!(sol.cost < cost0, "no improvement: {} vs {cost0}", sol.cost);
-        assert!(sol.states.last().unwrap().speed > xs0.last().unwrap().speed);
+        for speed in [6.0, 50.0, 90.0] {
+            let ego = State::new(
+                crate::simulation::Pose::new(crate::simulation::Position::new(0.0, 2.0), 0.0),
+                speed,
+            );
+            let ocp = Ocp::new(&path, ego, &ctx);
+            // a lazy guess: coast straight, ignoring the lane offset and speed
+            let init = vec![Control::default(); TICKS];
+            let (xs0, us0) = rollout_constrained(ego, &init, ctx.road.dt);
+            let cost0 = ocp.traj_cost(&xs0, &us0);
+            let sol = solve(&ocp, &init, 20);
+            assert!(sol.cost < cost0, "no improvement: {} vs {cost0}", sol.cost);
+            assert!(sol.states.last().unwrap().speed > xs0.last().unwrap().speed);
+        }
     }
 
     #[test]
