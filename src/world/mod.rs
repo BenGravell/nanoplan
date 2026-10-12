@@ -159,8 +159,9 @@ impl LiveWorld {
 
     pub(crate) fn set_actor_count(&mut self, seed: u64, actor_count: usize) {
         let actor_count = actor_count.min(MAX_ACTORS);
-        if actor_count != self.actors.len() && self.pending_actors.take().is_some() {
+        if actor_count != self.actors.len() {
             // The in-flight snapshot no longer describes this traffic setup.
+            self.pending_actors = None;
             self.planner.reset(self.planner_kind, self.trajectory_optimization);
             self.planner_slow = false;
         }
@@ -244,10 +245,10 @@ impl LiveWorld {
         (ahead + 1, self.actors.len() + 1)
     }
 
-    pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) -> bool {
+    pub(crate) fn tick_recording_latency(&mut self, latency: &Latency) {
         latency.time("simulation.total", || {
-            self.tick_with_latency_inner(Some(latency), cfg!(test))
-        })
+            self.tick_with_latency_inner(Some(latency), false)
+        });
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -315,12 +316,12 @@ impl LiveWorld {
         if submitted {
             self.last_planner_actors = planner_actor_count;
         }
-        // Stage traffic for this tick without exposing a partially advanced
-        // world while the worker runs. Commit ego and actors together below.
+        // Stage traffic until the next scheduled tick, independently of whether
+        // its planning request was submitted or has completed.
         self.pending_actors = Some(std::mem::replace(&mut self.actors, previous_actors));
     }
 
-    fn tick_with_latency_inner(&mut self, latency: Option<&Latency>, wait_for_planner: bool) -> bool {
+    fn tick_with_latency_inner(&mut self, latency: Option<&Latency>, wait_for_planner: bool) {
         self.prepare_tick(latency);
         let result = self.planner.poll();
         #[cfg(not(target_family = "wasm"))]
@@ -331,15 +332,17 @@ impl LiveWorld {
         };
         #[cfg(target_family = "wasm")]
         let _ = wait_for_planner;
-        let Some(result) = result else {
+        if let Some(result) = result {
+            self.accept_plan(result, latency);
+        } else {
             self.planner_slow = self.planner.is_slow(self.dt());
-            return false;
-        };
+        }
         let previous_actors: Vec<_> = self.actors.iter().map(|a| (a.id, a.state)).collect();
-        self.actors = self.pending_actors.take().expect("a result completes one pending tick");
+        self.actors = self.pending_actors.take().expect("traffic is prepared for each tick");
         let actor_count = self.actors.len() as u64;
-        self.accept_plan(result, latency);
-        let controls = self.plan.as_slice();
+        // Plans are indexed from their snapshot, including results arriving late.
+        let elapsed_ticks = self.tick.saturating_sub(self.plan_tick) as usize;
+        let controls = self.plan.get(elapsed_ticks..).unwrap_or_default();
 
         let plan = timed(latency, "simulation.preview", || {
             let plan = self.simulator.preview(controls, self.preview_ticks);
@@ -364,11 +367,9 @@ impl LiveWorld {
         };
         self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
         self.tick += 1;
-        true
     }
 
     fn accept_plan(&mut self, result: PlanResult, latency: Option<&Latency>) {
-        assert_eq!(result.tick, self.tick, "lockstep result must match the waiting tick");
         self.planner_slow = result.elapsed_ms > self.dt() * 1e3;
         self.plan = result.controls;
         self.plan_tick = result.tick;

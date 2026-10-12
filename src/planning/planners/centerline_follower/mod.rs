@@ -403,7 +403,7 @@ mod tests {
         world.compute_budget = ComputeBudget::from_percent(percent);
         let lap = world.track.lap_length().unwrap();
         for tick in 0..600 {
-            world.tick_recording_latency(&Latency::default());
+            world.tick_recording_latency_blocking(&Latency::default());
             assert_eq!(world.ego_collision_count, 0, "budget {percent}, tick {tick}");
             let end = world.trajectory.states.last().unwrap();
             assert!(

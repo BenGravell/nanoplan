@@ -185,11 +185,9 @@ impl Live {
         }
     }
 
-    fn tick(&mut self) -> bool {
+    fn tick(&mut self) {
         let previous = RenderSnapshot::capture(&self.world);
-        if !self.world.tick_recording_latency(&self.recorder) {
-            return false;
-        }
+        self.world.tick_recording_latency(&self.recorder);
         self.previous = previous;
         self.friction_box
             .record(self.previous.ego, self.world.ego(), self.world.dt());
@@ -199,7 +197,6 @@ impl Live {
             .project_progress(self.world.ego().position(), self.world.track_progress);
         self.lap_stats
             .tick(self.world.dt(), progress, self.world.track.lap_length());
-        true
     }
 
     fn finish_frame(&mut self) {
@@ -253,9 +250,7 @@ pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<
     live.acc = (live.acc + time.delta_secs()).min(0.3);
     let mut ticks = 0;
     while live.acc >= DT as f32 && ticks < MAX_TICKS_PER_FRAME {
-        if !live.tick() {
-            break;
-        }
+        live.tick();
         live.acc -= DT as f32;
         ticks += 1;
     }

@@ -6,9 +6,9 @@ circuit across laps.
 
 Every tick rebuilds the planning window when needed, stages the single-track traffic with gap control, and sends only
 actors whose reachable interval can overlap the ego's to the selected planner.
-The viewer polls nonblockingly until the matching plan arrives, then commits traffic and applies the first ego control
-together.
-No simulation time is consumed while waiting; rendering remains responsive.
+Every scheduled tick advances traffic and ego together, even if the planner has not returned.
+The ego consumes the remaining controls from the last plan, then coasts with zero control when it runs out.
+Late results skip controls for elapsed simulation ticks; rendering continues to interpolate between physics steps.
 All planners receive the same road-window policy: maximum-acceleration reach over the 10-second planning horizon,
 including drag, plus 25 m ahead and 50 m behind.
 The window refreshes after 20 m of progress or sooner when increasing speed needs more road.

@@ -93,11 +93,7 @@ fn planner_warning_overlay(root: &egui::Ui, live: &Live, road_rect: egui::Rect, 
             .fill(ORANGE)
             .inner_margin(egui::Margin::symmetric(10, 5))
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("PLANNER TOO SLOW · WAITING FOR PLAN")
-                        .color(WHITE)
-                        .strong(),
-                );
+                ui.label(egui::RichText::new("PLANNER TOO SLOW").color(WHITE).strong());
             });
     });
 }

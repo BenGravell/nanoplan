@@ -142,7 +142,8 @@ mod tests {
             }
         };
         for _ in 0..3 {
-            assert!(live.tick());
+            live.previous = RenderSnapshot::capture(&live.world);
+            live.world.tick_recording_latency_blocking(&live.recorder);
             for fraction in [0.0, 0.25, 0.75, 1.0, 3.0] {
                 live.acc = fraction * live.world.dt() as f32;
                 check(&live);

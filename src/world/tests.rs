@@ -170,7 +170,7 @@ fn centerline_follower_one_lap_logical_clocks_are_stable() {
     let mut ticks = 0;
 
     while world.track_progress < lap_length && ticks < 2_000 {
-        world.tick_recording_latency(&recorder);
+        world.tick_recording_latency_blocking(&recorder);
         assert_eq!(
             world.ego_collision_count,
             0,
@@ -545,60 +545,84 @@ fn ego_projection_metadata_is_rebuilt_after_progress_refresh() {
 }
 
 #[test]
-fn lockstep_waits_for_matching_plan_without_advancing_ego_or_traffic() {
+fn slow_planner_does_not_stop_ticks_and_late_controls_are_time_aligned() {
     use crate::planning::{Context, Planner};
-    use crate::simulation::Control;
     use std::sync::mpsc;
+    use std::time::Duration;
 
     struct GatedPlanner(mpsc::Receiver<()>, mpsc::Sender<()>);
     impl Planner for GatedPlanner {
         fn plan(&mut self, _: State, _: &Context) -> Vec<Control> {
             self.1.send(()).unwrap();
-            self.0.recv().unwrap();
-            vec![
-                Control {
-                    acceleration: 1.0,
-                    curvature: 0.0
-                };
-                100
-            ]
+            self.0.recv_timeout(Duration::from_secs(5)).unwrap();
+            (0..10)
+                .map(|i| Control {
+                    acceleration: i as f64 * 0.1,
+                    curvature: 0.0,
+                })
+                .collect()
         }
     }
-    let mut world = LiveWorld::with_track(1, 1, PlannerKind::LeeroyJenkins, 3, 0.1);
+    let mut world = LiveWorld::with_track_at(
+        1,
+        1,
+        PlannerKind::LeeroyJenkins,
+        3,
+        0.1,
+        EgoStart {
+            speed: 5.0,
+            ..Default::default()
+        },
+    );
     let (release, gate) = mpsc::channel();
     let (started, planning) = mpsc::channel();
     world.planner = PlannerEngine::with_planner(
         Box::new(GatedPlanner(gate, started)),
         world.track.prepared().planning.clone(),
     );
+    world.plan = vec![
+        Control {
+            acceleration: 0.1,
+            curvature: 0.0,
+        },
+        Control {
+            acceleration: 0.2,
+            curvature: 0.0,
+        },
+    ];
     let ego = world.ego();
     let actors: Vec<_> = world.actors.iter().map(|a| a.state).collect();
     world.prepare_tick(None);
-    planning.recv().unwrap();
-    for _ in 0..3 {
-        assert!(!world.tick_with_latency_inner(None, false));
-        assert_eq!(world.tick, 0);
-        assert_eq!(world.ego(), ego);
-        assert_eq!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
+    planning.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(world.ego(), ego);
+    assert_eq!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
+    std::thread::sleep(Duration::from_millis(110));
+    // The worker cannot return until released, even as simulation time advances.
+    for (i, acceleration) in [0.1, 0.2, 0.0].into_iter().enumerate() {
+        world.tick_recording_latency(&Latency::default());
+        assert_eq!(world.tick, i as u64 + 1);
+        assert_eq!(world.actuation().acceleration, acceleration);
+        assert!(world.planner_slow);
+        assert_ne!(world.ego(), ego);
+        assert_ne!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
+        assert!(world.pending_actors.is_none());
     }
     release.send(()).unwrap();
-    assert!(world.tick_with_latency_inner(None, true));
-    assert_eq!(world.tick, 1);
+    world.tick_with_latency_inner(None, true);
+    assert_eq!(world.tick, 4);
     assert_eq!(world.plan_tick, 0);
-    assert!(world.ego().speed > ego.speed);
-    assert_ne!(world.actors.iter().map(|a| a.state).collect::<Vec<_>>(), actors);
-    assert!(world.pending_actors.is_none());
+    assert_eq!(world.actuation().acceleration, 3.0 * 0.1);
 
-    // Changing traffic while a request is in flight must discard its staged
-    // actors and result, rather than restoring the old traffic on completion.
-    assert!(!world.tick_with_latency_inner(None, false));
-    planning.recv().unwrap();
+    world.tick_recording_latency(&Latency::default());
+    planning.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(world.actuation().acceleration, 4.0 * 0.1);
+    // A traffic change must invalidate the outstanding result even after the
+    // staged actors have been committed by a nonblocking tick.
     world.set_actor_count(1, 0);
-    assert!(world.pending_actors.is_none());
     release.send(()).unwrap();
-    assert!(world.tick_with_latency_inner(None, true));
-    assert_eq!(world.tick, 2);
-    assert_eq!(world.plan_tick, 1);
+    world.tick_with_latency_inner(None, true);
+    assert_eq!(world.tick, 6);
+    assert_eq!(world.plan_tick, 5);
     assert_eq!(world.last_planner_actors, 0);
     assert!(world.actors.is_empty());
 }

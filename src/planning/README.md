@@ -111,16 +111,16 @@ states, horizon, compute budget, and diagnostic setting.
 No track points, boundaries, barriers, or indexes cross the worker boundary per tick.
 The worker gets the full 100 ms interval before the next step is due.
 Only one request may be in flight.
-The tick commits only after its matching `PlanResult` arrives: ego and traffic advance together by 100 ms. While
-waiting, the viewer keeps rendering and polling without advancing the world or consuming the accumulated tick.
-Traffic updates are staged so neither positions nor random state advance repeatedly during worker delays.
+Each scheduled tick advances ego and traffic together, whether or not a result is ready.
+The ego uses the last plan's control for the current simulation tick, or zero control if no controls remain.
+Late results are aligned to their request tick, skipping elapsed controls instead of replaying them.
+Traffic updates are staged only until the next scheduled tick.
 Changing the planner or traffic count discards pending snapshots by generation, while retaining prepared geometry.
+Rendering continues to interpolate between physics steps independently of planner completion.
 
-This is nonblocking lockstep: a fast planner supplies one fresh plan per simulation step; if computation exceeds 100 ms,
-simulated time slows rather than executing old controls and repeatedly rejecting stale replacements.
 A planner is considered too slow when either its completed runtime or the age of its outstanding request exceeds one
 simulation timestep.
-`LiveWorld` exposes that state as `planner_slow`, and the viewer displays **PLANNER TOO SLOW · WAITING FOR PLAN**.
+`LiveWorld` exposes that state as `planner_slow`, and the viewer displays **PLANNER TOO SLOW**.
 Native tests and batch measurement can explicitly block for a result; the live viewer never blocks its render thread.
 
 ## `Context`

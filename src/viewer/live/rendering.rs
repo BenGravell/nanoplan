@@ -35,7 +35,7 @@ pub(super) fn rendered_ego(live: &Live) -> State {
 pub(super) fn rendered_plan_age(live: &Live) -> f64 {
     // Diagnostics start at the planning snapshot, while the ego is rendered
     // between completed simulation states. Snapshot time also handles snaps
-    // on pause/resume and waiting for an overdue planner without aging by wall time.
+    // on pause/resume without aging by wall time.
     let render_lag = (live.world.time_s() - live.previous.time_s) * (1.0 - render_alpha(live));
     (live.world.plan_age_s() - render_lag).max(0.0)
 }

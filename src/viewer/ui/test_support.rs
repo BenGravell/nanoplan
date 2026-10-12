@@ -33,7 +33,7 @@ pub(super) struct ViewerHarnessState {
 impl Default for ViewerHarnessState {
     fn default() -> Self {
         let mut live = Live::default();
-        live.world.tick_recording_latency(&Latency::default());
+        live.world.tick_recording_latency_blocking(&Latency::default());
         Self {
             navigator: Navigator::default(),
             pages: Pages::default(),
