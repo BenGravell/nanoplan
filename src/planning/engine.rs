@@ -50,6 +50,7 @@ fn run(planner: &mut dyn Planner, road: &Road, request: PlanRequest) -> PlanResu
 struct WorkerRequest {
     generation: u64,
     kind: PlannerKind,
+    trajectory_optimization: bool,
     plan: PlanRequest,
 }
 
@@ -62,14 +63,19 @@ struct WorkerResult {
 struct PreparedPlanner {
     road: Road,
     kind: PlannerKind,
+    trajectory_optimization: bool,
     generation: u64,
     planner: Box<dyn Planner>,
 }
 
 impl PreparedPlanner {
     fn run(&mut self, request: WorkerRequest) -> WorkerResult {
-        if self.kind != request.kind || self.generation != request.generation {
-            self.planner = request.kind.build();
+        if self.kind != request.kind
+            || self.trajectory_optimization != request.trajectory_optimization
+            || self.generation != request.generation
+        {
+            self.planner = request.kind.build_with_optimization(request.trajectory_optimization);
+            self.trajectory_optimization = request.trajectory_optimization;
             self.kind = request.kind;
             self.generation = request.generation;
         }
@@ -91,6 +97,7 @@ mod platform {
         results: Receiver<WorkerResult>,
         pending_since: Option<Instant>,
         kind: PlannerKind,
+        trajectory_optimization: bool,
         generation: u64,
     }
 
@@ -114,6 +121,7 @@ mod platform {
                     let mut prepared = PreparedPlanner {
                         road,
                         kind,
+                        trajectory_optimization: false,
                         generation: 0,
                         planner,
                     };
@@ -129,6 +137,7 @@ mod platform {
                 results,
                 pending_since: None,
                 kind,
+                trajectory_optimization: false,
                 generation: 0,
             }
         }
@@ -137,8 +146,9 @@ mod platform {
             true
         }
 
-        pub(crate) fn reset(&mut self, kind: PlannerKind) {
+        pub(crate) fn reset(&mut self, kind: PlannerKind, trajectory_optimization: bool) {
             self.kind = kind;
+            self.trajectory_optimization = trajectory_optimization;
             self.generation += 1;
             self.pending_since = None;
         }
@@ -152,6 +162,7 @@ mod platform {
                 .send(WorkerRequest {
                     generation: self.generation,
                     kind: self.kind,
+                    trajectory_optimization: self.trajectory_optimization,
                     plan,
                 })
                 .is_err()
@@ -234,6 +245,7 @@ mod platform {
                     self.prepared = Some(PreparedPlanner {
                         road,
                         kind: PlannerKind::LeeroyJenkins,
+                        trajectory_optimization: false,
                         generation: 0,
                         planner: PlannerKind::LeeroyJenkins.build(),
                     });
@@ -249,6 +261,7 @@ mod platform {
 
     pub(crate) struct PlannerEngine {
         kind: PlannerKind,
+        trajectory_optimization: bool,
         generation: u64,
         worker: WorkerBridge<PlannerWorker>,
         results: Rc<RefCell<VecDeque<Output>>>,
@@ -272,6 +285,7 @@ mod platform {
             });
             Self {
                 kind,
+                trajectory_optimization: false,
                 generation: 0,
                 worker,
                 results,
@@ -288,8 +302,9 @@ mod platform {
             self.prepared
         }
 
-        pub(crate) fn reset(&mut self, kind: PlannerKind) {
+        pub(crate) fn reset(&mut self, kind: PlannerKind, trajectory_optimization: bool) {
             self.kind = kind;
+            self.trajectory_optimization = trajectory_optimization;
             self.generation += 1;
             self.pending_since = None;
         }
@@ -301,6 +316,7 @@ mod platform {
             self.worker.send(Input::Plan(WorkerRequest {
                 generation: self.generation,
                 kind: self.kind,
+                trajectory_optimization: self.trajectory_optimization,
                 plan,
             }));
             self.pending_since = Some(Instant::now());
@@ -343,6 +359,48 @@ mod tests {
     use super::*;
     use crate::planning::test_road;
 
+    #[test]
+    fn optimization_toggle_rebuilds_the_worker_and_discards_the_in_flight_result() {
+        use std::sync::mpsc::{Receiver, Sender, channel};
+        struct BlockedPlanner(Sender<()>, Receiver<()>);
+        impl Planner for BlockedPlanner {
+            fn plan(&mut self, _ego: State, _ctx: &Context) -> Vec<Control> {
+                self.0.send(()).unwrap();
+                self.1.recv().unwrap();
+                vec![Control::default()]
+            }
+        }
+        let (started, ready) = channel();
+        let (release, blocked) = channel();
+        let road = test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
+        let request = |tick| PlanRequest {
+            tick,
+            ego: State {
+                speed: 8.0,
+                ..Default::default()
+            },
+            road: road.view(),
+            actors: vec![],
+            horizon: 1,
+            compute_budget: ComputeBudget::from_percent(5.0),
+            diagnostics_enabled: false,
+        };
+        let mut engine = PlannerEngine::with_planner(Box::new(BlockedPlanner(started, blocked)), road.clone());
+        assert!(engine.submit(request(0)));
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        engine.reset(PlannerKind::PredictiveSampling, true);
+        assert!(engine.submit(request(1)));
+        release.send(()).unwrap();
+        let result = engine.wait();
+        assert_eq!(result.tick, 1);
+        assert!(result.latency.iter().any(|span| span.name == "traj_opt"));
+        engine.reset(PlannerKind::PredictiveSampling, false);
+        assert!(engine.submit(request(2)));
+        let result = engine.wait();
+        assert_eq!(result.tick, 2);
+        assert!(result.latency.iter().all(|span| span.name != "traj_opt"));
+    }
+
     struct GeometryProbe;
     impl Planner for GeometryProbe {
         fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
@@ -361,6 +419,7 @@ mod tests {
         let mut worker = PreparedPlanner {
             road: roads.planning.clone(),
             kind: PlannerKind::LeeroyJenkins,
+            trajectory_optimization: false,
             generation: 0,
             planner: Box::new(GeometryProbe),
         };
@@ -370,6 +429,7 @@ mod tests {
             let result = worker.run(WorkerRequest {
                 generation: u64::from(tick >= 10),
                 kind: PlannerKind::LeeroyJenkins,
+                trajectory_optimization: false,
                 plan: PlanRequest {
                     tick,
                     ego: State::default(),

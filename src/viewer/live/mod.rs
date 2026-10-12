@@ -237,10 +237,14 @@ impl Default for Live {
 pub(crate) fn update(mut live: NonSendMut<Live>, state: Res<UiState>, time: Res<Time>) {
     live.frame_rate.observe(time.delta_secs_f64());
     live.set_planner(state.planner);
+    if live.world.set_trajectory_optimization(state.trajectory_optimization) {
+        live.latency = LatencyStats::default();
+        live.recorder.take();
+    }
     live.world.compute_budget = ComputeBudget::from_percent(state.compute_budget_percent);
     live.world.preview_ticks = (state.preview_s as f64 / DT).round() as usize;
     live.world.diagnostics_enabled = state.preview_s > 0.0
-        && state.planner.has_diagnostics()
+        && (state.planner.has_diagnostics() || state.trajectory_optimization)
         && (state.show_diag_points || state.show_diag_trajectories);
     if live.paused {
         live.acc = 0.0;

@@ -12,6 +12,11 @@ const CENTERLINE_RETURN_TAU_S: f64 = 2.0;
 /// Longitudinal position advances at the actor's current speed while its
 /// current lateral offset decays smoothly toward the centerline.
 pub(crate) fn predict(actor: &State, track: &Path, t: f64) -> State {
+    // Already-predicted actors pass through collision costs at t = 0.
+    // Reprojecting them repeats geometry work and grows the actor cache per solver stage.
+    if t == 0.0 {
+        return *actor;
+    }
     let FrenetPosition { s: s0, d: d0 } = track.actor_projection(*actor);
     let s = s0 + actor.speed * t;
     let d = d0 * (-t / CENTERLINE_RETURN_TAU_S).exp();
@@ -23,6 +28,14 @@ pub(crate) fn predict(actor: &State, track: &Path, t: f64) -> State {
 mod tests {
     use super::*;
     use crate::simulation::Position;
+
+    #[test]
+    fn zero_time_preserves_the_supplied_pose_without_projecting() {
+        let track = Path::new(&[Position::new(0.0, 0.0), Position::new(100.0, 0.0)]);
+        let actor = State::from((Position::new(-10.0, 3.0), 0.3, 8.0));
+        assert_eq!(predict(&actor, &track, 0.0), actor);
+        assert_eq!(track.cached_actor_count(), 0);
+    }
 
     #[test]
     fn maintains_speed_and_smoothly_returns_to_centerline() {

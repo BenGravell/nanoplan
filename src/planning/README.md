@@ -14,7 +14,7 @@ planning/
     ├── leeroy_jenkins/ maximum acceleration, zero steering
     ├── centerline_follower/ cubic Bezier back to the centerline + TOPP-RA speed
     ├── motion_search/ shared planner lifecycle, cubic steering, validation, and fallback
-    │   ├── graph.rs       layered Halton construction for Tree/lattice and treetop seeds
+    │   ├── graph.rs       layered Halton construction for Tree/lattice
     │   ├── nearest_zap.rs single-parent connection strategy
     │   ├── lattice.rs     multiple-parent connections and layered minimum-cost search
     │   ├── refinement.rs  whole-trajectory sampling and refinement loop
@@ -23,8 +23,56 @@ planning/
     │   ├── cem.rs         elite mean and adaptive variance
     │   └── mppi.rs        reward-weighted mean
     ├── pi2ddp/        sampling-based DDP (PI²-DDP)
-    └── treetop/       finite-difference iLQR and the Tree+iLQR treetop planner
+    └── trajectory_optimization/
+        ├── mod.rs    optional statically composed iLQR post-process
+        └── ilqr.rs   shared finite-difference solver and standalone iLQR planner
 ```
+
+## Optional trajectory optimization
+
+The planner panel's **Trajectory optimization (iLQR)** checkbox refines any trajectory generator, including Frenet, PS,
+CEM, MPPI, Tree, lattice, CenterlineFollower, PI²-DDP, and Leeroy Jenkins.
+It defaults off.
+The standalone iLQR planner already performs optimization, so its checkbox is checked and disabled.
+For Tree+iLQR, select Tree and enable the checkbox; there is no separate combined planner entry.
+
+`PlannerKind::build_with_optimization` chooses a concrete generator or `Refined<Generator>` when settings change.
+There is one existing boxed planner dispatch per request; generation and refinement are statically composed, and the
+solver itself is shared non-generic code.
+Its 73 finite-difference cost probes reuse nine geometry samples in fixed-size stack arrays, and already-predicted
+actors are not projected again.
+Disabled mode has no post-process branch, allocation, or extra rollout.
+Both native and Web Worker messages carry the option.
+Changing it resets warm state and invalidates in-flight results without rebuilding road geometry; the viewer also resets
+timing statistics.
+
+Refinement asks for the complete planning horizon, reuses prepared geometry and the seed rollout, and runs iLQR on one
+candidate.
+Its iteration allowance scales from one to four (two at nominal compute budget).
+This bounds additional work independently of the generator's candidate count.
+The existing compute allowance still controls generation; optimization adds work rather than reducing the generator's
+search.
+The `traj_opt` timing seam exposes that cost.
+
+Only a finite, strictly lower-cost result with non-decreasing terminal progress and a fully feasible realized trajectory
+replaces the generator's plan.
+Validation includes raw commands, road windows, swept footprints, and predicted actors across the complete returned
+trajectory.
+Otherwise the original controls are retained.
+Accepted controls warm-start the sampling, graph, and PI²-DDP generators; PI²-DDP discards feedback gains tied to its
+old nominal.
+Only after this step is the requested output prefix emitted.
+iLQR terminal costs use the actual seed length.
+
+Run the optional microbenchmark with:
+
+```sh
+cargo test --locked --lib benchmark_optional_refinement -- --ignored --nocapture
+```
+
+It reports median generator and generator-plus-iLQR time on an empty straight and a bend with five actors.
+This is a bounded-work configuration, not a hard wall-clock deadline; expensive road or traffic contexts can still take
+longer.
 
 ## The `Planner` trait
 
@@ -112,27 +160,30 @@ Notably:
 ## `PlannerKind` and the `PlannerSpec` registry
 
 ```rust
-pub enum PlannerKind { LeeroyJenkins, CenterlineFollower, Lattice, Pi2Ddp, Tree, Ilqr, Treetop }
+pub enum PlannerKind {
+    LeeroyJenkins, CenterlineFollower, Lattice, FrenetSampling, Pi2Ddp,
+    PredictiveSampling, Cem, Mppi, Tree, Ilqr,
+}
 
 pub struct PlannerSpec {
     pub kind: PlannerKind,
     pub name: &'static str,             // display string
-    pub build: fn() -> Box<dyn Planner>, // fresh instance (Factory Method slot)
+    pub build: fn(bool) -> Box<dyn Planner>, // fresh instance, optional trajectory optimization
     pub has_diagnostics: bool,          // records into Diagnostics?
 }
 ```
 
 The selection/comparison seam.
 `PlannerKind` is just the key (a `Copy` enum, usable as a hash-map key); everything else about a planner lives in its
-row of the `SPECS` table, reached via `kind.spec()` — `.name()`, `.build()`, and `.has_diagnostics()` are thin accessors
-over it.
+row of the `SPECS` table, reached via `kind.spec()` — `.name()`, `.build_with_optimization()`, and `.has_diagnostics()`
+are thin accessors over it.
 `PlannerKind::ALL` is the definitive list the viewer's dropdown and the batch runner iterate over.
 A `specs_align_with_kinds` test pins the table's row order to the enum's discriminants.
 
 **To add another planner:**
 
-1. Create `planning/my_planner/mod.rs` implementing `Planner`.
-1. Add `pub mod my_planner;` and `pub use my_planner::MyPlanner;` to `planning/mod.rs`.
+1. Create `planning/planners/my_planner/mod.rs` implementing `Planner`.
+1. Add `pub mod my_planner;` and `pub use my_planner::MyPlanner;` to `planning/planners/mod.rs`.
 1. Add a `PlannerKind::MyPlanner` variant, extend `ALL`, and add one complete `PlannerSpec` row to `SPECS` (name,
    constructor, whether it records diagnostics).
 
@@ -238,5 +289,5 @@ Both use the same sequence implementation, and their deterministic-planning test
 - [Leeroy Jenkins](planners/leeroy_jenkins/README.md)
 - [CenterlineFollower](planners/centerline_follower/README.md)
 - [Motion search: Frenet, PS, CEM, MPPI, Tree, and lattice](planners/motion_search/README.md)
-- [Treetop](planners/treetop/README.md)
+- [Trajectory optimization and iLQR](planners/trajectory_optimization/README.md)
 - [PI²-DDP](planners/pi2ddp/README.md)

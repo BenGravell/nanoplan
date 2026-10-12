@@ -1,7 +1,6 @@
 //! The treetop iLQR solver (`ilqr/{solver,backward_pass,solver_settings}.h`),
 //! exposed standalone as [`IlqrPlanner`] and reused by
-//! [`TreetopPlanner`](super::TreetopPlanner) to optimize the tree's path
-//! candidates.
+//! [`Refined`](super::Refined) to optimize any generator's trajectory.
 //!
 //! iLQR alternates a **backward pass** — dynamic programming over
 //! linearized dynamics and a quadratic expansion of the cost, producing an
@@ -60,14 +59,17 @@
 //! as polylines (what the optimizer bought), the optimized states as
 //! points.
 
-use super::{TICKS, shift_actions};
+use crate::common::kinematics::{clamp_control, commanded_accel_to_stop};
 use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
 use crate::common::measure::dot;
+use crate::common::types::Trajectory;
 use crate::common::types::matrix::{M4, M22, M24, M42};
 use crate::common::types::state;
 use crate::common::types::vector::{V2, V4};
+use crate::planning::PLANNING_TICKS as TICKS;
 use crate::planning::controls::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
 use crate::planning::take_warm;
+use crate::planning::warm_start::shift_actions;
 use crate::planning::{Context, Planner, TrajectoryCost};
 use crate::prediction::predict;
 use crate::simulation::{Control, State, world_step};
@@ -115,20 +117,8 @@ impl<'a, 'b> Ocp<'a, 'b> {
         self.cost.stage(x, *u, t, s_hint)
     }
 
-    fn stage_cost_with_predicted_actors(
-        &self,
-        x: &State,
-        u: &Control,
-        t: usize,
-        s_hint: Option<f64>,
-        predicted_actors: &[State],
-    ) -> f64 {
-        self.cost
-            .stage_with_predicted_actors(x, *u, t, s_hint, predicted_actors)
-    }
-
-    fn terminal_cost(&self, x: &State) -> f64 {
-        self.cost.stage(x, Control::default(), TICKS, None)
+    fn terminal_cost(&self, x: &State, tick: usize) -> f64 {
+        self.cost.stage(x, Control::default(), tick, None)
     }
 
     /// Total cost of a rolled-out trajectory (treetop `Loss::totalValue`).
@@ -137,7 +127,7 @@ impl<'a, 'b> Ocp<'a, 'b> {
             .enumerate()
             .map(|(t, u)| self.stage_cost(&xs[t], u, t, None))
             .sum::<f64>()
-            + self.terminal_cost(xs.last().unwrap())
+            + self.terminal_cost(xs.last().unwrap(), us.len())
     }
 }
 
@@ -169,16 +159,38 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     let s_hint = ocp.path.project(x.position()).s;
     let t_s = t as f64 * ocp.ctx.road.dt;
     let predicted_actors: Vec<State> = ocp.ctx.actors.iter().map(|a| predict(a, ocp.path, t_s)).collect();
+    // The 73 finite-difference probes use only nine distinct positions.
+    // Cache their geometry on the stack; speed/control perturbations reuse it exactly.
+    let offsets = [0.0, H_COST, -H_COST];
+    let samples: [[crate::constraints::Sample; 3]; 3] = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            let mut probe = *x;
+            probe.pose.position.x += offsets[i];
+            probe.pose.position.y += offsets[j];
+            crate::planning::planner_math::state_sample(ocp.path, &probe, t_s, Some(s_hint)).1
+        })
+    });
     let eval = |z: [f64; 6]| {
-        ocp.stage_cost_with_predicted_actors(
-            &State::from([z[0], z[1], z[2], z[3]]),
-            &Control {
-                acceleration: z[4],
-                curvature: z[5],
-            },
-            t,
-            Some(s_hint),
+        let index = |value: f64, base: f64| {
+            if value == base {
+                0
+            } else if value > base {
+                1
+            } else {
+                2
+            }
+        };
+        let sample = samples[index(z[0], x.position().x)][index(z[1], x.position().y)];
+        ocp.cost.stage_sample(
+            sample.with_control(
+                Control {
+                    acceleration: z[4],
+                    curvature: z[5],
+                },
+                z[3],
+            ),
             &predicted_actors,
+            true,
         )
     };
     let z = [
@@ -199,8 +211,8 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
     }
 }
 
-fn terminal_derivs(ocp: &Ocp, x: &State) -> (V4, M4) {
-    fd_grad_hess(&|z| ocp.terminal_cost(&State::from(z)), state(x))
+fn terminal_derivs(ocp: &Ocp, x: &State, tick: usize) -> (V4, M4) {
+    fd_grad_hess(&|z| ocp.terminal_cost(&State::from(z), tick), state(x))
 }
 
 /// Central-difference gradient and Hessian of a black-box scalar. The
@@ -327,7 +339,7 @@ pub(crate) struct Solution {
 /// loss.
 fn backward(ocp: &Ocp, xs: &[State], us: &[Control], reg: f64) -> Option<(Vec<Gains>, Ecc)> {
     let n = us.len();
-    let (mut vx, mut vxx) = ocp.ctx.time("fd_cost", || terminal_derivs(ocp, &xs[n]));
+    let (mut vx, mut vxx) = ocp.ctx.time("fd_cost", || terminal_derivs(ocp, &xs[n], n));
     let mut gains = vec![
         Gains {
             k: [0.0; 2],
@@ -419,7 +431,7 @@ fn forward(
         nxs.push(x);
         nus.push(u);
     }
-    cost_total += ocp.terminal_cost(&x);
+    cost_total += ocp.terminal_cost(&x, n);
     cost_total.is_finite().then_some((nxs, nus, cost_total))
 }
 
@@ -429,8 +441,17 @@ fn forward(
 /// planner affords more). The returned trajectory is re-realized under the
 /// actuation constraints, exactly as treetop re-rollouts its solution.
 pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> Solution {
+    let (states, controls) = rollout_constrained(ocp.start, init_actions, ocp.ctx.road.dt);
+    solve_from_rollout(ocp, Trajectory { states, controls }, max_iters)
+}
+
+/// Reuse a generator's realized seed instead of integrating it again.
+pub(crate) fn solve_from_rollout(ocp: &Ocp, seed: Trajectory, max_iters: usize) -> Solution {
     let dt = ocp.ctx.road.dt;
-    let (mut xs, mut us) = rollout_constrained(ocp.start, init_actions, dt);
+    let Trajectory {
+        states: mut xs,
+        controls: mut us,
+    } = seed;
     let mut cost_now = ocp.ctx.time("rollout", || ocp.traj_cost(&xs, &us));
     let mut reg = REG_INIT;
 
@@ -486,7 +507,17 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
 
     // Re-rollout under the action constraints so the returned trajectory
     // is consistent and honors the limits (treetop does exactly this).
-    let (fxs, fus) = rollout_constrained(xs[0], &us, dt);
+    let mut state = xs[0];
+    let mut fxs = Vec::with_capacity(us.len() + 1);
+    let mut fus = Vec::with_capacity(us.len());
+    fxs.push(state);
+    for mut control in us {
+        control.acceleration = control.acceleration.max(commanded_accel_to_stop(state.speed, dt));
+        control = clamp_control(control, state.speed);
+        state = world_step(state, control, dt);
+        fxs.push(state);
+        fus.push(control);
+    }
     let fcost = ocp.ctx.time("rollout", || ocp.traj_cost(&fxs, &fus));
     Solution {
         states: fxs,
@@ -499,7 +530,7 @@ pub(crate) fn solve(ocp: &Ocp, init_actions: &[Control], max_iters: usize) -> So
 /// (or last tick's shifted solution), no tree in front. This is trajectory
 /// optimization at its most exposed — a purely local method whose result
 /// is only as good as its initial guess, which is precisely the weakness
-/// the treetop coordination exists to fix; kept standalone so the registry
+/// a trajectory generator supplies; kept standalone so the registry
 /// can show that difference side by side.
 #[derive(Default)]
 pub(crate) struct IlqrPlanner {
@@ -507,8 +538,8 @@ pub(crate) struct IlqrPlanner {
     expected_next: State,
 }
 
-/// The standalone planner's iteration budget: more than the treetop
-/// planner gives each candidate (its tree hands it a near-feasible guess;
+/// The standalone planner's iteration budget exceeds the shared post-process allowance
+/// (a generator supplies a near-feasible guess;
 /// the lane-keeping guess here may start inside an obstacle's penalty and
 /// needs the extra steps to climb out).
 const SOLO_ITERS: usize = 12;
@@ -632,6 +663,73 @@ mod tests {
     }
 
     #[test]
+    fn cached_probe_geometry_preserves_derivatives_and_bounds_projection_work() {
+        let points: Vec<_> = (0..1800)
+            .map(|i| {
+                let angle = i as f64 * 0.002;
+                [80.0 * angle.sin(), 80.0 * (1.0 - angle.cos())]
+            })
+            .collect();
+        let road = crate::planning::test_road(&points);
+        road.prepare();
+        let actors = [State::from((crate::simulation::Position::new(40.0, 10.0), 0.5, 6.0))];
+        let latency = crate::planning::Latency::default();
+        let mut ctx = crate::planning::test_ctx(&road, &actors);
+        ctx.latency = Some(&latency);
+        let path = ctx.path();
+        for offset in [0.0, 5.6] {
+            let x = State::from((path.frenet_to_position(20.0, offset), 0.25, 8.0));
+            let u = Control::from([2.0, 0.01]);
+            let ocp = Ocp::new(path, x, &ctx);
+            let hint = path.project(x.position()).s;
+            // Populate actor projection before comparing work, as both paths reuse it.
+            predict(&actors[0], path, 1.5);
+            latency.take();
+            let actual = latency.time("cached", || stage_derivs(&ocp, &x, &u, 15));
+            let cached = latency
+                .take()
+                .into_iter()
+                .find(|span| span.name == "cached")
+                .unwrap()
+                .clocks;
+            let z = [
+                x.position().x,
+                x.position().y,
+                x.pose.yaw,
+                x.speed,
+                u.acceleration,
+                u.curvature,
+            ];
+            let (grad, hess) = latency.time("reference", || {
+                fd_grad_hess(
+                    &|z| {
+                        ocp.stage_cost(
+                            &State::from([z[0], z[1], z[2], z[3]]),
+                            &Control::from([z[4], z[5]]),
+                            15,
+                            Some(hint),
+                        )
+                    },
+                    z,
+                )
+            });
+            let reference = latency
+                .take()
+                .into_iter()
+                .find(|span| span.name == "reference")
+                .unwrap()
+                .clocks;
+            assert_eq!(actual.lx, [grad[0], grad[1], grad[2], grad[3]]);
+            assert_eq!(actual.lu, [grad[4], grad[5]]);
+            assert_eq!(actual.lxx, std::array::from_fn(|i| std::array::from_fn(|j| hess[i][j])));
+            assert_eq!(actual.lxu, std::array::from_fn(|i| [hess[i][4], hess[i][5]]));
+            assert_eq!(actual.luu, [[hess[4][4], hess[4][5]], [hess[5][4], hess[5][5]]]);
+            assert!(cached * 4 < reference, "cached {cached}, reference {reference}");
+            assert_eq!(path.cached_actor_count(), actors.len());
+        }
+    }
+
+    #[test]
     fn predicted_actor_stage_cost_matches_regular_stage_cost() {
         let actor = State::new(
             crate::simulation::Pose::new(crate::simulation::Position::new(40.0, 0.0), 0.0),
@@ -661,7 +759,8 @@ mod tests {
         let predicted = [predict(&actor, &path, t as f64 * road.dt)];
 
         let regular = tc.stage(&x, u, t, None);
-        let reused = tc.stage_with_predicted_actors(&x, u, t, None, &predicted);
+        let (_, sample) = crate::planning::planner_math::state_sample(&path, &x, t as f64 * ctx.road.dt, None);
+        let reused = tc.stage_sample(sample.with_control(u, x.speed), &predicted, true);
         assert!((regular - reused).abs() < 1e-9, "{regular} vs {reused}");
     }
 

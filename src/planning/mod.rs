@@ -25,7 +25,7 @@ pub(crate) use diagnostics::{Diagnostics, DiagnosticsData};
 pub(crate) use latency::{Latency, LatencyStats, Span};
 pub(crate) use planners::{
     Cem, CenterlineFollower, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
+    Pi2DdpPlanner, PredictiveSampling, SamplingPlanner,
 };
 pub(crate) use trajectory_cost::TrajectoryCost;
 pub(crate) use warm_start::take_warm;
@@ -114,6 +114,9 @@ impl<'a> Context<'a> {
 /// it to the vehicle's static limits.
 pub(crate) trait Planner: Send {
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control>;
+
+    /// Feed an accepted refinement back into generators that warm-start from trajectories.
+    fn accept_optimized(&mut self, _trajectory: crate::common::types::Trajectory, _ctx: &Context) {}
 }
 
 #[cfg(test)]

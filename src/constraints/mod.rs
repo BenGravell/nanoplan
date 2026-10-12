@@ -21,7 +21,7 @@ pub(crate) const HARD_VIOLATION_PENALTY: f64 = 1e4;
 /// to price it against the road and predicted actors. Fields a planner
 /// doesn't track default to zero, which is always the "no penalty from this
 /// term" value.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct Sample {
     /// World-frame position, for actor collision checks.
     pub(crate) position: Position,

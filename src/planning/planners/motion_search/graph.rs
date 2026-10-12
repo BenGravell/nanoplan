@@ -1,7 +1,6 @@
-//! Shared time-layered motion graph for tree, lattice, and treetop planners.
+//! Shared time-layered motion graph for tree and lattice search.
 //! Reuses the sampling envelopes and Cartesian transformations in
-//! [`crate::planning::frenet`], and supplies initial guesses to
-//! [`crate::planning::planners::treetop::TreetopPlanner`].
+//! [`crate::planning::frenet`]. Either search can use the shared iLQR post-process.
 
 use super::{
     Candidate, ControlLimits, SearchStrategy, cubic_control, fit_segment, initial_boundary, lattice, nearest_zap,
@@ -23,11 +22,11 @@ use crate::planning::{Context, PLANNING_TICKS as TICKS};
 use crate::simulation::{Control, State};
 use crate::track::Path;
 
-pub(crate) const STEER_TICKS: usize = 10;
+const STEER_TICKS: usize = 10;
 
 /// Steering segments per trajectory — treetop's `NUM_STEER_SEGMENTS`; also
 /// the number of tree layers past the root.
-pub(crate) const SEGMENTS: usize = TICKS / STEER_TICKS;
+const SEGMENTS: usize = TICKS / STEER_TICKS;
 const _: () = assert!(TICKS.is_multiple_of(STEER_TICKS));
 
 // Warm samples use 20% of the draws when a previous solution is available;
@@ -76,8 +75,8 @@ pub(super) struct Edge {
 /// A sampled target's incoming edges and the best path reaching it.
 /// The winning rollout endpoint is frozen before this node gains children.
 /// This keeps extracted controls continuous despite steering endpoint error.
-pub(crate) struct Node {
-    pub(crate) state: State,
+pub(super) struct Node {
+    pub(super) state: State,
     incoming: Vec<Edge>,
     best: usize,
     pub(super) cost_to_come: f64,
@@ -87,10 +86,6 @@ pub(crate) struct Node {
 impl Node {
     fn edge(&self) -> &Edge {
         &self.incoming[self.best]
-    }
-
-    pub(crate) fn states(&self) -> &[State] {
-        &self.edge().states
     }
 }
 
@@ -133,9 +128,9 @@ impl ZapIndex {
 
 /// The layered motion graph. `layers[0]` holds only the root;
 /// The last layer holds the terminal nodes.
-pub(crate) struct Graph {
-    pub(crate) nodes: Vec<Node>,
-    pub(crate) layers: Vec<Vec<usize>>,
+struct Graph {
+    nodes: Vec<Node>,
+    layers: Vec<Vec<usize>>,
     layer_ticks: Vec<usize>,
     dt: f64,
 }
@@ -144,7 +139,7 @@ impl Graph {
     /// Grow a full-horizon graph: a zero-action fallback chain, a hot chain
     /// from warm-start actions (if any), then warm/cold samples distributed
     /// across every layer, including the terminal layer.
-    pub(crate) fn grow(
+    fn grow(
         start: State,
         warm: Option<&[Control]>,
         samples: usize,
@@ -366,19 +361,6 @@ impl Graph {
         )
     }
 
-    /// The best `k` full-length paths, preferring feasible paths, then progress cost.
-    pub(crate) fn path_candidates(&self, k: usize) -> Vec<Vec<usize>> {
-        let mut terminal_nodes = self.layers.last().unwrap().clone();
-        terminal_nodes.sort_by(|&a, &b| {
-            let (na, nb) = (&self.nodes[a], &self.nodes[b]);
-            na.collides
-                .cmp(&nb.collides)
-                .then(na.cost_to_come.total_cmp(&nb.cost_to_come))
-        });
-        terminal_nodes.truncate(k);
-        terminal_nodes.iter().map(|&n| self.extract_path(n)).collect()
-    }
-
     /// Walk parent pointers from a terminal node back to the root (treetop
     /// `extractPath`).
     fn extract_path(&self, mut node: usize) -> Vec<usize> {
@@ -393,8 +375,8 @@ impl Graph {
 
     /// Concatenate a path's edge actions into one full-horizon action
     /// sequence ([`TICKS`] controls) — treetop's
-    /// `convertPathToActionSequence`, the tree→iLQR hand-off.
-    pub(crate) fn actions_of(&self, path: &[usize]) -> Vec<Control> {
+    /// `convertPathToActionSequence`.
+    fn actions_of(&self, path: &[usize]) -> Vec<Control> {
         let mut actions = Vec::with_capacity(TICKS);
         for &n in path {
             actions.extend_from_slice(&self.nodes[n].edge().controls);
@@ -402,7 +384,7 @@ impl Graph {
         actions
     }
 
-    pub(crate) fn record_diagnostics(&self, diag: &crate::planning::Diagnostics) {
+    fn record_diagnostics(&self, diag: &crate::planning::Diagnostics) {
         for (layer, nodes) in self.layers.iter().enumerate().skip(1) {
             for &index in nodes {
                 let node = &self.nodes[index];
@@ -571,6 +553,17 @@ mod tests {
     use super::*;
     use crate::planning::{Planner, planners::motion_search::GraphPlanner};
 
+    fn paths(graph: &Graph, count: usize) -> Vec<Vec<usize>> {
+        graph
+            .layers
+            .last()
+            .unwrap()
+            .iter()
+            .take(count)
+            .map(|&id| graph.extract_path(id))
+            .collect()
+    }
+
     #[test]
     fn variable_layers_cover_the_horizon_with_continuous_paths() {
         let road = crate::planning::test_road(&[[-20.0, 0.0], [2000.0, 0.0]]);
@@ -597,7 +590,7 @@ mod tests {
                             }
                         }
                     }
-                    for chain in graph.path_candidates(3) {
+                    for chain in paths(&graph, 3) {
                         assert_eq!(chain.len(), layers);
                         let actions = graph.actions_of(&chain);
                         assert_eq!(actions.len(), TICKS);
@@ -634,7 +627,7 @@ mod tests {
                         assert!(node.cost_to_come <= graph.nodes[edge.parent].cost_to_come + edge.eval.cost + 1e-10);
                     }
                 }
-                for chain in graph.path_candidates(3) {
+                for chain in paths(&graph, 3) {
                     let actions = graph.actions_of(&chain);
                     let (states, _) = rollout_constrained(ego, &actions, ctx.road.dt);
                     for (i, &id) in chain.iter().enumerate() {
@@ -752,7 +745,7 @@ mod tests {
         };
         for samples in [0, 1, 90] {
             let tree = Graph::grow(ego, None, samples, &path, &ctx, Connections::NearestZap, SEGMENTS);
-            let cands = tree.path_candidates(2);
+            let cands = paths(&tree, 2);
             assert!(!cands.is_empty());
             for cand in &cands {
                 assert_eq!(cand.len(), SEGMENTS);
@@ -798,7 +791,7 @@ mod tests {
                     assert_eq!(node.edge().controls.len(), STEER_TICKS);
                 }
             }
-            for path in tree.path_candidates(terminals.len()) {
+            for path in paths(&tree, terminals.len()) {
                 assert_eq!(tree.actions_of(&path).len(), TICKS);
             }
         }

@@ -73,7 +73,7 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size * pixels_per_point);
         let compact = compact_layout(size);
         let (control_width, rail_width) = side_rail_widths(size);
-        for label in ["OPTIONS", "ACTIVE PLANNER"] {
+        for label in ["OPTIONS", "ACTIVE PLANNER", "Trajectory optimization (iLQR)"] {
             let nodes: Vec<_> = harness
                 .get_all_by_label(label)
                 .filter(|node| node.rect().left() < control_width * pixels_per_point)
@@ -326,6 +326,9 @@ fn viewer_elements_fit_and_render_at_target_sizes() {
             );
         }
 
+        // Keep the new planning option visible in the saved layout review as well.
+        harness.state_mut().tab = ControlTab::Planner;
+        harness.run();
         harness
             .render()
             .unwrap_or_else(|error| panic!("failed to render {name}: {error}"))

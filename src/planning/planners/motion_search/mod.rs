@@ -2,7 +2,7 @@
 
 mod cem;
 mod frenet;
-pub(crate) mod graph;
+mod graph;
 mod lattice;
 mod mppi;
 mod nearest_zap;
@@ -269,6 +269,17 @@ impl<S: SearchStrategy> MotionPlanner<S> {
 }
 
 impl<S: SearchStrategy> Planner for MotionPlanner<S> {
+    fn accept_optimized(&mut self, trajectory: crate::common::types::Trajectory, ctx: &Context) {
+        self.expected_next = trajectory.states[1];
+        self.previous = Some(Candidate {
+            station: ctx.path().project(trajectory.states.last().unwrap().position()).s,
+            states: trajectory.states,
+            controls: trajectory.controls,
+            knots: Vec::new(),
+            reward: 0.0,
+        });
+    }
+
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         if ctx.horizon == 0 {
             return Vec::new();

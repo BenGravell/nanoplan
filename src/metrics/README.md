@@ -36,10 +36,9 @@ accel — and returns a plain `f64`; there's no gradient anywhere in its signatu
 This is a deliberate design constraint, not an oversight: nanoplan never *provides* a derivative of its cost or dynamics
 — both are black-box scalars, and nothing may demand an analytic gradient of either.
 Most planners live entirely within that constraint by sampling and comparing candidates.
-The one family that genuinely optimizes —
-[treetop's iLQR](../planning/planners/treetop/README.md#ilqr-treetop-finite-differences) — respects it at the interface:
-it consumes exactly the same black-box scalars and differentiates them **numerically** (central finite differences),
-probing `point_cost` and `step` a few dozen times per timestep instead of once.
+The one family that genuinely optimizes — [iLQR](../planning/planners/trajectory_optimization/README.md#ilqr) — respects
+it at the interface: it consumes exactly the same black-box scalars and differentiates them **numerically** (central
+finite differences), probing `point_cost` and `step` a few dozen times per timestep instead of once.
 The scalar interface stays the single source of truth for what "good" means; no second, analytically-differentiated
 definition of the cost can drift away from it.
 Where a planner needs curvature as an input, it gets it one of two ways, both compatible with that constraint:

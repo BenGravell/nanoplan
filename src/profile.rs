@@ -6,7 +6,7 @@ use crate::planning::{Latency, LatencyStats, PlannerKind};
 use crate::track::{TRACK_CATALOG, TRACK_PRESETS};
 use crate::world::{EgoStart, LiveWorld};
 
-const PLANNERS: [(&str, PlannerKind); 11] = [
+const PLANNERS: [(&str, PlannerKind); 10] = [
     ("leeroy-jenkins", PlannerKind::LeeroyJenkins),
     ("centerline-follower", PlannerKind::CenterlineFollower),
     ("lattice", PlannerKind::Lattice),
@@ -17,7 +17,6 @@ const PLANNERS: [(&str, PlannerKind); 11] = [
     ("mppi", PlannerKind::Mppi),
     ("tree", PlannerKind::Tree),
     ("ilqr", PlannerKind::Ilqr),
-    ("treetop", PlannerKind::Treetop),
 ];
 
 #[derive(Debug)]

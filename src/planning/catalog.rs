@@ -1,6 +1,6 @@
 use super::{
     Cem, CenterlineFollower, Connections, FrenetSamplingPlanner, GraphPlanner, IlqrPlanner, LeeroyJenkinsPlanner, Mppi,
-    Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner, TreetopPlanner,
+    Pi2DdpPlanner, Planner, PredictiveSampling, SamplingPlanner,
 };
 
 /// PlannerKind: selects which planner to run.
@@ -19,87 +19,88 @@ pub(crate) enum PlannerKind {
     Mppi,
     Tree,
     Ilqr,
-    Treetop,
 }
 
 struct PlannerSpec {
     kind: PlannerKind,
     name: &'static str,
-    build: fn() -> Box<dyn Planner>,
+    build: fn(bool) -> Box<dyn Planner>,
     has_diagnostics: bool,
 }
 
-const SPECS: [PlannerSpec; 11] = [
+const SPECS: [PlannerSpec; 10] = [
     PlannerSpec {
         kind: PlannerKind::LeeroyJenkins,
         name: "Leeroy Jenkins",
-        build: || Box::new(LeeroyJenkinsPlanner),
+        build: |optimize| compose(LeeroyJenkinsPlanner, optimize),
         has_diagnostics: false,
     },
     PlannerSpec {
         kind: PlannerKind::CenterlineFollower,
         name: "CenterlineFollower",
-        build: || Box::new(CenterlineFollower),
+        build: |optimize| compose(CenterlineFollower, optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Lattice,
         name: "frenet lattice",
-        build: || Box::new(GraphPlanner::new(Connections::Lattice)),
+        build: |optimize| compose(GraphPlanner::new(Connections::Lattice), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::FrenetSampling,
         name: "Frenet sampling",
-        build: || Box::new(FrenetSamplingPlanner::default()),
+        build: |optimize| compose(FrenetSamplingPlanner::default(), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Pi2Ddp,
         name: "PI2-DDP",
-        build: || Box::new(Pi2DdpPlanner::default()),
+        build: |optimize| compose(Pi2DdpPlanner::default(), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::PredictiveSampling,
         name: SamplingPlanner::<PredictiveSampling>::NAME,
-        build: || Box::new(SamplingPlanner::<PredictiveSampling>::default()),
+        build: |optimize| compose(SamplingPlanner::<PredictiveSampling>::default(), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Cem,
         name: SamplingPlanner::<Cem>::NAME,
-        build: || Box::new(SamplingPlanner::<Cem>::default()),
+        build: |optimize| compose(SamplingPlanner::<Cem>::default(), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Mppi,
         name: SamplingPlanner::<Mppi>::NAME,
-        build: || Box::new(SamplingPlanner::<Mppi>::default()),
+        build: |optimize| compose(SamplingPlanner::<Mppi>::default(), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Tree,
         name: "Tree",
-        build: || Box::new(GraphPlanner::new(Connections::NearestZap)),
+        build: |optimize| compose(GraphPlanner::new(Connections::NearestZap), optimize),
         has_diagnostics: true,
     },
     PlannerSpec {
         kind: PlannerKind::Ilqr,
         name: "iLQR (finite diff)",
-        build: || Box::new(IlqrPlanner::default()),
-        has_diagnostics: true,
-    },
-    PlannerSpec {
-        kind: PlannerKind::Treetop,
-        name: "treetop (Tree+iLQR)",
-        build: || Box::new(TreetopPlanner::default()),
+        build: |_| Box::new(IlqrPlanner::default()),
         has_diagnostics: true,
     },
 ];
 
+fn compose<P: Planner + 'static>(planner: P, optimize: bool) -> Box<dyn Planner> {
+    if optimize {
+        Box::new(super::planners::trajectory_optimization::Refined(planner))
+    } else {
+        Box::new(planner)
+    }
+}
+
 impl PlannerKind {
-    pub(crate) const ALL: [PlannerKind; 11] = [
+    pub(crate) const ALL: [PlannerKind; 10] = [
         PlannerKind::LeeroyJenkins,
         PlannerKind::CenterlineFollower,
         PlannerKind::Lattice,
@@ -110,7 +111,6 @@ impl PlannerKind {
         PlannerKind::Mppi,
         PlannerKind::Tree,
         PlannerKind::Ilqr,
-        PlannerKind::Treetop,
     ];
 
     fn spec(self) -> &'static PlannerSpec {
@@ -124,7 +124,15 @@ impl PlannerKind {
     }
 
     pub(crate) fn build(self) -> Box<dyn Planner> {
-        (self.spec().build)()
+        self.build_with_optimization(false)
+    }
+
+    pub(crate) fn build_with_optimization(self, enabled: bool) -> Box<dyn Planner> {
+        (self.spec().build)(enabled)
+    }
+
+    pub(crate) fn supports_post_optimization(self) -> bool {
+        !matches!(self, Self::Ilqr)
     }
 
     pub(crate) fn has_diagnostics(self) -> bool {

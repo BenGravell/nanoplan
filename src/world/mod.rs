@@ -34,6 +34,7 @@ pub(crate) struct LiveWorld {
     pub(crate) diagnostics_enabled: bool,
     pub(crate) compute_budget: ComputeBudget,
     planner_kind: PlannerKind,
+    pub(crate) trajectory_optimization: bool,
     planner: PlannerEngine,
     plan: Vec<Control>,
     pending_actors: Option<Vec<SmartActor>>,
@@ -114,6 +115,7 @@ impl LiveWorld {
             diagnostics_enabled: false,
             compute_budget: ComputeBudget::NOMINAL,
             planner_kind: planner,
+            trajectory_optimization: false,
             planner: planner_engine,
             plan: Vec::new(),
             pending_actors: None,
@@ -132,19 +134,34 @@ impl LiveWorld {
     pub(crate) fn set_planner(&mut self, kind: PlannerKind) {
         if kind != self.planner_kind {
             self.planner_kind = kind;
-            self.planner.reset(kind);
-            self.plan.clear();
-            self.pending_actors = None;
-            self.planner_slow = false;
-            self.road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
+            self.reset_planner();
         }
+    }
+
+    pub(crate) fn set_trajectory_optimization(&mut self, enabled: bool) -> bool {
+        let enabled = enabled && self.planner_kind.supports_post_optimization();
+        if enabled == self.trajectory_optimization {
+            return false;
+        }
+        self.trajectory_optimization = enabled;
+        self.reset_planner();
+        true
+    }
+
+    fn reset_planner(&mut self) {
+        self.planner.reset(self.planner_kind, self.trajectory_optimization);
+        self.plan.clear();
+        self.pending_actors = None;
+        self.planner_slow = false;
+        self.diagnostics = DiagnosticsData::default();
+        self.road = road_window(&self.track, self.road_anchor_x, self.ego().speed, self.dt());
     }
 
     pub(crate) fn set_actor_count(&mut self, seed: u64, actor_count: usize) {
         let actor_count = actor_count.min(MAX_ACTORS);
         if actor_count != self.actors.len() && self.pending_actors.take().is_some() {
             // The in-flight snapshot no longer describes this traffic setup.
-            self.planner.reset(self.planner_kind);
+            self.planner.reset(self.planner_kind, self.trajectory_optimization);
             self.planner_slow = false;
         }
 

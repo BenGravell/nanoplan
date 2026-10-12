@@ -23,6 +23,10 @@ elite selection and distribution updates.
 `graph.rs` owns layered construction, with connection policies in `nearest_zap.rs` and `lattice.rs`.
 A sampling sequence is not materialized as graph nodes and edges when no parent search is needed.
 
+The planner panel can additionally enable [iLQR post-processing](../../README.md#optional-trajectory-optimization) for
+any of these generators.
+Accepted refined states and controls replace the warm trajectory before the next search.
+
 ## Shared execution
 
 Every strategy returns a full-horizon candidate that passes raw-control dynamics checks and trajectory feasibility.
@@ -90,9 +94,8 @@ Longer output requests are simulated and validated for their entire length.
 
 `Graph::grow` accepts the number of layers, from one through the trajectory's tick count.
 Tick boundaries partition the whole horizon even when the layer count does not divide it evenly.
-Tree, lattice, and treetop retain their default ten layers across 100 ticks (ten seconds at the standard 0.1 s
-timestep).
-Treetop consumes graph paths as iLQR seeds.
+Tree and lattice use ten layers across 100 ticks (ten seconds at the standard 0.1 s timestep).
+Either can use the shared iLQR post-process through the planner panel's checkbox.
 
 Both connection modes draw 150 targets at the nominal compute budget, spread over all layers.
 Tree evaluates one nearest zero-action parent per target; lattice evaluates up to six and retains feasible incoming
@@ -111,8 +114,7 @@ Edges retain their accumulated stage-progress costs and time-dependent feasibili
 Whole-trajectory strategies retain terminal-progress scoring.
 These objectives are deliberately distinct: changing them would change the search.
 
-Unsafe coasting chains remain available as full-length optimization seeds for treetop.
-Ordinary graph samples only connect to feasible parents.
+The coasting chain keeps every layer populated, but unsafe nodes cannot parent ordinary graph samples.
 Standalone tree and lattice try full paths first, then shorter feasible prefixes with a braking tail.
 The complete candidate, including that tail, must pass the shared validation before execution and caching.
 Diagnostics retain every incoming edge's realized trajectory, including alternative lattice arrivals.

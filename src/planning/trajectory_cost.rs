@@ -25,18 +25,6 @@ impl<'a, 'b> TrajectoryCost<'a, 'b> {
         self.stage_sample(sample.with_control(u, x.speed), self.ctx.actors, false)
     }
 
-    pub(crate) fn stage_with_predicted_actors(
-        &self,
-        x: &State,
-        u: Control,
-        t: usize,
-        s_hint: Option<f64>,
-        predicted_actors: &[State],
-    ) -> f64 {
-        let (_, sample) = planner_math::state_sample(self.path, x, t as f64 * self.ctx.road.dt, s_hint);
-        self.stage_sample(sample.with_control(u, x.speed), predicted_actors, true)
-    }
-
     pub(super) fn stage_sample(&self, sample: Sample, actors: &[State], actors_are_predicted: bool) -> f64 {
         let constraints = Constraints::new(
             self.ctx.road.half_width,

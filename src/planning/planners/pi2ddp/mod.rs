@@ -138,6 +138,17 @@ impl Pi2DdpPlanner {
 }
 
 impl Planner for Pi2DdpPlanner {
+    fn accept_optimized(&mut self, trajectory: crate::common::types::Trajectory, _ctx: &Context) {
+        if let Some(policy) = &mut self.policy {
+            for (nominal, control) in policy.u.iter_mut().zip(trajectory.controls) {
+                *nominal = [control.acceleration, control.curvature];
+            }
+            policy.expected_next = trajectory.states[1];
+            policy.gains.fill([[0.0; 4]; 2]);
+            policy.prev_cost = f64::INFINITY;
+        }
+    }
+
     fn plan(&mut self, ego: State, ctx: &Context) -> Vec<Control> {
         let path = ctx.time("route", || ctx.path());
         // Offline calibration: 4 × 32 rollouts is about 100 ms.
