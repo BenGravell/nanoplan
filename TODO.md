@@ -6,6 +6,12 @@
 - Tree search
 - Local optimization (iLQR)
 
+
+## Camera
+
+Make the default behavior of the camera to align with the planned traj or track with some lookahead. The idea is when we are zoomed out to stabilze the rotation of the camera so it keeps the entity of interest stable/not shifting too much i.e. the track and planned traj should stay focused and more-or-less vertically oriented on the screen, even as ego steers wildly. couple the current zoom level to the lookahead amount for the camera rotation
+
+
 ## Actor planning
 
 -- Fix the actors.
