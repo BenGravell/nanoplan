@@ -19,12 +19,13 @@ pub(crate) type SamplingPlanner<O> = MotionPlanner<O>;
 pub(crate) type FrenetSamplingPlanner = MotionPlanner<frenet::Frenet>;
 pub(crate) type GraphPlanner = MotionPlanner<Connections>;
 
-use crate::common::kinematics::{clamp_control, commanded_accel_for_net, commanded_accel_to_stop};
+use crate::common::kinematics::{clamp_control, commanded_accel_to_stop};
 use crate::common::polynomial::CubicPolynomial;
-use crate::constraints::{Constraint, Kinodynamic, Sample};
+use crate::common::steering::frenet::FrenetMotion;
+use crate::common::types::{FrenetPosition, FrenetSpeed};
 use crate::metrics;
 use crate::planning::feasibility::trajectory_is_feasible;
-use crate::planning::frenet::{Motion, frenet_boundary};
+use crate::planning::frenet::frenet_boundary;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner, take_warm};
 use crate::simulation::{Control, State, world_step};
@@ -84,28 +85,31 @@ fn initial_boundary(path: &Path, state: State, station: f64) -> Option<Knot> {
     Some([lon[0], lon[1], lat[0], lat[1]])
 }
 
-fn fit_segment(start: Knot, end: Knot, duration: f64) -> Motion {
-    Motion {
-        longitudinal: CubicPolynomial::from_boundary(start[0], start[1], end[0], end[1], duration),
-        lateral: CubicPolynomial::from_boundary(start[2], start[3], end[2], end[3], duration),
-    }
+fn knot_boundary([station, station_speed, lateral, lateral_speed]: Knot) -> (FrenetPosition, FrenetSpeed) {
+    (
+        FrenetPosition { s: station, d: lateral },
+        FrenetSpeed {
+            s: station_speed,
+            d: lateral_speed,
+        },
+    )
 }
 
-fn segments(initial: Knot, knots: &[Knot], duration: f64) -> Vec<Motion> {
+fn segments(initial: Knot, knots: &[Knot], duration: f64) -> Vec<FrenetMotion> {
     let duration = duration / knots.len() as f64;
     let mut start = initial;
     knots
         .iter()
         .map(|&knot| {
             let end = [initial[0] + knot[0], knot[1], knot[2], knot[3]];
-            let motion = fit_segment(start, end, duration);
+            let motion = FrenetMotion::new(knot_boundary(start), knot_boundary(end), duration);
             start = end;
             motion
         })
         .collect()
 }
 
-fn motion_at(motions: &[Motion], path: &Path, t: f64, duration: f64) -> Option<(State, Control)> {
+fn motion_at(motions: &[FrenetMotion], path: &Path, t: f64, duration: f64) -> Option<(State, Control)> {
     let duration = duration / motions.len() as f64;
     let index = ((t / duration).floor() as usize).min(motions.len() - 1);
     motions[index].at(path, t - index as f64 * duration)
@@ -131,7 +135,7 @@ fn rollout_controls(
     mut control_at: impl FnMut(usize, State) -> Option<Control>,
 ) -> Option<Candidate> {
     let trajectory = ctx.time("kinodynamic", || {
-        crate::simulation::rollout(ego, ctx.road.dt, planning_ticks(ctx), |tick, state| {
+        crate::common::rollout::rollout(ego, ctx.road.dt, planning_ticks(ctx), |tick, state| {
             ctx.work(1);
             control_at(tick, state)
         })
@@ -147,17 +151,35 @@ fn rollout_controls(
 
 fn rollout(knots: &[Knot], start: &Start, ctx: &Context) -> Option<Candidate> {
     let motions = segments(start.initial, knots, start.duration);
-    let mut candidate = rollout_controls(start.ego, ctx, |tick, actual| {
-        if tick < start.launch.len() {
-            return Some(start.launch[tick]);
-        }
-        let t = (((tick - start.launch.len()) as f64 + 0.5) * ctx.road.dt).min(start.duration);
-        let motion = motion_at(&motions, ctx.path(), t, start.duration)?;
-        cubic_control(motion, actual, ctx.road.dt, ControlLimits::Reject)
+    rollout_motion(knots, start, ctx, |t| {
+        motion_at(&motions, ctx.path(), t, start.duration)
+    })
+}
+
+fn rollout_motion(
+    knots: &[Knot],
+    start: &Start,
+    ctx: &Context,
+    motion_at: impl Fn(f64) -> Option<(State, Control)>,
+) -> Option<Candidate> {
+    let trajectory = ctx.time("kinodynamic", || {
+        crate::common::rollout::motion(
+            start.ego,
+            ctx.road.dt,
+            planning_ticks(ctx),
+            &start.launch,
+            start.duration,
+            motion_at,
+            || ctx.work(1),
+        )
     })?;
-    candidate.knots = knots.to_vec();
-    candidate.station = start.initial[0] + knots.last()?[0];
-    Some(candidate)
+    Some(Candidate {
+        knots: knots.to_vec(),
+        station: start.initial[0] + knots.last()?[0],
+        states: trajectory.states,
+        controls: trajectory.controls,
+        reward: 0.0,
+    })
 }
 
 fn score_candidates(mut candidates: Vec<Candidate>, ctx: &Context) -> Vec<Candidate> {
@@ -212,36 +234,6 @@ fn road_control(state: State, ctx: &Context, acceleration: f64) -> Control {
         },
         state.speed,
     )
-}
-
-/// Graph steering projects to vehicle limits; sampled cubics reject violations.
-#[derive(Clone, Copy)]
-enum ControlLimits {
-    Reject,
-    Clamp,
-}
-
-fn cubic_control(
-    (analytic, mut control): (State, Control),
-    actual: State,
-    dt: f64,
-    limits: ControlLimits,
-) -> Option<Control> {
-    if matches!(limits, ControlLimits::Reject) {
-        let analytic_control = Control {
-            acceleration: commanded_accel_for_net(control.acceleration, analytic.speed),
-            ..control
-        };
-        if Kinodynamic.is_violated(&Sample::default().with_control(analytic_control, analytic.speed)) {
-            return None;
-        }
-    }
-    control.acceleration = commanded_accel_for_net(control.acceleration, actual.speed);
-    if matches!(limits, ControlLimits::Clamp) {
-        control.acceleration = control.acceleration.max(commanded_accel_to_stop(actual.speed, dt));
-        control = clamp_control(control, actual.speed);
-    }
-    Some(control)
 }
 
 pub(crate) struct MotionPlanner<S: SearchStrategy> {

@@ -79,11 +79,11 @@ fn cubic_segments_match_endpoints_and_share_velocity() {
     let duration = PLANNING_HORIZON_S / knots.len() as f64;
     let mut start = initial;
     for (motion, end) in motions.iter().zip(knots) {
-        let lon = motion.longitudinal.at(0.0);
-        let lat = motion.lateral.at(0.0);
+        let lon = motion.s.at(0.0);
+        let lat = motion.d.at(0.0);
         assert_eq!([lon[0], lon[1], lat[0], lat[1]], start);
-        let lon = motion.longitudinal.at(duration);
-        let lat = motion.lateral.at(duration);
+        let lon = motion.s.at(duration);
+        let lat = motion.d.at(duration);
         start = [initial[0] + end[0], end[1], end[2], end[3]];
         for (actual, expected) in [lon[0], lon[1], lat[0], lat[1]].into_iter().zip(start) {
             assert!((actual - expected).abs() < 1e-10);

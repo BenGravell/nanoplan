@@ -6,6 +6,9 @@ construction and search, while the planner owns warm-start validity, fallback, c
 The viewer and profiler entries retain their names.
 
 Cubic boundary fitting, Cartesian command generation, plant rollouts, and final feasibility checks are shared.
+Frenet and Cartesian cubic steering and command conversion live in `common::steering`; raw-control and analytic-motion
+rollouts live in `common::rollout`.
+The planner owns Frenet endpoint conversion and candidate scoring.
 Strategies retain the differences that define their searches:
 
 | Strategy | Construction                                       | Selection and refinement                          |
@@ -63,7 +66,8 @@ The seed cubic is checked against vehicle limits, since reachable endpoints can 
 When actors are present, left and right detour seeds broaden the search.
 
 Compute budget scales the Frenet grid density or the MPC rollout count and refinement iterations.
-The grid sampler's endpoint bounds and transforms reuse [`planning::frenet`](../../frenet.rs).
+The grid sampler's endpoint bounds reuse [`planning::frenet`](../../frenet.rs); coordinate transforms live in
+[`common::steering::frenet`](../../../common/steering/frenet.rs).
 
 ## Whole-trajectory launch, score, and validation
 
@@ -76,10 +80,10 @@ Every batch follows the original Frenet sampler's evaluation order:
 
 1. Reject invalid Frenet transforms and commands that violate vehicle limits at either the analytic or simulated speed.
    The shared vehicle rollout integrates without clipping and aborts at the first invalid command or state.
-1. Score survivors using [`metrics::evaluate`](../../../metrics/mod.rs): realized terminal progress over the full horizon.
+2. Score survivors using [`metrics::evaluate`](../../../metrics/mod.rs): realized terminal progress over the full horizon.
    Intermediate progress rewards are not accumulated.
    Stable sorting preserves generation order when scores tie.
-1. Check cached rollouts against road boundaries, swept footprint barriers, and predicted actors in score order.
+3. Check cached rollouts against road boundaries, swept footprint barriers, and predicted actors in score order.
    Frenet and PS stop at the first feasible candidate; CEM stops after collecting its elites; MPPI checks the full batch.
 
 Only feasible candidates enter optimizer updates or become executable incumbents.

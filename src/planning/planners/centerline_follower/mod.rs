@@ -9,11 +9,11 @@ use crate::common::geometry::wrap_angle;
 use crate::common::geometry::{CAR_FOOTPRINT, footprints_overlap};
 use crate::common::geometry::{EGO_FOOTPRINT, Footprint};
 use crate::common::kinematics::{commanded_accel_to_stop, longitudinal_resistance_accel, net_longitudinal_accel};
+use crate::common::steering::frenet::cartesian_kinematics;
 use crate::common::types::FrenetPosition;
 use crate::constraints::collision::actor_collision;
 use crate::metrics;
 use crate::planning::feasibility::trajectory_is_feasible;
-use crate::planning::frenet::cartesian_kinematics;
 use crate::planning::policy::centerline_curvature;
 use crate::planning::{Context, PLANNING_HORIZON_S, Planner};
 #[cfg(test)]
@@ -162,7 +162,7 @@ impl CartesianPath {
             let parameter = i as f64 * 2.0 / GRID_STEPS as f64;
             let segment = (parameter as usize).min(1);
             let [p, d1, d2] = segments[segment].at(parameter - segment as f64);
-            let (state, control) = cartesian_kinematics(path, [p.x, d1.x, d2.x], [p.y, d1.y, d2.y])?;
+            let (state, control) = cartesian_kinematics(path, [p.x, d1.x, d2.x].into(), [p.y, d1.y, d2.y].into())?;
             let point = if i == 0 { ego.position() } else { state.position() };
             if let Some(&previous) = points.last() {
                 // ponytail: fixed-grid chords approximate Cartesian arc length;

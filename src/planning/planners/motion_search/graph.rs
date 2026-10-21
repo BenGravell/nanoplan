@@ -3,8 +3,8 @@
 //! [`crate::planning::frenet`]. Either search can use the shared iLQR post-process.
 
 use super::{
-    Candidate, ControlLimits, SearchStrategy, cubic_control, fit_segment, initial_boundary, lattice, nearest_zap,
-    road_control, rollout_controls, select_candidates,
+    Candidate, SearchStrategy, initial_boundary, knot_boundary, lattice, nearest_zap, road_control, rollout_controls,
+    select_candidates,
 };
 
 use rstar::RTree;
@@ -13,9 +13,11 @@ use rstar::primitives::GeomWithData;
 use crate::common::geometry::{EGO_FOOTPRINT, wrap_angle};
 use crate::common::kinematics::zero_action_point;
 use crate::common::polynomial::CubicPolynomial;
+use crate::common::steering::frenet::FrenetMotion;
+use crate::common::steering::{ConstraintHandlingStrategy, motion_to_control};
 use crate::constraints::Constraints;
 use crate::planning::controls::rollout_constrained;
-use crate::planning::frenet::{Motion, frenet_boundary, lateral_targets, longitudinal_targets};
+use crate::planning::frenet::{frenet_boundary, lateral_targets, longitudinal_targets};
 use crate::planning::planner_math;
 use crate::planning::sampling::{Halton, QuasiMonteCarlo};
 use crate::planning::{Context, PLANNING_TICKS as TICKS};
@@ -245,9 +247,9 @@ impl Graph {
                     lat[0] += (c[1] - 0.5) * 2.0 * WARM_D_POS;
                     lon[1] = (lon[1] + (c[3] - 0.5) * 2.0 * WARM_D_SPEED).max(0.0);
                     lat[1] += (c[2] - 0.5) * 2.0 * WARM_LATERAL_SPEED_FRACTION * w.speed;
-                    let motion = Motion {
-                        longitudinal: CubicPolynomial([lon[0], lon[1], 0.0, 0.0]),
-                        lateral: CubicPolynomial([lat[0], lat[1], 0.0, 0.0]),
+                    let motion = FrenetMotion {
+                        s: CubicPolynomial([lon[0], lon[1], 0.0, 0.0]),
+                        d: CubicPolynomial([lat[0], lat[1], 0.0, 0.0]),
                     };
                     let Some((target, _)) = motion.at(path, 0.0) else {
                         continue;
@@ -265,15 +267,9 @@ impl Graph {
                         (path, lon[0], &lateral),
                     );
                     let (distance, speed) = targets[(c[0] * targets.len() as f64) as usize];
-                    let motion = Motion {
-                        longitudinal: CubicPolynomial::from_boundary(
-                            lon[0],
-                            lon[1],
-                            lon[0] + distance,
-                            speed,
-                            layer_time,
-                        ),
-                        lateral,
+                    let motion = FrenetMotion {
+                        s: CubicPolynomial::from_boundary(lon[0], lon[1], lon[0] + distance, speed, layer_time),
+                        d: lateral,
                     };
                     let Some((target, _)) = motion.at(path, layer_time) else {
                         continue;
@@ -480,13 +476,13 @@ fn steer_trajectory(
 ) -> Option<crate::common::types::Trajectory> {
     let initial = initial_boundary(path, *start, path.project(start.position()).s)?;
     let end = initial_boundary(path, *target, path.project(target.position()).s)?;
-    let motion = fit_segment(initial, end, ticks as f64 * dt);
+    let motion = FrenetMotion::new(knot_boundary(initial), knot_boundary(end), ticks as f64 * dt);
     crate::simulation::rollout(*start, dt, ticks, |tick, actual| {
-        cubic_control(
+        motion_to_control(
             motion.at(path, (tick as f64 + 0.5) * dt)?,
             actual,
             dt,
-            ControlLimits::Clamp,
+            ConstraintHandlingStrategy::Clamp,
         )
     })
 }
@@ -697,9 +693,9 @@ mod tests {
             })
             .collect();
         let path = Path::new(&points);
-        let motion = Motion {
-            longitudinal: CubicPolynomial([10.0, 8.0, 0.0, 0.0]),
-            lateral: CubicPolynomial([2.0, 0.0, 0.0, 0.0]),
+        let motion = FrenetMotion {
+            s: CubicPolynomial([10.0, 8.0, 0.0, 0.0]),
+            d: CubicPolynomial([2.0, 0.0, 0.0, 0.0]),
         };
         let start = motion.at(&path, 0.0).unwrap().0;
         let goal = motion.at(&path, 1.0).unwrap().0;

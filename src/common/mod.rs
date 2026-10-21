@@ -16,4 +16,6 @@ pub(crate) mod math;
 pub(crate) mod measure;
 pub(crate) mod polynomial;
 pub(crate) mod rng;
+pub(crate) mod rollout;
+pub(crate) mod steering;
 pub(crate) mod types;

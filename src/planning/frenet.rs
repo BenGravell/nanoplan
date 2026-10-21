@@ -1,11 +1,11 @@
-//! Shared Frenet cubic motion, Cartesian transformations, and reachable target sampling.
+//! Frenet boundary projection and reachable target sampling.
 
 use crate::common::geometry::{EGO_FOOTPRINT, angle_delta};
 use crate::common::interp::lerp;
 use crate::common::kinematics::{commanded_accel_for_net, net_longitudinal_accel};
-use crate::common::measure::dot;
 use crate::common::polynomial::CubicPolynomial;
-use crate::common::types::{Control, Position, State};
+use crate::common::steering::frenet::MIN_FRENET_SCALE;
+use crate::common::types::{Control, State};
 use crate::planning::ComputeBudget;
 use crate::planning::planner_math::STATE_SAMPLE_PROJECTION_RADIUS_M;
 use crate::simulation::world_step;
@@ -15,9 +15,6 @@ use crate::vehicle::{MAX_LON_ACCEL, MIN_LON_ACCEL};
 const STATION_SAMPLES_PER_INTERVAL: usize = 9;
 const SPEED_SAMPLES_PER_INTERVAL: usize = 5;
 const LATERAL_SAMPLES: usize = 11;
-const MIN_FRENET_SCALE: f64 = 0.1;
-const STATION_SPEED_TOLERANCE_MPS: f64 = 1e-8;
-const MOTION_SPEED_EPSILON_MPS: f64 = 1e-6;
 const ACCELERATION_BISECTION_ITERATIONS: usize = 32;
 const SUSTAINED_ACCELERATION_FRACTIONS: [f64; 3] = [0.5, 0.75, 1.0];
 const UPPER_SAMPLE_SPACING_EXPONENT: i32 = 2;
@@ -35,63 +32,6 @@ pub(crate) fn frenet_boundary(path: &Path, state: State, station_hint: f64) -> O
         [projected.s, state.speed * heading.cos() / scale],
         [projected.d, state.speed * heading.sin()],
     ))
-}
-
-pub(crate) struct Motion {
-    pub(crate) longitudinal: CubicPolynomial,
-    pub(crate) lateral: CubicPolynomial,
-}
-
-impl Motion {
-    /// Transform Frenet position and derivatives into Cartesian state and net controls.
-    pub(crate) fn at(&self, path: &Path, t: f64) -> Option<(State, Control)> {
-        cartesian_kinematics(path, self.longitudinal.at(t), self.lateral.at(t))
-    }
-}
-
-/// Transform Frenet coordinates and derivatives with respect to any common parameter.
-/// For a spatial parameter, the returned control's curvature is geometric curvature.
-pub(crate) fn cartesian_kinematics(
-    path: &Path,
-    [s, sv, sa]: [f64; 3],
-    [d, dv, da]: [f64; 3],
-) -> Option<(State, Control)> {
-    if !(0.0..=path.length()).contains(&s) || sv < -STATION_SPEED_TOLERANCE_MPS {
-        return None;
-    }
-    let k = path.curvature_at(s);
-    let dk = path.sharpness_at(s);
-    let scale = 1.0 - k * d;
-    if scale <= MIN_FRENET_SCALE {
-        return None;
-    }
-    let vx = scale * sv;
-    let ax = scale * sa - dk * d * sv * sv - 2.0 * k * sv * dv;
-    let ay = da + k * scale * sv * sv;
-    let velocity = Position::new(vx, dv);
-    let acceleration = Position::new(ax, ay);
-    let speed = velocity.mag();
-    let (acceleration, curvature) = if speed > MOTION_SPEED_EPSILON_MPS {
-        (
-            dot(velocity.xy(), acceleration.xy()) / speed,
-            velocity.cross(acceleration) / speed.powi(3),
-        )
-    } else {
-        (ax, 0.0)
-    };
-    let heading = path.heading_at(s);
-    let left = Position::from_angle(heading + std::f64::consts::FRAC_PI_2);
-    let state = State::from((path.pose_at(s).0 + left * d, heading + velocity.angle(), speed));
-    let control = Control {
-        acceleration,
-        curvature,
-    };
-    (state.position().is_finite()
-        && state.pose.yaw.is_finite()
-        && speed.is_finite()
-        && acceleration.is_finite()
-        && curvature.is_finite())
-    .then_some((state, control))
 }
 
 fn sampling_scale(budget: ComputeBudget) -> f64 {
@@ -136,7 +76,7 @@ fn frenet_endpoint(
     let station_speed = |s, t, speed: f64| {
         let [d, _, _] = lateral.at(t);
         // Allocate all speed to station for a conservative distance envelope, leaving
-        // room for lateral recovery. Motion::at rejects singular charts and checks
+        // room for lateral recovery. FrenetMotion::at rejects singular charts and checks
         // the actual combined motion; this denominator floor only bounds sampling.
         speed / (1.0 - path.curvature_at(s) * d).max(MIN_FRENET_SCALE)
     };
@@ -235,82 +175,14 @@ pub(crate) fn longitudinal_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::geometry::wrap_angle;
+    use crate::common::steering::frenet::FrenetMotion;
+    use crate::common::types::Position;
     use crate::constraints::{Constraint, Kinodynamic, Sample};
     use crate::planning::{PLANNING_HORIZON_S, test_ctx, test_road};
 
     fn straight_targets(speed: f64, dt: f64, budget: ComputeBudget, duration: f64) -> Vec<(f64, f64)> {
         let path = Path::new(&[Position::new(0.0, 0.0), Position::new(2000.0, 0.0)]);
         longitudinal_targets(speed, dt, budget, duration, (&path, 0.0, &CubicPolynomial([0.0; 4])))
-    }
-
-    #[test]
-    fn frenet_cubics_match_boundaries_and_follow_a_curved_reference() {
-        for end_velocity in TERMINAL_LATERAL_SPEEDS_MPS {
-            let polynomial = CubicPolynomial::from_boundary(2.0, 0.3, -1.0, end_velocity, 3.0);
-            assert_eq!(polynomial.at(0.0)[..2], [2.0, 0.3]);
-            let end = polynomial.at(3.0);
-            assert!((end[0] + 1.0).abs() < 1e-10);
-            assert!((end[1] - end_velocity).abs() < 1e-10);
-        }
-        let radius = 40.0;
-        let points: Vec<_> = (0..1800)
-            .map(|i| {
-                let angle = i as f64 * 0.002;
-                Position::new(radius * angle.cos(), radius * angle.sin())
-            })
-            .collect();
-        let path = Path::new(&points);
-        let motion = Motion {
-            longitudinal: CubicPolynomial([10.0, 8.0, 0.0, 0.0]),
-            lateral: CubicPolynomial([2.0, 0.0, 0.0, 0.0]),
-        };
-        for t in [0.0, 2.0, 5.0, 10.0] {
-            let (state, control) = motion.at(&path, t).unwrap();
-            // A constant Frenet offset traces the concentric circle, not a Cartesian chord.
-            assert!((state.position().x.hypot(state.position().y) - 38.0).abs() < 1e-4);
-            assert!((state.speed - 7.6).abs() < 1e-8);
-            assert!((control.curvature - 1.0 / 38.0).abs() < 1e-8);
-            assert!(control.acceleration.abs() < 1e-8);
-            let tangent = state.position().y.atan2(state.position().x) + std::f64::consts::FRAC_PI_2;
-            assert!(wrap_angle(state.pose.yaw - tangent).abs() < 1e-8);
-        }
-        // Frenet chart singularities and backwards station motion are not valid trajectories.
-        let singular = Motion {
-            lateral: CubicPolynomial([41.0, 0.0, 0.0, 0.0]),
-            ..motion
-        };
-        assert!(singular.at(&path, 1.0).is_none());
-        let reverse = Motion {
-            longitudinal: CubicPolynomial([10.0, -1.0, 0.0, 0.0]),
-            ..singular
-        };
-        assert!(reverse.at(&path, 1.0).is_none());
-    }
-
-    #[test]
-    fn frenet_transform_accounts_for_changing_reference_curvature() {
-        let points: Vec<_> = (0..3000)
-            .map(|i| {
-                let x = i as f64 * 0.05;
-                Position::new(x, 0.01 * x * x)
-            })
-            .collect();
-        let path = Path::new(&points);
-        let motion = Motion {
-            longitudinal: CubicPolynomial([10.0, 8.0, 0.15, 0.0]),
-            lateral: CubicPolynomial([2.0, 0.3, 0.1, 0.0]),
-        };
-        let t = 1.234;
-        let epsilon = 1e-5;
-        let (before, _) = motion.at(&path, t - epsilon).unwrap();
-        let (state, control) = motion.at(&path, t).unwrap();
-        let (after, _) = motion.at(&path, t + epsilon).unwrap();
-        assert!(path.sharpness_at(motion.longitudinal.at(t)[0]).abs() > 1e-5);
-        let acceleration = (after.speed - before.speed) / (2.0 * epsilon);
-        let curvature = wrap_angle(after.pose.yaw - before.pose.yaw) / (2.0 * epsilon * state.speed);
-        assert!((control.acceleration - acceleration).abs() < 1e-6);
-        assert!((control.curvature - curvature).abs() < 1e-5);
     }
 
     #[test]
@@ -460,15 +332,9 @@ mod tests {
         for speed in [2.0, 8.0, 20.0] {
             let targets = straight_targets(speed, 0.1, ComputeBudget::NOMINAL, PLANNING_HORIZON_S);
             for &(distance, terminal_speed) in &targets[targets.len() - SUSTAINED_ACCELERATION_FRACTIONS.len()..] {
-                let motion = Motion {
-                    longitudinal: CubicPolynomial::from_boundary(
-                        20.0,
-                        speed,
-                        20.0 + distance,
-                        terminal_speed,
-                        PLANNING_HORIZON_S,
-                    ),
-                    lateral: CubicPolynomial([0.0; 4]),
+                let motion = FrenetMotion {
+                    s: CubicPolynomial::from_boundary(20.0, speed, 20.0 + distance, terminal_speed, PLANNING_HORIZON_S),
+                    d: CubicPolynomial([0.0; 4]),
                 };
                 for tick in 0..=100 {
                     let (state, control) = motion.at(test_ctx(&road, &[]).path(), tick as f64 * 0.1).unwrap();
