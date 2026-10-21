@@ -70,7 +70,7 @@ pub(crate) fn cartesian_kinematics(
     let ay = da + k * scale * sv * sv;
     let velocity = Position::new(vx, dv);
     let acceleration = Position::new(ax, ay);
-    let speed = velocity.norm();
+    let speed = velocity.mag();
     let (acceleration, curvature) = if speed > MOTION_SPEED_EPSILON_MPS {
         (
             dot(velocity.xy(), acceleration.xy()) / speed,

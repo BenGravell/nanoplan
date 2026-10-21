@@ -1,6 +1,7 @@
 //! Shared vehicle kinematics, resistance, and control limits.
 
-use crate::common::types::{Accelerations, Control, State};
+use crate::common::measure::dot;
+use crate::common::types::{Acceleration, Control, FrenetAcceleration, Speed, State};
 use crate::simulation::world_step;
 use crate::vehicle::{
     AERO_DRAG_ACCEL_COEFFICIENT, MAX_ABS_CURVATURE, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL,
@@ -27,11 +28,23 @@ pub(crate) fn lateral_acceleration(speed: f64, curvature: f64) -> f64 {
     speed.powi(2) * curvature
 }
 
+/// Recover net longitudinal acceleration from Cartesian flat-output derivatives.
+/// Assumes velocity.mag() > 0.
+pub(crate) fn longitudinal_acceleration_from_cartesian(velocity: Speed, acceleration: Acceleration) -> f64 {
+    dot(velocity.xy(), acceleration.xy()) / velocity.mag()
+}
+
+/// Recover signed path curvature from Cartesian flat-output derivatives.
+/// Assumes velocity.mag() > 0.
+pub(crate) fn curvature_from_cartesian(velocity: Speed, acceleration: Acceleration) -> f64 {
+    velocity.cross(*acceleration) / velocity.mag().powi(3)
+}
+
 /// Commanded accelerations at the current speed.
-pub(crate) fn control_to_accelerations(control: Control, speed: f64) -> Accelerations {
-    Accelerations {
-        lon: control.acceleration,
-        lat: lateral_acceleration(speed, control.curvature),
+pub(crate) fn control_to_accelerations(control: Control, speed: f64) -> FrenetAcceleration {
+    FrenetAcceleration {
+        s: control.acceleration,
+        d: lateral_acceleration(speed, control.curvature),
     }
 }
 

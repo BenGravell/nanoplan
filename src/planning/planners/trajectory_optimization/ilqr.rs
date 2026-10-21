@@ -64,7 +64,6 @@ use crate::common::linalg::{mat_add, mat_mul, mat_vec, transpose, vec_add};
 use crate::common::measure::dot;
 use crate::common::types::Trajectory;
 use crate::common::types::matrix::{M4, M22, M24, M42};
-use crate::common::types::state;
 use crate::common::types::vector::{V2, V4};
 use crate::planning::PLANNING_TICKS as TICKS;
 use crate::planning::controls::{centerline_follow_controls, repeat_last_controls, rollout_constrained};
@@ -213,7 +212,7 @@ fn stage_derivs(ocp: &Ocp, x: &State, u: &Control, t: usize) -> StageDerivs {
 }
 
 fn terminal_derivs(ocp: &Ocp, x: &State, tick: usize) -> (V4, M4) {
-    fd_grad_hess(&|z| ocp.terminal_cost(&State::from(z), tick), state(x))
+    fd_grad_hess(&|z| ocp.terminal_cost(&State::from(z), tick), V4::from(x))
 }
 
 /// Central-difference gradient and Hessian of a black-box scalar. The
@@ -259,19 +258,19 @@ fn fd_grad_hess<const N: usize>(f: &impl Fn([f64; N]) -> f64, z: [f64; N]) -> ([
 fn dynamics_jacobian(x: &State, u: &Control, dt: f64) -> (M4, M42) {
     let mut a = [[0.0; 4]; 4];
     for j in 0..4 {
-        let mut zp = state(x);
+        let mut zp = V4::from(x);
         zp[j] += H_DYN;
-        let mut zm = state(x);
+        let mut zm = V4::from(x);
         zm[j] -= H_DYN;
-        let sp = state(&world_step(State::from(zp), *u, dt));
-        let sm = state(&world_step(State::from(zm), *u, dt));
+        let sp = V4::from(&world_step(State::from(zp), *u, dt));
+        let sm = V4::from(&world_step(State::from(zm), *u, dt));
         for i in 0..4 {
             a[i][j] = (sp[i] - sm[i]) / (2.0 * H_DYN);
         }
     }
     let col = |up: Control, um: Control| -> V4 {
-        let sp = state(&world_step(*x, up, dt));
-        let sm = state(&world_step(*x, um, dt));
+        let sp = V4::from(&world_step(*x, up, dt));
+        let sm = V4::from(&world_step(*x, um, dt));
         std::array::from_fn(|i| (sp[i] - sm[i]) / (2.0 * H_DYN))
     };
     let ca = col(
@@ -418,7 +417,7 @@ fn forward(
     nxs.push(x);
     let mut cost_total = 0.0;
     for t in 0..n {
-        let dx: V4 = std::array::from_fn(|i| state(&x)[i] - state(&xs[t])[i]);
+        let dx: V4 = std::array::from_fn(|i| V4::from(&x)[i] - V4::from(&xs[t])[i]);
         let fb = mat_vec(&gains[t].kk, &dx);
         let u = Control {
             acceleration: us[t].acceleration + scale * gains[t].k[0] + fb[0],

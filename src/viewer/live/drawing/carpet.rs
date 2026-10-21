@@ -177,12 +177,12 @@ fn visualization_values(
         CarpetVisualization::LongitudinalAcceleration => trajectory
             .accelerations
             .iter()
-            .map(|acceleration| acceleration.lon)
+            .map(|acceleration| acceleration.s)
             .collect(),
         CarpetVisualization::LateralAcceleration => trajectory
             .accelerations
             .iter()
-            .map(|acceleration| acceleration.lat)
+            .map(|acceleration| acceleration.d)
             .collect(),
         CarpetVisualization::Curvature => trajectory.controls.iter().map(|control| control.curvature).collect(),
         CarpetVisualization::Station => {

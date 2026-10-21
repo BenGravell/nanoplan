@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use crate::common::kinematics::{control_to_accelerations, lateral_acceleration};
-use crate::common::types::Accelerations;
+use crate::common::types::FrenetAcceleration;
 use crate::simulation::{Control, curvature_limit};
 use crate::vehicle::{GRAVITY_MS2, MAX_ABS_LAT_ACCEL, MAX_LON_ACCEL, MIN_LON_ACCEL};
 use bevy_egui::egui;
@@ -13,7 +13,7 @@ use super::super::super::colors::{DIM_TEXT, FAINT, GREY_152, GUPPY, SURFACE, TEX
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
-    accelerations: Accelerations,
+    accelerations: FrenetAcceleration,
     time: f64,
 }
 
@@ -159,14 +159,14 @@ fn attainable_lateral_fraction(speed: f64) -> f32 {
 }
 
 fn normalized(sample: Sample) -> [f32; 2] {
-    let lon_limit = if sample.accelerations.lon >= 0.0 {
+    let lon_limit = if sample.accelerations.s >= 0.0 {
         MAX_LON_ACCEL
     } else {
         -MIN_LON_ACCEL
     };
     [
-        (sample.accelerations.lon / lon_limit).clamp(-1.0, 1.0) as f32,
-        (sample.accelerations.lat / MAX_ABS_LAT_ACCEL).clamp(-1.0, 1.0) as f32,
+        (sample.accelerations.s / lon_limit).clamp(-1.0, 1.0) as f32,
+        (sample.accelerations.d / MAX_ABS_LAT_ACCEL).clamp(-1.0, 1.0) as f32,
     ]
 }
 
@@ -197,12 +197,12 @@ mod tests {
             curvature: -0.02,
         };
         friction.record(control, 10.0, 0.1);
-        assert_eq!(friction.current().accelerations.lon, 2.0);
-        assert_eq!(friction.current().accelerations.lat, -2.0);
+        assert_eq!(friction.current().accelerations.s, 2.0);
+        assert_eq!(friction.current().accelerations.d, -2.0);
 
         friction.record(Control::default(), 10.0, 0.1);
-        assert_eq!(friction.current().accelerations.lon, 0.0);
-        assert_eq!(friction.current().accelerations.lat, 0.0);
+        assert_eq!(friction.current().accelerations.s, 0.0);
+        assert_eq!(friction.current().accelerations.d, 0.0);
     }
 
     #[test]
@@ -219,9 +219,9 @@ mod tests {
     fn braking_and_acceleration_use_their_own_limits() {
         assert_eq!(
             normalized(Sample {
-                accelerations: Accelerations {
-                    lon: MIN_LON_ACCEL,
-                    lat: 0.0
+                accelerations: FrenetAcceleration {
+                    s: MIN_LON_ACCEL,
+                    d: 0.0
                 },
                 ..Default::default()
             })[0],
@@ -229,9 +229,9 @@ mod tests {
         );
         assert_eq!(
             normalized(Sample {
-                accelerations: Accelerations {
-                    lon: MAX_LON_ACCEL,
-                    lat: 0.0
+                accelerations: FrenetAcceleration {
+                    s: MAX_LON_ACCEL,
+                    d: 0.0
                 },
                 ..Default::default()
             })[0],

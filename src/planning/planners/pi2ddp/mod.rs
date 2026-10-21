@@ -17,8 +17,7 @@
 use crate::common::kinematics::clamp_control;
 use crate::common::rng::Rng;
 use crate::common::types::matrix::{M2, M4, M6, M24};
-use crate::common::types::state;
-use crate::common::types::vector::V2;
+use crate::common::types::vector::{V2, V4};
 use crate::planning::controls::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, take_warm};
 use crate::simulation::{Control, Position, State, world_step};
@@ -222,7 +221,7 @@ impl Planner for Pi2DdpPlanner {
                 for k in 0..rollouts {
                     let mut x = ego;
                     for j in 0..HORIZON {
-                        let dx: [f64; 4] = std::array::from_fn(|i| state(&x)[i] - state(&x_nom[j])[i]);
+                        let dx: [f64; 4] = std::array::from_fn(|i| V4::from(&x)[i] - V4::from(&x_nom[j])[i]);
                         let eps = sample2(&mut self.rng, &pol.sigma_u[j]);
                         let kx: V2 = [
                             pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum(),
@@ -328,7 +327,7 @@ impl Planner for Pi2DdpPlanner {
                     }
                     let mut k_ff = [0.0; 2];
                     for k in 0..rollouts {
-                        let dx: [f64; 4] = std::array::from_fn(|i| state(&xs[k][j])[i] - state(&x_nom[j])[i]);
+                        let dx: [f64; 4] = std::array::from_fn(|i| V4::from(&xs[k][j])[i] - V4::from(&x_nom[j])[i]);
                         let w = p[k] / psum;
                         for a in 0..2 {
                             let kdx: f64 = gain[a].iter().zip(&dx).map(|(g, d)| g * d).sum();
@@ -371,7 +370,7 @@ impl Planner for Pi2DdpPlanner {
             let mut x = ego;
             let mut u_exec = Vec::with_capacity(HORIZON);
             for (j, nom) in new_x_nom.iter().enumerate() {
-                let dx: [f64; 4] = std::array::from_fn(|i| state(&x)[i] - state(nom)[i]);
+                let dx: [f64; 4] = std::array::from_fn(|i| V4::from(&x)[i] - V4::from(nom)[i]);
                 let u = clamp_control(
                     Control::from([
                         pol.u[j][0] + pol.gains[j][0].iter().zip(&dx).map(|(a, b)| a * b).sum::<f64>(),

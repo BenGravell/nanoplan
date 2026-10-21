@@ -1,4 +1,4 @@
-use super::{Accelerations, Control, State};
+use super::{Control, FrenetAcceleration, State};
 use crate::common::kinematics::control_to_accelerations;
 
 /// Native state and control, plus time and derived kinematics for one trajectory.
@@ -11,7 +11,7 @@ pub(crate) struct TrajectoryKinematics {
     pub(crate) states: Vec<State>,
     pub(crate) controls: Vec<Control>,
     pub(crate) time: Vec<f64>,
-    pub(crate) accelerations: Vec<Accelerations>,
+    pub(crate) accelerations: Vec<FrenetAcceleration>,
     pub(crate) dt: f64,
 }
 
@@ -75,8 +75,8 @@ mod tests {
         assert_eq!(
             trajectory.accelerations,
             [
-                Accelerations { lon: 2.0, lat: -1.0 },
-                Accelerations { lon: -3.0, lat: 8.0 }
+                FrenetAcceleration { s: 2.0, d: -1.0 },
+                FrenetAcceleration { s: -3.0, d: 8.0 }
             ]
         );
     }

@@ -1,17 +1,29 @@
-use super::{Pose, State, vector::V2};
-use std::ops::{Add, Div, Mul, Sub};
+use super::Vec2d;
+use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) struct Position {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
+#[cfg_attr(target_family = "wasm", serde(transparent))]
+pub(crate) struct Position(Vec2d);
+
+impl Deref for Position {
+    type Target = Vec2d;
+
+    fn deref(&self) -> &Vec2d {
+        &self.0
+    }
+}
+
+impl DerefMut for Position {
+    fn deref_mut(&mut self) -> &mut Vec2d {
+        &mut self.0
+    }
 }
 
 /// Position in Cartesian coordinates.
 impl Position {
     pub(crate) const fn new(x: f64, y: f64) -> Self {
-        Position { x, y }
+        Self(Vec2d::new(x, y))
     }
 
     /// Unit-circle position for an angle in radians.
@@ -20,43 +32,19 @@ impl Position {
         Position::new(x, y)
     }
 
-    pub(crate) const fn xy(self) -> V2 {
-        [self.x, self.y]
-    }
-
-    pub(crate) fn norm(self) -> f64 {
-        self.x.hypot(self.y)
-    }
-
-    pub(crate) const fn norm_squared(self) -> f64 {
-        self.x * self.x + self.y * self.y
-    }
-
-    /// Signed z-component of the 2D cross product: the oriented parallelogram area.
-    /// See [Wikipedia](https://en.wikipedia.org/wiki/Cross_product) and the
-    /// [area proof](https://proofwiki.org/wiki/Area_of_Triangle_in_Determinant_Form).
     pub(crate) fn cross(self, other: Self) -> f64 {
-        self.x * other.y - self.y * other.x
-    }
-
-    /// Angle of this vector from the positive x-axis, in radians.
-    pub(crate) fn angle(self) -> f64 {
-        self.y.atan2(self.x)
+        self.0.cross(other.0)
     }
 
     /// Unit vector in the same direction. Panics for a zero vector.
     pub(crate) fn unit(self) -> Self {
-        let norm = self.norm();
+        let norm = self.mag();
         assert_ne!(norm, 0.0, "cannot normalize a zero vector");
         self / norm
     }
 
     pub(crate) fn distance(self, other: Position) -> f64 {
-        (self - other).norm()
-    }
-
-    pub(crate) const fn is_finite(self) -> bool {
-        self.x.is_finite() && self.y.is_finite()
+        (self - other).mag()
     }
 }
 
@@ -92,36 +80,6 @@ impl Div<f64> for Position {
     }
 }
 
-impl From<V2> for Position {
-    fn from(p: V2) -> Self {
-        Position::new(p[0], p[1])
-    }
-}
-
-impl From<Position> for V2 {
-    fn from(p: Position) -> Self {
-        p.xy()
-    }
-}
-
-impl From<State> for Position {
-    fn from(s: State) -> Self {
-        s.pose.position
-    }
-}
-
-impl From<&State> for Position {
-    fn from(s: &State) -> Self {
-        (*s).into()
-    }
-}
-
-impl From<Pose> for Position {
-    fn from(p: Pose) -> Self {
-        p.position
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,7 +94,7 @@ mod tests {
     fn unit_vector_has_unit_norm() {
         assert_eq!(Position::new(3.0, 4.0).norm_squared(), 25.0);
         let unit = Position::new(3.0, 4.0).unit();
-        assert!((unit.norm() - 1.0).abs() < 1e-12);
+        assert!((unit.mag() - 1.0).abs() < 1e-12);
         assert!((Position::new(0.0, 1.0).angle() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert_eq!(Position::new(1.0, 0.0).cross(Position::new(0.0, 1.0)), 1.0);
         assert_eq!(Position::new(0.0, 1.0).cross(Position::new(1.0, 0.0)), -1.0);

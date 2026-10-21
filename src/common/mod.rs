@@ -6,6 +6,7 @@
     reason = "Reusable library APIs are retained independently of application usage"
 )]
 
+pub(crate) mod conversion;
 pub(crate) mod differencing;
 pub(crate) mod geometry;
 pub(crate) mod interp;

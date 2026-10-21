@@ -121,7 +121,7 @@ pub(crate) fn menger_curvature(a: Position, b: Position, c: Position) -> f64 {
     let ab = b - a;
     let ac = c - a;
     let bc = c - b;
-    let (ab_length, bc_length, ac_length) = (ab.norm(), bc.norm(), ac.norm());
+    let (ab_length, bc_length, ac_length) = (ab.mag(), bc.mag(), ac.mag());
     assert!(
         ab_length > f64::EPSILON && bc_length > f64::EPSILON && ac_length > f64::EPSILON,
         "Menger curvature requires distinct points"

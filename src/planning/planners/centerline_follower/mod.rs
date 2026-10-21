@@ -542,7 +542,7 @@ mod tests {
         for i in GRID_STEPS / 2..=GRID_STEPS {
             let (pose, curvature) = curve.at(curve.distance[i]);
             assert!((curvature - 1.0 / radius).abs() < 1e-8);
-            assert!((pose.position.norm() - radius).abs() < 1e-4);
+            assert!((pose.position.mag() - radius).abs() < 1e-4);
         }
         let backwards = State::from((ego.position(), heading + std::f64::consts::PI, 5.0));
         assert!(CartesianPath::new(backwards, &path, start, [40.0, 80.0]).is_none());
