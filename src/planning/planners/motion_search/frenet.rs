@@ -1,6 +1,6 @@
 //! Broad endpoint grid, fitted as one cubic per coordinate with no local refinement.
 
-use super::{Candidate, CubicPolynomial, Optimizer, OptimizerConfig, Start, rollout};
+use super::{Candidate, CubicPolynomial, Optimizer, OptimizerConfig, Start, rollout_pair};
 use crate::planning::Context;
 use crate::planning::frenet::{lateral_targets, longitudinal_targets};
 
@@ -35,10 +35,8 @@ impl Optimizer for Frenet {
                 start.duration,
                 (ctx.path(), start.initial[0], &lateral),
             ) {
-                if start.initial[0] + distance <= ctx.path().length()
-                    && let Some(candidate) = rollout(&[[distance, speed, offset, lateral_speed]], start, ctx)
-                {
-                    candidates.push(candidate);
+                if start.initial[0] + distance <= ctx.path().length() {
+                    candidates.extend(rollout_pair(&[[distance, speed, offset, lateral_speed]], start, ctx));
                 }
             }
         }

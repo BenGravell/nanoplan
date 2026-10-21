@@ -61,6 +61,13 @@ Frenet regenerates its grid each call.
 The three MPC strategies share deterministic Halton Gaussian sampling and four cubic segments.
 Each knot specifies `[relative station, station speed, lateral offset, lateral speed]`.
 Adjacent segments share position and velocity.
+Every sampled endpoint sequence produces a Frenet candidate and a Cartesian candidate, including seeds, warm starts, and
+optimizer updates.
+Cartesian cubics match the same physical endpoint positions and velocities but do not inherit the reference curvature
+between endpoints.
+Each construction is attempted even if the other fails.
+Both use the same launch, plant rollout, score, and road/actor validation; Cartesian corner cutting must stay on road.
+The pair doubles the attempted trajectories per endpoint sample; compute budget still controls endpoint sample counts.
 Seeds include an accelerating cubic and road-following acceleration, coasting, and braking rollouts.
 The seed cubic is checked against vehicle limits, since reachable endpoints can still produce acceleration overshoot.
 When actors are present, left and right detour seeds broaden the search.

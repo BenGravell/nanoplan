@@ -369,7 +369,7 @@ fn filters_unsafe_samples_and_rejects_an_unsafe_mean() {
         }
         fn update_nominal_knots(&mut self, sampled: &[Vec<Knot>], _: &[f64]) -> Vec<Knot> {
             if self.iteration == 1 {
-                assert_eq!(sampled.len(), 2);
+                assert_eq!(sampled.len(), 4); // Both constructions of the two safe endpoint sequences.
                 assert!(sampled.iter().all(|knots| knots[0][2] != 0.0));
             }
             (1..=4).map(|n| [20.0 * n as f64, 8.0, 0.0, 0.0]).collect()
@@ -652,4 +652,31 @@ fn grid_filters_dynamics_then_scores_then_checks_collisions() {
             .all(|span| span.name == "cost")
     );
     assert!(spans[first_collision..].iter().all(|span| span.name == "collision"));
+}
+
+#[test]
+fn cartesian_pair_survives_a_sharp_reference_and_still_checks_collisions() {
+    use crate::planning::{test_ctx, test_road};
+    use crate::simulation::Position;
+
+    let points: Vec<_> = (-20..=200)
+        .map(|x| [x as f64, if x == 21 { 0.2 } else { 0.0 }])
+        .collect();
+    let road = test_road(&points);
+    let ctx = test_ctx(&road, &[]);
+    let ego = State::from((Position::new(0.0, 0.0), 0.0, 8.0));
+    let start = Start::new(ego, &ctx).unwrap();
+    let end_station = ctx.path().project(Position::new(80.0, 0.0)).s;
+    let knots = [[end_station - start.initial[0], 8.0, 0.0, 0.0]];
+    assert!(rollout(&knots, &start, &ctx).is_none());
+    let candidates: Vec<_> = rollout_pair(&knots, &start, &ctx).collect();
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].controls.iter().all(|u| u.curvature.abs() < 1e-8));
+    assert_eq!(
+        select_candidates(score_candidates(candidates.clone(), &ctx), 1, &ctx).len(),
+        1
+    );
+    let actors = [State::from((Position::new(40.0, 0.0), 0.0, 0.0))];
+    let blocked = test_ctx(&road, &actors);
+    assert!(select_candidates(score_candidates(candidates, &blocked), 1, &blocked).is_empty());
 }

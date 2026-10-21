@@ -21,7 +21,8 @@ pub(crate) type GraphPlanner = MotionPlanner<Connections>;
 
 use crate::common::kinematics::{clamp_control, commanded_accel_to_stop};
 use crate::common::polynomial::CubicPolynomial;
-use crate::common::steering::frenet::FrenetMotion;
+use crate::common::steering::cartesian::{CartesianMotion, CubicCartesianMotion};
+use crate::common::steering::frenet::{FrenetMotion, cartesian_kinematics};
 use crate::common::types::{FrenetPosition, FrenetSpeed};
 use crate::metrics;
 use crate::planning::feasibility::trajectory_is_feasible;
@@ -156,6 +157,13 @@ fn rollout(knots: &[Knot], start: &Start, ctx: &Context) -> Option<Candidate> {
     })
 }
 
+/// Both representations are attempted independently, even if one violates dynamics.
+fn rollout_pair(knots: &[Knot], start: &Start, ctx: &Context) -> impl Iterator<Item = Candidate> {
+    [rollout(knots, start, ctx), rollout_cartesian(knots, start, ctx)]
+        .into_iter()
+        .flatten()
+}
+
 fn rollout_motion(
     knots: &[Knot],
     start: &Start,
@@ -179,6 +187,29 @@ fn rollout_motion(
         states: trajectory.states,
         controls: trajectory.controls,
         reward: 0.0,
+    })
+}
+
+fn rollout_cartesian(knots: &[Knot], start: &Start, ctx: &Context) -> Option<Candidate> {
+    let duration = start.duration / knots.len() as f64;
+    let mut previous = start.state;
+    let motions: Option<Vec<_>> = knots
+        .iter()
+        .map(|knot| {
+            let (end, _) = cartesian_kinematics(
+                ctx.path(),
+                [start.initial[0] + knot[0], knot[1], 0.0].into(),
+                [knot[2], knot[3], 0.0].into(),
+            )?;
+            let motion = CubicCartesianMotion::new(previous.into(), end.into(), duration);
+            previous = end;
+            Some(motion)
+        })
+        .collect();
+    let motions = motions?;
+    rollout_motion(knots, start, ctx, |t| {
+        let index = ((t / duration).floor() as usize).min(motions.len() - 1);
+        motions[index].at(t - index as f64 * duration)
     })
 }
 

@@ -81,7 +81,7 @@ pub(super) fn initial_knots(start: &Start, ctx: &Context, count: usize) -> Vec<K
         .rev()
         .filter(|&&(distance, _)| initial[0] + distance <= ctx.path().length())
         .map(fit)
-        .find(|knots| rollout(knots, start, ctx).is_some())
+        .find(|knots| rollout_pair(knots, start, ctx).next().is_some())
         .unwrap_or_else(|| fit(&targets[0]))
 }
 
@@ -148,7 +148,7 @@ fn mpc_seeds(start: &Start, ctx: &Context, count: usize) -> Vec<Candidate> {
             .collect();
         knots.extend(detours);
     }
-    candidates.extend(knots.iter().filter_map(|knots| rollout(knots, start, ctx)));
+    candidates.extend(knots.iter().flat_map(|knots| rollout_pair(knots, start, ctx)));
     candidates
 }
 
@@ -164,10 +164,8 @@ impl<O: Optimizer> SearchStrategy for O {
             && let Some(previous) = warm
         {
             let states = endpoint_states(previous, ctx, cfg.num_nodes, start.launch.len(), start.duration, 1);
-            if let Some(knots) = project_knots(&states, start.initial, ctx)
-                && let Some(candidate) = rollout(&knots, start, ctx)
-            {
-                candidates.push(candidate);
+            if let Some(knots) = project_knots(&states, start.initial, ctx) {
+                candidates.extend(rollout_pair(&knots, start, ctx));
             }
         }
         let candidates = score_candidates(candidates, ctx);
@@ -188,7 +186,10 @@ impl<O: Optimizer> SearchStrategy for O {
         ctx.time("optimize", || {
             for it in 0..iterations {
                 let sampled = self.sample_knots(&nominal, 1 + it * num_rollouts, num_rollouts);
-                let candidates = sampled.iter().filter_map(|knots| rollout(knots, start, ctx)).collect();
+                let candidates = sampled
+                    .iter()
+                    .flat_map(|knots| rollout_pair(knots, start, ctx))
+                    .collect();
                 let candidates = score_candidates(candidates, ctx);
                 let elites = select_candidates(candidates, self.num_elites(), ctx);
                 let Some(winner) = elites.first() else {
@@ -201,7 +202,7 @@ impl<O: Optimizer> SearchStrategy for O {
                 nominal = winner.knots.clone();
                 // A mean of safe endpoints may collide or violate dynamics.
                 if updated != nominal {
-                    let candidates = rollout(&updated, start, ctx).into_iter().collect();
+                    let candidates = rollout_pair(&updated, start, ctx).collect();
                     let candidates = score_candidates(candidates, ctx);
                     if let Some(candidate) = select_candidates(candidates, 1, ctx).first() {
                         retain_best(&mut best, candidate);
