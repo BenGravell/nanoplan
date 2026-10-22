@@ -1,4 +1,4 @@
-use super::{Pose, Position};
+use super::super::{Pose, Position};
 
 /// Vehicle state at the rear midpoint: pose and speed.
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
@@ -13,11 +13,11 @@ impl State {
         Self { pose, speed }
     }
 
-    pub(crate) fn pose(self) -> Pose {
-        self.pose
-    }
-
     pub(crate) fn position(self) -> Position {
         self.pose.position
+    }
+
+    pub(crate) const fn is_finite(self) -> bool {
+        self.pose.is_finite() && self.speed.is_finite()
     }
 }

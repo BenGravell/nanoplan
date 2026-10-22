@@ -189,9 +189,9 @@ pub(crate) fn test_steps_on<'a>(
         // production world resolves all vehicles symmetrically.
         sim.state = actors.iter().fold(sim.state, |state, actor| {
             let Some(hit) = crate::common::geometry::overlap_mtv(
-                state.pose(),
+                state.pose,
                 crate::common::geometry::EGO_FOOTPRINT,
-                actor.pose(),
+                actor.pose,
                 crate::common::geometry::CAR_FOOTPRINT,
             ) else {
                 return state;

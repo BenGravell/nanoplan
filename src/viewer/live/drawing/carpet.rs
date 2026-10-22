@@ -114,7 +114,11 @@ pub(crate) fn draw(
     visualization: CarpetVisualization,
     road: &Road,
 ) -> u64 {
-    let plan = trajectory.states.get(1..).expect("carpet trajectory is non-empty");
+    let plan = trajectory
+        .trajectory
+        .states
+        .get(1..)
+        .expect("carpet trajectory is non-empty");
     let footprints = sample_footprints(ego, plan, trajectory.dt);
     let (patches, intersection_clocks) = carpet_patches_clocked(&footprints);
     let values = visualization_values(trajectory, visualization, road);
@@ -172,7 +176,7 @@ fn visualization_values(
     road: &Road,
 ) -> Vec<f64> {
     let raw = match visualization {
-        CarpetVisualization::Speed => trajectory.states.iter().map(|state| state.speed).collect(),
+        CarpetVisualization::Speed => trajectory.trajectory.states.iter().map(|state| state.speed).collect(),
         CarpetVisualization::Time => trajectory.time.clone(),
         CarpetVisualization::LongitudinalAcceleration => trajectory
             .accelerations
@@ -184,10 +188,16 @@ fn visualization_values(
             .iter()
             .map(|acceleration| acceleration.d)
             .collect(),
-        CarpetVisualization::Curvature => trajectory.controls.iter().map(|control| control.curvature).collect(),
+        CarpetVisualization::Curvature => trajectory
+            .trajectory
+            .controls
+            .iter()
+            .map(|control| control.curvature)
+            .collect(),
         CarpetVisualization::Station => {
             let path = road.path();
             trajectory
+                .trajectory
                 .states
                 .iter()
                 .map(|state| path.project(state.position()).s)
@@ -433,6 +443,7 @@ fn push_patch(vertices: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>, patch: C
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::types::Trajectory;
     use crate::planning::{Latency, LatencyStats};
     use crate::simulation::Control;
     use crate::viewer::DT;
@@ -445,7 +456,13 @@ mod tests {
     fn trajectory(ego: State, plan: &[State], dt: f64) -> TrajectoryKinematics {
         let states: Vec<_> = std::iter::once(ego).chain(plan.iter().copied()).collect();
         let len = states.len();
-        TrajectoryKinematics::new(states, vec![Control::default(); len], dt)
+        TrajectoryKinematics::new(
+            Trajectory {
+                states,
+                controls: vec![Control::default(); len],
+            },
+            dt,
+        )
     }
 
     #[test]
@@ -950,17 +967,19 @@ mod tests {
         let ego = State::default();
         let plan = [State { speed: 2.0, ..ego }, State { speed: 3.0, ..ego }];
         let trajectory = TrajectoryKinematics::new(
-            vec![ego, plan[1]],
-            vec![
-                Control {
-                    acceleration: -1.0,
-                    curvature: -0.01,
-                },
-                Control {
-                    acceleration: 2.0,
-                    curvature: 0.02,
-                },
-            ],
+            Trajectory {
+                states: vec![ego, plan[1]],
+                controls: vec![
+                    Control {
+                        acceleration: -1.0,
+                        curvature: -0.01,
+                    },
+                    Control {
+                        acceleration: 2.0,
+                        curvature: 0.02,
+                    },
+                ],
+            },
             DT,
         );
         for visualization in [

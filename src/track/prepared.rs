@@ -132,7 +132,7 @@ pub(crate) fn needs_road_window_update(road: &Road, distance_from_anchor: f64, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::TrajectoryKinematics;
+    use crate::common::types::{Trajectory, TrajectoryKinematics};
     use crate::planning::{ComputeBudget, Context, latency::geometry_build_clocks};
     use crate::simulation::{Control, State};
 
@@ -163,8 +163,14 @@ mod tests {
                     let path = ctx.path();
                     assert!(path.project_near(position, start.s, 21.0).d.abs() < 0.1);
                     road.closest_centerline_segment(position).unwrap();
-                    let trajectory = TrajectoryKinematics::new(vec![ego; 2], vec![Control::default(); 2], road.dt);
-                    crate::metrics::evaluate(&trajectory.states, &road.path(), None);
+                    let trajectory = TrajectoryKinematics::new(
+                        Trajectory {
+                            states: vec![ego; 2],
+                            controls: vec![Control::default(); 2],
+                        },
+                        road.dt,
+                    );
+                    crate::metrics::evaluate(&trajectory.trajectory.states, &road.path(), None);
                     let visible = prepared.visible_polygon(anchor);
                     assert!(visible.centerline().len() > 2);
                 }

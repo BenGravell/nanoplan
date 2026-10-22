@@ -214,7 +214,7 @@ pub(crate) fn collide_with_road_barriers(prev: State, state: State, footprint: F
 }
 
 fn center_state(mut state: State, footprint: Footprint) -> State {
-    let center = footprint.center(state.pose());
+    let center = footprint.center(state.pose);
     state.pose.position = center.position;
     state
 }

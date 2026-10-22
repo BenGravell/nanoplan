@@ -1,7 +1,7 @@
-use super::Vec2d;
+use super::super::Vec2d;
 use std::ops::{Deref, DerefMut};
 
-/// Cartesian velocity components, in metres per second.
+/// Velocity components in a Cartesian frame, in metres per second.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Speed(Vec2d);
 

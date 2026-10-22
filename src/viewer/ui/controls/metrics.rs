@@ -24,7 +24,7 @@ pub(super) fn section_heading(ui: &mut egui::Ui, heading: &str) {
 
 pub(crate) fn preview_score(live: &Live) -> f64 {
     let trajectory = &live.world.trajectory;
-    evaluate(&trajectory.states, &live.world.road.path(), None)
+    evaluate(&trajectory.trajectory.states, &live.world.road.path(), None)
 }
 
 #[cfg(test)]

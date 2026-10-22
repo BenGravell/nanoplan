@@ -107,11 +107,12 @@ fn lattice_small_track_accelerates_and_previews_stay_on_road() {
     assert!(
         world
             .trajectory
+            .trajectory
             .states
             .iter()
             .all(|state| !collides_with_road_barrier(*state, &world.road)),
         "corner preview left the road: {:?}",
-        world.trajectory.states
+        world.trajectory.trajectory.states
     );
 }
 
@@ -236,7 +237,7 @@ fn racer_progress_uses_the_farthest_corner() {
     let world = LiveWorld::with_track(0, 1, PlannerKind::LeeroyJenkins, 0, 0.1);
     let state = world.ego();
     let corner_progress = CAR_FOOTPRINT
-        .corners(state.pose())
+        .corners(state.pose)
         .map(|corner| world.track.project_progress(corner, 0.0));
 
     assert_eq!(

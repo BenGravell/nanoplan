@@ -16,8 +16,8 @@
 
 use crate::common::kinematics::clamp_control;
 use crate::common::rng::Rng;
-use crate::common::types::matrix::{M2, M4, M6, M24};
-use crate::common::types::vector::{V2, V4};
+use crate::common::types::algebra::matrix::{M2, M4, M6, M24};
+use crate::common::types::algebra::vector::{V2, V4};
 use crate::planning::controls::centerline_follow_controls;
 use crate::planning::{Context, PLANNING_TICKS, Planner, TrajectoryCost, take_warm};
 use crate::simulation::{Control, Position, State, world_step};

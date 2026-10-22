@@ -1,4 +1,4 @@
-/// Velocity relative to a reference path, in metres per second.
+/// Velocity in a Frenet frame, in metres per second.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FrenetSpeed {
     /// Rate of change of station along the reference path.

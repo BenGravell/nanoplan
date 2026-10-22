@@ -39,7 +39,7 @@ pub(crate) fn collide_dynamic_bodies(bodies: &mut [DynamicBody]) {
 }
 
 fn collide_pair(a: &mut DynamicBody, b: &mut DynamicBody) -> bool {
-    let Some(hit) = overlap_mtv(a.state.pose(), a.footprint, b.state.pose(), b.footprint) else {
+    let Some(hit) = overlap_mtv(a.state.pose, a.footprint, b.state.pose, b.footprint) else {
         return false;
     };
 
@@ -78,7 +78,7 @@ fn with_velocity(mut state: State, velocity: [f64; 2], footprint: Footprint) -> 
         // State stores a rear reference point and has no independent velocity
         // direction, so keep the physical center fixed while aligning the
         // body with its post-impact velocity.
-        let center = footprint.center(state.pose());
+        let center = footprint.center(state.pose);
         state.pose.yaw = velocity[1].atan2(velocity[0]);
         let forward = Position::from_angle(state.pose.yaw);
         state.pose.position.x = center.position.x - 0.5 * footprint.length * forward.x;
@@ -121,9 +121,9 @@ mod tests {
         assert!(vx(bodies[0].state) < 10.0);
         assert!(vx(bodies[1].state) > 0.0);
         assert!(!footprints_overlap(
-            bodies[0].state.pose(),
+            bodies[0].state.pose,
             bodies[0].footprint,
-            bodies[1].state.pose(),
+            bodies[1].state.pose,
             bodies[1].footprint,
         ));
     }
@@ -175,9 +175,9 @@ mod tests {
         assert!(vx(bodies[1].state) > 0.0);
         assert!(vx(bodies[2].state) > 0.0);
         assert!(bodies.windows(2).all(|pair| !footprints_overlap(
-            pair[0].state.pose(),
+            pair[0].state.pose,
             pair[0].footprint,
-            pair[1].state.pose(),
+            pair[1].state.pose,
             pair[1].footprint,
         )));
     }

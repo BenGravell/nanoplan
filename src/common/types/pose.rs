@@ -11,4 +11,8 @@ impl Pose {
     pub(crate) const fn new(position: Position, yaw: f64) -> Self {
         Self { position, yaw }
     }
+
+    pub(crate) const fn is_finite(self) -> bool {
+        self.position.is_finite() && self.yaw.is_finite()
+    }
 }

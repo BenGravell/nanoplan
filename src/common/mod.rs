@@ -8,6 +8,7 @@
 
 pub(crate) mod conversion;
 pub(crate) mod differencing;
+pub(crate) mod finite;
 pub(crate) mod geometry;
 pub(crate) mod interp;
 pub(crate) mod kinematics;

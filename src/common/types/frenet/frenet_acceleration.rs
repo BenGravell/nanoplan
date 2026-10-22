@@ -1,4 +1,4 @@
-/// Signed longitudinal and lateral accelerations in the vehicle frame, in m/s².
+/// Acceleration components in a Frenet frame, in m/s².
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct FrenetAcceleration {
     /// Tangential acceleration along the direction of travel.

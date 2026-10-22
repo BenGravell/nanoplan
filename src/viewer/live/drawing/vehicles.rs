@@ -38,7 +38,7 @@ pub(in crate::viewer::live) fn draw_actor(
     };
     let curvature = if distance <= MAX_ACTOR_INTERPOLATION_M {
         previous.map_or(0.0, |previous| {
-            curvature_between(previous.pose(), actor.state.pose()).clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
+            curvature_between(previous.pose, actor.state.pose).clamp(-MAX_ABS_CURVATURE, MAX_ABS_CURVATURE)
         })
     } else {
         0.0
@@ -48,7 +48,7 @@ pub(in crate::viewer::live) fn draw_actor(
 
 fn draw_vehicle(gizmos: &mut Gizmos, state: &State, curvature: f64, footprint: Footprint, color: Color) {
     let size = Vec2::new(footprint.length as f32, footprint.width as f32);
-    let center = footprint.center(state.pose());
+    let center = footprint.center(state.pose);
     let iso = Isometry2d::new(px(&center.into()), Rot2::radians(state.pose.yaw as f32));
     gizmos.rect_2d(iso, size * PX_PER_M, color);
     gizmos.line_2d(iso * Vec2::ZERO, iso * Vec2::new(size.x * PX_PER_M / 2.0, 0.0), color);

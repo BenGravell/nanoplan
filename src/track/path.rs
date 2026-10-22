@@ -220,7 +220,7 @@ impl Path {
             let u = (dot((p - a).xy(), ab.xy()) / len2).clamp(0.0, 1.0);
             let q = lerp(a, b, u);
             let offset = p - q;
-            let d = offset.mag();
+            let d = offset.norm();
             if d < best_d.abs() {
                 best_s = self.stations()[i] - self.origin() + len2.sqrt() * u;
                 best_d = d.copysign(ab.cross(offset));

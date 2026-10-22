@@ -60,10 +60,10 @@ pub(crate) fn actor_collision(pose: Pose, time: f64, ctx: &Context) -> bool {
         ctx.work(1);
         // Live actors have already advanced when the current ego command is
         // applied. Check their supplied poses as well as the prediction.
-        if time <= ctx.road.dt && footprints_overlap(pose, EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT) {
+        if time <= ctx.road.dt && footprints_overlap(pose, EGO_FOOTPRINT, actor.pose, CAR_FOOTPRINT) {
             return true;
         }
-        let predicted = predict(actor, ctx.path(), time).pose();
+        let predicted = predict(actor, ctx.path(), time).pose;
         EGO_FOOTPRINT
             .center(pose)
             .position

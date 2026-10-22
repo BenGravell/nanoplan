@@ -1,6 +1,6 @@
 //! Standard conversions between domain types and numeric representations.
 
-use crate::common::types::vector::{V2, V4};
+use crate::common::types::algebra::vector::{V2, V4};
 use crate::common::types::{AxisMotion, Control, PosVelState, Pose, Position, Speed, State};
 
 impl From<[f64; 3]> for AxisMotion {
@@ -28,7 +28,7 @@ impl From<PosVelState> for State {
     /// At rest, heading defaults to zero. Original heading and speed sign
     /// cannot be recovered from a velocity vector alone.
     fn from(state: PosVelState) -> Self {
-        let speed = state.speed.mag();
+        let speed = state.speed.norm();
         let yaw = if speed == 0.0 { 0.0 } else { state.speed.angle() };
         State::from((state.position, yaw, speed))
     }

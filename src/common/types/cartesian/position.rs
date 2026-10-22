@@ -1,4 +1,4 @@
-use super::Vec2d;
+use super::super::Vec2d;
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
@@ -20,10 +20,14 @@ impl DerefMut for Position {
     }
 }
 
-/// Position in Cartesian coordinates.
+/// Position in a Cartesian frame.
 impl Position {
     pub(crate) const fn new(x: f64, y: f64) -> Self {
         Self(Vec2d::new(x, y))
+    }
+
+    pub(crate) const fn is_finite(self) -> bool {
+        self.0.is_finite()
     }
 
     /// Unit-circle position for an angle in radians.
@@ -38,13 +42,13 @@ impl Position {
 
     /// Unit vector in the same direction. Panics for a zero vector.
     pub(crate) fn unit(self) -> Self {
-        let norm = self.mag();
+        let norm = self.norm();
         assert_ne!(norm, 0.0, "cannot normalize a zero vector");
         self / norm
     }
 
     pub(crate) fn distance(self, other: Position) -> f64 {
-        (self - other).mag()
+        (self - other).norm()
     }
 }
 
@@ -94,7 +98,7 @@ mod tests {
     fn unit_vector_has_unit_norm() {
         assert_eq!(Position::new(3.0, 4.0).norm_squared(), 25.0);
         let unit = Position::new(3.0, 4.0).unit();
-        assert!((unit.mag() - 1.0).abs() < 1e-12);
+        assert!((unit.norm() - 1.0).abs() < 1e-12);
         assert!((Position::new(0.0, 1.0).angle() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert_eq!(Position::new(1.0, 0.0).cross(Position::new(0.0, 1.0)), 1.0);
         assert_eq!(Position::new(0.0, 1.0).cross(Position::new(1.0, 0.0)), -1.0);

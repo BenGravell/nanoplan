@@ -252,7 +252,7 @@ fn parameterize(ego: State, ctx: &Context, curve: &CartesianPath, ticks: usize) 
             state = world_step(state, u, ctx.road.dt);
             ctx.work(1);
             let barrier = collide_with_road_barriers(previous, state, ROAD_FOOTPRINT, ctx.road) != state;
-            let actor = actor_collision(state.pose(), tick as f64 * ctx.road.dt, ctx);
+            let actor = actor_collision(state.pose, tick as f64 * ctx.road.dt, ctx);
             if barrier || actor {
                 let index = curve.index(distance).saturating_sub(1);
                 if let Some(bound) = (0..=index).rev().find(|&i| limits[i] != 0.0) {
@@ -405,7 +405,7 @@ mod tests {
         for tick in 0..600 {
             world.tick_recording_latency_blocking(&Latency::default());
             assert_eq!(world.ego_collision_count, 0, "budget {percent}, tick {tick}");
-            let end = world.trajectory.states.last().unwrap();
+            let end = world.trajectory.trajectory.states.last().unwrap();
             assert!(
                 end.speed > 0.5,
                 "budget {percent}, tick {tick}, ego {:?}, preview end {end:?}",
@@ -542,7 +542,7 @@ mod tests {
         for i in GRID_STEPS / 2..=GRID_STEPS {
             let (pose, curvature) = curve.at(curve.distance[i]);
             assert!((curvature - 1.0 / radius).abs() < 1e-8);
-            assert!((pose.position.mag() - radius).abs() < 1e-4);
+            assert!((pose.position.norm() - radius).abs() < 1e-4);
         }
         let backwards = State::from((ego.position(), heading + std::f64::consts::PI, 5.0));
         assert!(CartesianPath::new(backwards, &path, start, [40.0, 80.0]).is_none());
@@ -797,9 +797,9 @@ mod tests {
         };
         let next = world_step(ego, Control::default(), road.dt);
         assert!(!footprints_overlap(
-            next.pose(),
+            next.pose,
             EGO_FOOTPRINT,
-            predict(&actors[0], ctx.path(), road.dt).pose(),
+            predict(&actors[0], ctx.path(), road.dt).pose,
             CAR_FOOTPRINT
         ));
         assert!(candidate_cost(ego, &ctx, &[Control::default()]).is_infinite());
@@ -826,7 +826,7 @@ mod tests {
             let controls = planner.plan(ego, &test_ctx(&road, &actors));
             ego = limiter.step(ego, controls[0], road.dt);
             assert!(
-                !footprints_overlap(ego.pose(), EGO_FOOTPRINT, lead.pose(), CAR_FOOTPRINT),
+                !footprints_overlap(ego.pose, EGO_FOOTPRINT, lead.pose, CAR_FOOTPRINT),
                 "contact at tick {tick}: ego {ego:?}, lead {lead:?}"
             );
         }

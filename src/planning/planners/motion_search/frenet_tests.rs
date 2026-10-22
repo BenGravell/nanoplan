@@ -136,7 +136,7 @@ fn stops_for_a_blocking_opponent_and_restarts_when_clear() {
     assert!(
         trace
             .iter()
-            .all(|state| !footprints_overlap(state.pose(), EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT))
+            .all(|state| !footprints_overlap(state.pose, EGO_FOOTPRINT, actor.pose, CAR_FOOTPRINT))
     );
 }
 

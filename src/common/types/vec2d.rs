@@ -1,4 +1,4 @@
-use super::vector::V2;
+use super::algebra::vector::V2;
 
 /// Two-dimensional vector with shared coordinate operations.
 #[cfg_attr(target_family = "wasm", derive(serde::Deserialize, serde::Serialize))]
@@ -13,7 +13,7 @@ impl Vec2d {
         Self { x, y }
     }
 
-    pub(crate) fn mag(self) -> f64 {
+    pub(crate) fn norm(self) -> f64 {
         self.x.hypot(self.y)
     }
 
@@ -45,15 +45,15 @@ mod tests {
     use crate::common::types::{Position, Speed};
 
     #[test]
-    fn magnitude_is_shared_and_avoids_intermediate_overflow() {
-        assert_eq!(Vec2d::new(3.0, 4.0).mag(), 5.0);
-        assert_eq!(Position::new(3.0, 4.0).mag(), 5.0);
-        assert_eq!(Speed::new(3.0, 4.0).mag(), 5.0);
+    fn norm_is_shared_and_avoids_intermediate_overflow() {
+        assert_eq!(Vec2d::new(3.0, 4.0).norm(), 5.0);
+        assert_eq!(Position::new(3.0, 4.0).norm(), 5.0);
+        assert_eq!(Speed::new(3.0, 4.0).norm(), 5.0);
         let mut velocity = Speed::new(3.0, 4.0);
         velocity.x = 6.0;
         velocity.y = 8.0;
-        assert_eq!(velocity.mag(), 10.0);
-        assert_eq!(Vec2d::default().mag(), 0.0);
-        assert!(Vec2d::new(1e200, 1e200).mag().is_finite());
+        assert_eq!(velocity.norm(), 10.0);
+        assert_eq!(Vec2d::default().norm(), 0.0);
+        assert!(Vec2d::new(1e200, 1e200).norm().is_finite());
     }
 }

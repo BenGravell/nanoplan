@@ -1,4 +1,4 @@
-/// Position relative to a reference path.
+/// Position in a Frenet frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FrenetPosition {
     /// Station along the reference path, in metres.

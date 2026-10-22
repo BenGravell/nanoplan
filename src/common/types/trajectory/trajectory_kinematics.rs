@@ -1,4 +1,5 @@
-use super::{Control, FrenetAcceleration, State};
+use super::super::FrenetAcceleration;
+use super::Trajectory;
 use crate::common::kinematics::control_to_accelerations;
 
 /// Native state and control, plus time and derived kinematics for one trajectory.
@@ -8,25 +9,24 @@ use crate::common::kinematics::control_to_accelerations;
 /// controls from finite differences of states.
 #[derive(Debug, Clone)]
 pub(crate) struct TrajectoryKinematics {
-    pub(crate) states: Vec<State>,
-    pub(crate) controls: Vec<Control>,
+    pub(crate) trajectory: Trajectory,
     pub(crate) time: Vec<f64>,
     pub(crate) accelerations: Vec<FrenetAcceleration>,
     pub(crate) dt: f64,
 }
 
 impl TrajectoryKinematics {
-    pub(crate) fn new(states: Vec<State>, controls: Vec<Control>, dt: f64) -> Self {
-        assert_eq!(states.len(), controls.len());
-        let time = (0..states.len()).map(|i| i as f64 * dt).collect();
-        let accelerations = states
+    pub(crate) fn new(trajectory: Trajectory, dt: f64) -> Self {
+        assert_eq!(trajectory.states.len(), trajectory.controls.len());
+        let time = (0..trajectory.states.len()).map(|i| i as f64 * dt).collect();
+        let accelerations = trajectory
+            .states
             .iter()
-            .zip(&controls)
+            .zip(&trajectory.controls)
             .map(|(state, control)| control_to_accelerations(*control, state.speed))
             .collect();
         Self {
-            states,
-            controls,
+            trajectory,
             time,
             accelerations,
             dt,
@@ -34,13 +34,14 @@ impl TrajectoryKinematics {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.states.len()
+        self.trajectory.states.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::types::{Control, State};
 
     #[test]
     fn trajectory_kinematics_come_directly_from_aligned_controls() {
@@ -56,11 +57,11 @@ mod tests {
             },
         ];
 
-        let trajectory = TrajectoryKinematics::new(states, controls, 0.1);
+        let trajectory = TrajectoryKinematics::new(Trajectory { states, controls }, 0.1);
 
         assert_eq!(trajectory.time, [0.0, 0.1]);
         assert_eq!(
-            trajectory.controls,
+            trajectory.trajectory.controls,
             [
                 Control {
                     acceleration: 2.0,

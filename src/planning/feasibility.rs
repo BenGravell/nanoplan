@@ -49,7 +49,7 @@ pub(crate) fn trajectory_is_feasible(states: &[State], controls: &[Control], ctx
         if beyond_end
             || collides_with_road_barrier(state, ctx.road)
             || constraints.is_transition_violated(prev, state, ROAD_FOOTPRINT, ctx.road, &sample)
-            || actor_collision(state.pose(), sample.t, ctx)
+            || actor_collision(state.pose, sample.t, ctx)
         {
             return false;
         }

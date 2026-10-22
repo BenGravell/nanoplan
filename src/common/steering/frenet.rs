@@ -1,13 +1,13 @@
 //! Cubic steering between Frenet position and velocity boundaries.
 
-use crate::common::kinematics::{curvature_from_cartesian, longitudinal_acceleration_from_cartesian};
+use super::{Motion, control_from_derivatives};
+use crate::common::finite::check_finite;
 use crate::common::polynomial::CubicPolynomial;
 use crate::common::types::{Acceleration, AxisMotion, Control, FrenetPosition, FrenetSpeed, Position, Speed, State};
 use crate::track::Path;
 
 pub(crate) const MIN_FRENET_SCALE: f64 = 0.1;
 const STATION_SPEED_TOLERANCE_MPS: f64 = 1e-8;
-const MOTION_SPEED_EPSILON_MPS: f64 = 1e-6;
 
 pub(crate) struct FrenetMotion {
     pub(crate) s: CubicPolynomial,
@@ -29,7 +29,14 @@ impl FrenetMotion {
 
     /// Transform Frenet position and derivatives into Cartesian state and net controls.
     pub(crate) fn at(&self, path: &Path, t: f64) -> Option<(State, Control)> {
-        cartesian_kinematics(path, self.s.at(t).into(), self.d.at(t).into())
+        let (s, d) = self.derivatives_at(t);
+        cartesian_kinematics(path, s, d)
+    }
+}
+
+impl Motion for FrenetMotion {
+    fn derivatives_at(&self, t: f64) -> (AxisMotion, AxisMotion) {
+        (self.s.at(t).into(), self.d.at(t).into())
     }
 }
 
@@ -50,15 +57,11 @@ pub(crate) fn cartesian_kinematics(path: &Path, s: AxisMotion, d: AxisMotion) ->
     let ay = d.acceleration + k * scale * s.velocity * s.velocity;
     let velocity = Speed::new(vx, d.velocity);
     let acceleration = Acceleration::new(ax, ay);
-    let speed = velocity.mag();
-    let (acceleration, curvature) = if speed > MOTION_SPEED_EPSILON_MPS {
-        (
-            longitudinal_acceleration_from_cartesian(velocity, acceleration),
-            curvature_from_cartesian(velocity, acceleration),
-        )
-    } else {
-        (ax, 0.0)
-    };
+    let speed = velocity.norm();
+    let control = control_from_derivatives(velocity, acceleration).unwrap_or(Control {
+        acceleration: ax,
+        curvature: 0.0,
+    });
     let heading = path.heading_at(s.position);
     let left = Position::from_angle(heading + std::f64::consts::FRAC_PI_2);
     let state = State::from((
@@ -66,19 +69,26 @@ pub(crate) fn cartesian_kinematics(path: &Path, s: AxisMotion, d: AxisMotion) ->
         heading + velocity.angle(),
         speed,
     ));
-    super::check_finite(
-        state,
-        Control {
-            acceleration,
-            curvature,
-        },
-    )
+    check_finite((state, control))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::geometry::wrap_angle;
+
+    #[test]
+    fn stationary_samples_keep_the_reference_heading_and_tangential_acceleration() {
+        let path = Path::new(&[Position::new(0.0, 0.0), Position::new(0.0, 100.0)]);
+        for speed in [0.0, 1e-6] {
+            let (state, control) =
+                cartesian_kinematics(&path, [10.0, speed, 2.0].into(), [1.0, 0.0, 3.0].into()).unwrap();
+            assert!((state.pose.yaw - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+            assert_eq!(state.speed, speed);
+            assert_eq!(control.acceleration, 2.0);
+            assert_eq!(control.curvature, 0.0);
+        }
+    }
 
     #[test]
     fn straight_reference_matches_cartesian_steering() {

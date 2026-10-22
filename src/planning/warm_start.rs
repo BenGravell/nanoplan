@@ -1,4 +1,4 @@
-use crate::common::types::position::Position;
+use crate::common::types::Position;
 use crate::simulation::{Control, State};
 
 const MAX_POSITION_ERROR_M: f64 = 1.0;

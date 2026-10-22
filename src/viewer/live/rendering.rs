@@ -150,7 +150,7 @@ pub(crate) fn draw(
 
     let plan_started = Instant::now();
     let plan_clocks = if state.show_plan && world.trajectory.len() > 1 {
-        plan::draw(&mut planned_trajectory, &ego, &world.trajectory.states[1..]);
+        plan::draw(&mut planned_trajectory, &ego, &world.trajectory.trajectory.states[1..]);
         world.trajectory.len() as u64
     } else {
         0

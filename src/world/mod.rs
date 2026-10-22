@@ -5,7 +5,7 @@ mod traffic;
 
 use crate::common::geometry::{CAR_FOOTPRINT, EGO_FOOTPRINT, Footprint};
 use crate::common::rng::Rng;
-use crate::common::types::TrajectoryKinematics;
+use crate::common::types::{Trajectory, TrajectoryKinematics};
 use crate::planning::engine::{PlanRequest, PlanResult, PlannerEngine};
 use crate::planning::{ComputeBudget, DiagnosticsData, Latency, PLANNING_HORIZON_S, PlannerKind};
 use crate::simulation::{Control, DynamicBody, Position, Simulator, State, collide_dynamic_bodies};
@@ -99,7 +99,13 @@ impl LiveWorld {
         let mut planner_road = track.prepared().planning.clone();
         planner_road.dt = dt;
         let planner_engine = PlannerEngine::new(planner, track_index, planner_road, start.speed);
-        let trajectory = TrajectoryKinematics::new(vec![ego], vec![Control::default()], dt);
+        let trajectory = TrajectoryKinematics::new(
+            Trajectory {
+                states: vec![ego],
+                controls: vec![Control::default()],
+            },
+            dt,
+        );
         Self {
             track,
             track_progress: start.progress,
@@ -365,7 +371,7 @@ impl LiveWorld {
         } else {
             plan_controls
         };
-        self.trajectory = TrajectoryKinematics::new(states, controls, self.dt());
+        self.trajectory = TrajectoryKinematics::new(Trajectory { states, controls }, self.dt());
         self.tick += 1;
     }
 
@@ -441,7 +447,7 @@ impl LiveWorld {
 
 fn racer_progress(track: &Track, state: State, footprint: Footprint, hint: f64) -> f64 {
     footprint
-        .corners(state.pose())
+        .corners(state.pose)
         .into_iter()
         .map(|corner| track.project_progress(corner, hint))
         .max_by(f64::total_cmp)

@@ -29,15 +29,15 @@ pub(crate) fn lateral_acceleration(speed: f64, curvature: f64) -> f64 {
 }
 
 /// Recover net longitudinal acceleration from Cartesian flat-output derivatives.
-/// Assumes velocity.mag() > 0.
+/// Assumes velocity.norm() > 0.
 pub(crate) fn longitudinal_acceleration_from_cartesian(velocity: Speed, acceleration: Acceleration) -> f64 {
-    dot(velocity.xy(), acceleration.xy()) / velocity.mag()
+    dot(velocity.xy(), acceleration.xy()) / velocity.norm()
 }
 
 /// Recover signed path curvature from Cartesian flat-output derivatives.
-/// Assumes velocity.mag() > 0.
+/// Assumes velocity.norm() > 0.
 pub(crate) fn curvature_from_cartesian(velocity: Speed, acceleration: Acceleration) -> f64 {
-    velocity.cross(*acceleration) / velocity.mag().powi(3)
+    velocity.cross(*acceleration) / velocity.norm().powi(3)
 }
 
 /// Commanded accelerations at the current speed.

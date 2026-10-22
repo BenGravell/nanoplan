@@ -4,3 +4,9 @@ pub(crate) struct Control {
     pub(crate) acceleration: f64,
     pub(crate) curvature: f64,
 }
+
+impl Control {
+    pub(crate) const fn is_finite(self) -> bool {
+        self.acceleration.is_finite() && self.curvature.is_finite()
+    }
+}

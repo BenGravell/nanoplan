@@ -1,4 +1,4 @@
-use crate::common::types::position::Position;
+use crate::common::types::Position;
 
 pub(crate) fn dist(a: impl Into<Position>, b: impl Into<Position>) -> f64 {
     a.into().distance(b.into())

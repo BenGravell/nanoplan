@@ -61,7 +61,7 @@ fn run_planner<O: Optimizer>(ego: State, actors: &[State], ticks: usize) -> Vec<
             assert!(
                 actors
                     .iter()
-                    .all(|actor| !footprints_overlap(next.pose(), EGO_FOOTPRINT, actor.pose(), CAR_FOOTPRINT)),
+                    .all(|actor| !footprints_overlap(next.pose, EGO_FOOTPRINT, actor.pose, CAR_FOOTPRINT)),
                 "{} actor contact at tick {tick}",
                 O::NAME
             );
