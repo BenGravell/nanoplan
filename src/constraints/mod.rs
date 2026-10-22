@@ -9,7 +9,6 @@ use drivable_area::DrivableArea;
 pub(crate) use kinodynamic::Kinodynamic;
 
 use crate::common::geometry::Footprint;
-use crate::metrics::progress_score;
 use crate::simulation::{Control, Position, State};
 use crate::track::{Path, Road};
 
@@ -105,7 +104,7 @@ impl<'a> Constraints<'a> {
         {
             return f64::INFINITY;
         }
-        -progress_score(sample.station - self.initial_station)
+        -(sample.station - self.initial_station)
     }
 
     /// Finite, depth-scaled stand-in for a hard violation.

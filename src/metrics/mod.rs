@@ -21,12 +21,7 @@ pub(crate) fn evaluate(states: &[State], path: &Path, station_hints: Option<[f64
             )
             .s
     };
-    progress_score(station(*states.last().unwrap(), 1) - station(*ego, 0))
-}
-
-/// Shared objective: signed Frenet station delta in meters.
-pub(crate) fn progress_score(station_delta: f64) -> f64 {
-    station_delta
+    station(*states.last().unwrap(), 1) - station(*ego, 0)
 }
 
 #[cfg(test)]
