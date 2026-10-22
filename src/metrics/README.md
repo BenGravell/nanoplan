@@ -3,11 +3,11 @@
 ## The shared metric objective
 
 Planners maximize forward progress subject to collision, road, and vehicle-dynamics constraints.
-`Constraints::point_cost(sample)` returns `-(sample.station - initial_station)` for feasible samples and `f64::INFINITY`
-for collision or road-bound violations.
+`Constraints::point_cost(sample)` returns `-metrics::progress_score(initial_station, sample.station)` for feasible
+samples and `f64::INFINITY` for collision or road-bound violations.
 There are no comfort weights or safety scores.
 The viewer displays the final progress in meters.
-Both trajectory scoring and planner costs use signed Frenet station progress in meters.
+Both trajectory scoring and planner costs use `metrics::progress_score` for signed Frenet station progress in meters.
 `evaluate` takes a state slice, reference path, and optional endpoint station hints; it projects only the first and last
 states.
 Hints preserve the intended branch on overlapping road segments.

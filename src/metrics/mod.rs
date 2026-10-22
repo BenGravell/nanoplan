@@ -4,6 +4,11 @@ use crate::common::types::State;
 use crate::planning::planner_math::STATE_SAMPLE_PROJECTION_RADIUS_M;
 use crate::track::Path;
 
+/// Signed progress along the reference path, in meters; larger is better.
+pub(crate) fn progress_score(initial_station: f64, final_station: f64) -> f64 {
+    final_station - initial_station
+}
+
 /// Score endpoint progress without constructing per-state kinematics or projections.
 /// Optional station hints disambiguate endpoints on overlapping road segments.
 pub(crate) fn evaluate(states: &[State], path: &Path, station_hints: Option<[f64; 2]>) -> f64 {
@@ -21,7 +26,7 @@ pub(crate) fn evaluate(states: &[State], path: &Path, station_hints: Option<[f64
             )
             .s
     };
-    station(*states.last().unwrap(), 1) - station(*ego, 0)
+    progress_score(station(*ego, 0), station(*states.last().unwrap(), 1))
 }
 
 #[cfg(test)]
